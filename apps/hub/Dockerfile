@@ -3,7 +3,7 @@
 # Run:  docker run --rm -p 8787:8787 -e RENAISSANCE_HUB_CORS_ORIGINS=https://music.example.com renaissance-hub
 # Every setting is an environment variable (apps/hub/.env.example); there is nothing to mount.
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HUSKY=0 TURBO_TELEMETRY_DISABLED=1
 RUN corepack enable
 WORKDIR /repo
@@ -16,7 +16,7 @@ COPY apps/hub apps/hub
 RUN pnpm --filter hub build \
   && pnpm install --frozen-lockfile --ignore-scripts --prod --filter hub...
 
-FROM node:22-alpine
+FROM node:26-alpine
 ENV NODE_ENV=production RENAISSANCE_HUB_PORT=8787
 WORKDIR /app
 COPY --from=build /repo/node_modules ./node_modules
