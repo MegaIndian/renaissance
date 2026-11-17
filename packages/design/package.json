@@ -1,0 +1,26 @@
+{
+  "name": "@renaissance/design",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Renaissance design tokens (TypeScript and CSS variables) and DESIGN.md, shared by web and mobile.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:css": "tsx scripts/build-css.ts"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^5.1.0",
+    "tsx": "^4.23.15",
+    "@types/node": "^22.0.0"
+  }
+}
