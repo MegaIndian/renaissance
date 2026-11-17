@@ -4,14 +4,18 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useTheme } from '@/lib/theme';
 
-/** The one box on every screen (F75). Phase 0: the input and its hint only. */
-export function AskBar() {
+/**
+ * The one box on every screen (F75), rendered by the TabBar shell and the sign-in screen.
+ * Phase 0: the input and its hint only; voice, library hits and the hub's answer come later.
+ */
+export function AskBar({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
-  const { colors, radius, type, scale } = useTheme();
+  const { colors, radius, space, type, scale } = useTheme();
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
+  const hint = value ? t('ask.noResults') : t('ask.hint');
   return (
-    <View style={styles.wrap}>
+    <View style={{ gap: space[2] }}>
       <View
         style={[
           styles.box,
@@ -19,10 +23,21 @@ export function AskBar() {
             backgroundColor: colors.card,
             borderColor: focused ? colors.ring : colors.border,
             borderRadius: radius.md,
+            paddingHorizontal: space[3],
+            paddingVertical: space[2],
+            gap: space[2],
           },
         ]}
       >
-        <View style={[styles.dot, { borderColor: colors.mutedForeground }]} />
+        <View
+          accessibilityElementsHidden
+          style={[
+            styles.glass,
+            { borderColor: colors.mutedForeground, width: space[3], height: space[3] },
+          ]}
+        >
+          <View style={[styles.handle, { backgroundColor: colors.mutedForeground }]} />
+        </View>
         <TextInput
           accessibilityLabel={t('ask.placeholder')}
           placeholder={t('ask.placeholder')}
@@ -36,23 +51,29 @@ export function AskBar() {
           returnKeyType="search"
         />
       </View>
-      <Text style={{ color: colors.mutedForeground, fontSize: type.caption.size * scale }}>
-        {value ? t('ask.noResults') : t('ask.hint')}
-      </Text>
+      {compact && !value ? null : (
+        <Text
+          numberOfLines={1}
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.mutedForeground, fontSize: type.caption.size * scale }}
+        >
+          {hint}
+        </Text>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 8 },
-  box: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  box: { flexDirection: 'row', alignItems: 'center', borderWidth: 1 },
+  glass: { borderRadius: 999, borderWidth: 1.5 },
+  handle: {
+    position: 'absolute',
+    width: 1.5,
+    height: 5,
+    right: -3,
+    bottom: -4,
+    transform: [{ rotate: '-45deg' }],
   },
-  dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 1.5 },
   input: { flex: 1, padding: 0 },
 });

@@ -1,15 +1,24 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useTranslation } from 'react-i18next';
+import { I18nextProvider, useTranslation } from 'react-i18next';
+import { View } from 'react-native';
 
-import '@/lib/i18n';
+import { i18n } from '@/lib/i18n';
 import { useTheme } from '@/lib/theme';
 
 export default function RootLayout() {
-  const { colors, scheme } = useTheme();
-  const { t } = useTranslation();
   return (
-    <>
+    <I18nextProvider i18n={i18n}>
+      <Shell />
+    </I18nextProvider>
+  );
+}
+
+function Shell() {
+  const { colors, scheme } = useTheme();
+  const { t, i18n: active } = useTranslation();
+  return (
+    <View style={{ flex: 1 }} accessibilityLanguage={active.language}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
@@ -19,9 +28,9 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: colors.background },
         }}
       >
-        <Stack.Screen name="index" options={{ title: t('app.name') }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ title: t('signIn.title') }} />
       </Stack>
-    </>
+    </View>
   );
 }
