@@ -27,6 +27,17 @@ export interface JellyfinAdapterOptions {
   version: string;
 }
 
+/** Header values sit inside double quotes: drop quotes, backslashes and control characters. */
+export function headerSafe(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/["\\\u0000-\u001f\u007f]/g, '').trim();
+}
+
+/** The server URL without trailing slashes, whatever the caller stored. */
+export function serverBase(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
 export class JellyfinAdapter implements ServerAdapter {
   readonly server: Server;
   private readonly options: JellyfinAdapterOptions;
@@ -35,19 +46,23 @@ export class JellyfinAdapter implements ServerAdapter {
     if (server.kind !== 'jellyfin') {
       throw new Error(`JellyfinAdapter needs a jellyfin server, got ${server.kind}`);
     }
-    this.server = server;
+    this.server = { ...server, url: serverBase(server.url) };
     this.options = options;
+  }
+
+  private url(path: string): URL {
+    return new URL(`${this.server.url}${path}`);
   }
 
   /** The `Authorization: MediaBrowser ...` header value Jellyfin expects. */
   authorizationHeader(token?: string): string {
     const parts = [
       `Client="${CLIENT_NAME}"`,
-      `Device="${this.options.deviceName}"`,
-      `DeviceId="${this.options.deviceId}"`,
-      `Version="${this.options.version}"`,
+      `Device="${headerSafe(this.options.deviceName)}"`,
+      `DeviceId="${headerSafe(this.options.deviceId)}"`,
+      `Version="${headerSafe(this.options.version)}"`,
     ];
-    if (token) parts.push(`Token="${token}"`);
+    if (token) parts.push(`Token="${headerSafe(token)}"`);
     return `MediaBrowser ${parts.join(', ')}`;
   }
 
@@ -60,7 +75,7 @@ export class JellyfinAdapter implements ServerAdapter {
   }
 
   streamUrl(session: Session, track: Track, quality: StreamQuality): string {
-    const url = new URL(`${this.server.url}/Audio/${encodeURIComponent(track.id)}/universal`);
+    const url = this.url(`/Audio/${encodeURIComponent(track.id)}/universal`);
     url.searchParams.set('UserId', session.userId);
     url.searchParams.set('DeviceId', this.options.deviceId);
     url.searchParams.set('api_key', session.token);
@@ -78,13 +93,13 @@ export class JellyfinAdapter implements ServerAdapter {
   }
 
   downloadUrl(session: Session, track: Track): string {
-    const url = new URL(`${this.server.url}/Items/${encodeURIComponent(track.id)}/Download`);
+    const url = this.url(`/Items/${encodeURIComponent(track.id)}/Download`);
     url.searchParams.set('api_key', session.token);
     return url.toString();
   }
 
   imageUrl(_session: Session, imageId: string, width = 300): string {
-    const url = new URL(`${this.server.url}/Items/${encodeURIComponent(imageId)}/Images/Primary`);
+    const url = this.url(`/Items/${encodeURIComponent(imageId)}/Images/Primary`);
     url.searchParams.set('fillWidth', String(width));
     url.searchParams.set('quality', '90');
     return url.toString();

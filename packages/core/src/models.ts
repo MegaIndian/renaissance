@@ -11,8 +11,8 @@ export const Server = z.object({
   id: z.string().min(1),
   kind: ServerKind,
   name: z.string().min(1),
-  /** Base URL including scheme, no trailing slash. */
-  url: z.url(),
+  /** Base URL including scheme. Trailing slashes are removed so paths can be appended. */
+  url: z.url().transform((u) => u.replace(/\/+$/, '')),
 });
 export type Server = z.infer<typeof Server>;
 
