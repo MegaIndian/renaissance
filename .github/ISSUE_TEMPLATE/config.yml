@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/MegaIndian/renaissance/discussions
+    about: Ask a question or float an idea in Discussions.
+  - name: Security problem
+    url: https://github.com/MegaIndian/renaissance/security/advisories/new
+    about: Report privately. Never in a public issue.

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as the roadmap says it should.
+labels: ['bug']
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options: [Web, iOS, Android, Hub, Core]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.1.0 or a short SHA
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Steps, what you expected, what you saw. Screenshots help for screen bugs.
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      placeholder: Jellyfin 10.10.3
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove tokens and addresses first.
+      render: text

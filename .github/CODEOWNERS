@@ -1,0 +1,9 @@
+# Default owner for everything.
+* @MegaIndian
+
+# Design rules and tokens need a design-minded review.
+/packages/design/ @MegaIndian
+/docs/design/ @MegaIndian
+
+# The hub holds the keys and the never-invent rule.
+/apps/hub/ @MegaIndian

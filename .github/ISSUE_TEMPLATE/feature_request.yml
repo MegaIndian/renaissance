@@ -1,0 +1,32 @@
+name: Feature request
+description: Something new, or a roadmap item you want to work on.
+labels: ['enhancement']
+body:
+  - type: input
+    id: fnumber
+    attributes:
+      label: Roadmap number
+      description: F-number from docs/ROADMAP.md if it exists; leave empty for a new idea.
+      placeholder: F31
+  - type: textarea
+    id: what
+    attributes:
+      label: What and why
+      description: What should happen, who it helps, and how you would test it.
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms
+      description: Every feature lands on both; tick what this issue covers.
+      options:
+        - label: Web
+        - label: Mobile
+        - label: Hub
+  - type: checkboxes
+    id: design
+    attributes:
+      label: Design
+      options:
+        - label: I read packages/design/DESIGN.md and this fits the rules (one primary, flat cards, simple mode)

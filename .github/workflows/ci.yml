@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: 0
+  TURBO_TELEMETRY_DISABLED: 1
+  EXPO_NO_TELEMETRY: 1
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Commit messages
+        if: github.event_name == 'pull_request'
+        run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck (core, design, web, hub)
+        run: pnpm typecheck --filter=!mobile
+      - name: Typecheck (mobile)
+        run: pnpm --filter mobile typecheck
+      - name: Test
+        run: pnpm test
+      - name: Build web
+        run: pnpm --filter web build
+      - name: Build hub
+        run: pnpm --filter hub build
+      - name: Hub smoke test
+        run: |
+          node apps/hub/dist/server.js &
+          sleep 2
+          curl --fail --silent http://127.0.0.1:8787/health
+          kill %1

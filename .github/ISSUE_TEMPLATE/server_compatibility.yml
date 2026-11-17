@@ -1,0 +1,29 @@
+name: Server compatibility
+description: Renaissance misbehaves with a particular server or version.
+labels: ['server:jellyfin']
+body:
+  - type: dropdown
+    id: server
+    attributes:
+      label: Server
+      options: [Jellyfin, Navidrome (Subsonic), Gonic (Subsonic), LMS (Subsonic), Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What breaks
+      description: Which screen or action, and the response the server gave if you can see it (remove tokens).
+    validations:
+      required: true
+  - type: input
+    id: plugins
+    attributes:
+      label: Server plugins or reverse proxy
+      placeholder: LrcLib plugin, Caddy, Tailscale

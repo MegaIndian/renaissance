@@ -1,0 +1,48 @@
+# CodeRabbit configuration. Schema: https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: [main]
+  path_filters:
+    - '!**/pnpm-lock.yaml'
+    - '!**/dist/**'
+    - '!docs/design/*.html'
+  path_instructions:
+    - path: 'packages/design/**'
+      instructions: >
+        This package is the only place a colour, radius, font size or spacing value may be defined.
+        Flag any change that adds a second primary colour, a shadow other than art and the segmented pill,
+        or a type size outside the scale. Light and dark must keep the same token set.
+    - path: 'apps/web/**'
+      instructions: >
+        Screens are thin over @renaissance/core. Flag hardcoded colours or sizes (must come from tokens or
+        Tailwind utilities mapped to them), strings not in the i18n catalogs, more than one primary button
+        per screen, missing labels on controls, and logic that belongs in core.
+    - path: 'apps/mobile/**'
+      instructions: >
+        Same as web: tokens only, strings from the catalogs, mirrored component names, labels on controls.
+        Never edit ios/ or android/ by hand; config plugins only.
+    - path: 'apps/hub/**'
+      instructions: >
+        The hub holds every key and enforces the never-invent rule (ADR 0007). Flag: config read from
+        anything but environment variables; secrets in logs, responses or test fixtures; request bodies or
+        headers logged; any model output used as a song, album, artist or id without a matching tool result;
+        more than one model call per utterance; a tool added outside the fixed set without an ADR.
+    - path: 'packages/core/**'
+      instructions: >
+        Framework-free TypeScript only: no React, DOM or React Native imports. Every exported behaviour
+        needs a Vitest test. Models cross boundaries through Zod schemas.
+    - path: 'packages/core/src/i18n/locales/**'
+      instructions: >
+        en.json and gu.json must have identical key sets. Figures and names stay in Latin letters in
+        Gujarati. No tips or "next time" advice in strings.
+chat:
+  auto_reply: true
