@@ -1,0 +1,47 @@
+{
+  "app": {
+    "name": "Renaissance",
+    "tagline": "તમારું સંગીત. કોઈ પણ શબ્દો. કોઈ પણ ભાષા."
+  },
+  "ask": {
+    "placeholder": "કંઈ પણ માગો: ગીત, મૂડ, કામ, વિનંતી",
+    "hint": "અજમાવો \"રસોઈ માટે શાંત ગીત વગાડ\"",
+    "listening": "સાંભળી રહ્યું છે…",
+    "noResults": "તમારી લાઇબ્રેરીમાં હજી કંઈ મળ્યું નથી"
+  },
+  "home": {
+    "greeting": "શુભ સાંજ, {{name}}",
+    "mySongs": "મારાં ગીતો",
+    "recent": "હમણાં વગાડેલાં",
+    "mixes": "તમારા માટે બનાવેલાં",
+    "recentlyAdded": "હમણાં ઉમેરેલાં",
+    "empty": "તમારું સંગીત જોવા માટે સર્વરમાં સાઇન ઇન કરો"
+  },
+  "signIn": {
+    "title": "તમારા સર્વરમાં સાઇન ઇન કરો",
+    "serverUrl": "સર્વરનું સરનામું",
+    "serverUrlHint": "જેમ કે https://music.example.com",
+    "userName": "વપરાશકર્તા નામ",
+    "password": "પાસવર્ડ",
+    "submit": "સાઇન ઇન",
+    "quickConnect": "Quick Connect વાપરો",
+    "notYet": "સાઇન ઇન phase 1 માં આવશે. આ સ્ક્રીન હમણાં ખાલી નમૂનો છે."
+  },
+  "nav": {
+    "home": "હોમ",
+    "search": "શોધ",
+    "library": "લાઇબ્રેરી",
+    "requests": "વિનંતીઓ",
+    "settings": "સેટિંગ્સ"
+  },
+  "player": {
+    "play": "વગાડો",
+    "pause": "થોભાવો",
+    "next": "આગળનું",
+    "previous": "પાછળનું",
+    "nothingPlaying": "કંઈ વાગતું નથી"
+  },
+  "status": {
+    "preAlpha": "Pre-alpha, phase 0: હજી કંઈ વાગતું નથી."
+  }
+}

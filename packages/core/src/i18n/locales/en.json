@@ -1,0 +1,47 @@
+{
+  "app": {
+    "name": "Renaissance",
+    "tagline": "Your music. Any words. Any language."
+  },
+  "ask": {
+    "placeholder": "Ask for anything: a song, a mood, a chore, a request",
+    "hint": "Try \"play something calm for cooking\"",
+    "listening": "Listening…",
+    "noResults": "Nothing in your library matches yet"
+  },
+  "home": {
+    "greeting": "Good evening, {{name}}",
+    "mySongs": "My songs",
+    "recent": "Recently played",
+    "mixes": "Made for you",
+    "recentlyAdded": "Recently added",
+    "empty": "Sign in to a server to see your music here"
+  },
+  "signIn": {
+    "title": "Sign in to your server",
+    "serverUrl": "Server address",
+    "serverUrlHint": "For example https://music.example.com",
+    "userName": "User name",
+    "password": "Password",
+    "submit": "Sign in",
+    "quickConnect": "Use Quick Connect instead",
+    "notYet": "Sign-in arrives in phase 1. This screen is a placeholder."
+  },
+  "nav": {
+    "home": "Home",
+    "search": "Search",
+    "library": "Library",
+    "requests": "Requests",
+    "settings": "Settings"
+  },
+  "player": {
+    "play": "Play",
+    "pause": "Pause",
+    "next": "Next",
+    "previous": "Previous",
+    "nothingPlaying": "Nothing playing"
+  },
+  "status": {
+    "preAlpha": "Pre-alpha, phase 0: nothing plays yet."
+  }
+}
