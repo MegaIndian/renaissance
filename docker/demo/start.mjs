@@ -1,19 +1,35 @@
 #!/usr/bin/env node
 /**
- * Starts the demo Jellyfin with Creative Commons music.
- *   node docker/demo/start.mjs          download tracks if missing, docker compose up, print the address
- *   node docker/demo/start.mjs down     stop and remove the container (config and music stay)
+ * Starts the demo Jellyfin with Creative Commons music and sets it up completely.
+ *   node docker/demo/start.mjs            download tracks if missing, docker compose up, finish the
+ *                                         wizard, create the user, add the library, scan, print
+ *                                         the address and credentials
+ *   node docker/demo/start.mjs down       stop and remove the container (config and music stay)
+ *   node docker/demo/start.mjs --dry-run  print the API sequence against a fake server; no Docker,
+ *                                         no downloads
  * Needs Docker with the compose plugin. Works on macOS, Linux and Windows.
  */
 import { spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
+import { fakeJellyfinFetch, setupJellyfin, waitForServer } from './jellyfin-setup.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const musicDir = join(here, 'music');
+const configDir = join(here, 'config');
+const credentialsFile = join(configDir, 'demo-credentials.json');
+const baseUrl = process.env.RENAISSANCE_DEMO_URL ?? 'http://localhost:8096';
 const manifest = JSON.parse(readFileSync(join(here, 'tracks.json'), 'utf8'));
 
 function compose(...args) {
@@ -42,25 +58,69 @@ async function download(track) {
   return true;
 }
 
+function readCredentials() {
+  try {
+    return JSON.parse(readFileSync(credentialsFile, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function printCredentials({ user, password }) {
+  console.log('');
+  console.log(`Jellyfin is ready at ${baseUrl}`);
+  console.log(`  user:     ${user}`);
+  console.log(`  password: ${password}`);
+  console.log(`  (also in ${credentialsFile}, ignored by Git)`);
+  console.log('Stop with: node docker/demo/start.mjs down');
+}
+
+async function dryRun() {
+  const { fetch } = fakeJellyfinFetch();
+  console.log(`Dry run against a fake Jellyfin at ${baseUrl}: the calls that a real run makes.`);
+  const result = await setupJellyfin({
+    fetch,
+    baseUrl,
+    password: 'dry-run-password',
+    log: (line) => console.log(`  ${line}`),
+  });
+  console.log(`${result.calls.length} calls; user ${result.user}; library scan requested.`);
+}
+
 async function main() {
+  if (process.argv.includes('--dry-run')) return dryRun();
   if (process.argv[2] === 'down') {
     compose('down');
     return;
   }
   mkdirSync(musicDir, { recursive: true });
-  mkdirSync(join(here, 'config'), { recursive: true });
+  mkdirSync(configDir, { recursive: true });
   let fetched = 0;
   for (const track of manifest.tracks) if (await download(track)) fetched++;
   console.log(
     `${manifest.tracks.length} tracks ready (${fetched} downloaded). Licence: ${manifest.licenseUrl}`,
   );
   compose('up', '-d');
-  console.log('');
-  console.log('Jellyfin is starting at http://localhost:8096');
-  console.log(
-    'First run: finish the setup wizard there, create a user, and add a Music library at /media/music.',
-  );
-  console.log('Stop with: node docker/demo/start.mjs down');
+  console.log(`Waiting for Jellyfin at ${baseUrl}`);
+  const info = await waitForServer({ fetch, baseUrl });
+
+  const saved = readCredentials();
+  if (info.StartupWizardCompleted && !saved) {
+    console.log(
+      `This Jellyfin was set up by hand (no ${credentialsFile}). Sign in with the user you created,` +
+        ' or run "node docker/demo/start.mjs down", delete docker/demo/config, and start again.',
+    );
+    return;
+  }
+  const result = await setupJellyfin({
+    fetch,
+    baseUrl,
+    password: saved?.password,
+    log: (line) => console.log(`  ${line}`),
+  });
+  const credentials = { url: baseUrl, user: result.user, password: result.password };
+  writeFileSync(credentialsFile, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });
+  printCredentials(credentials);
 }
 
 main().catch((error) => {

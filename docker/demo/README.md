@@ -4,10 +4,24 @@ A Jellyfin container with four Creative Commons tracks (Kevin MacLeod, CC BY 4.0
 for e2e tests and for contributors without a library.
 
 ```sh
-node docker/demo/start.mjs        # downloads the tracks once, starts Jellyfin on http://localhost:8096
-node docker/demo/start.mjs down   # stops it
+node docker/demo/start.mjs            # downloads the tracks once, starts Jellyfin on http://localhost:8096,
+                                      # completes the wizard, creates user "demo", adds the Music library,
+                                      # starts a scan, prints the address and the password
+node docker/demo/start.mjs down       # stops it (config and music stay)
+node docker/demo/start.mjs --dry-run  # prints the API sequence against a fake server; no Docker needed
 ```
 
-First run: open http://localhost:8096, finish the wizard, create a user, add a Music library pointing at
-`/media/music`. Later phases automate this setup for the e2e suite. The audio files and the Jellyfin
-`config/` folder are ignored by Git.
+What the script does after `docker compose up -d`, through the Jellyfin 10.10 API
+(`jellyfin-setup.mjs`, unit-tested with a fake server in `jellyfin-setup.test.mjs`):
+
+1. Polls `GET /System/Info/Public` until the server answers.
+2. If the wizard is not complete: `POST /Startup/Configuration`, `GET` then `POST /Startup/User`
+   (user `demo`, a random 24-character password), `POST /Startup/RemoteAccess`, `POST /Startup/Complete`.
+3. `POST /Users/AuthenticateByName` for a token.
+4. `GET /Library/VirtualFolders`; if there is no music library, `POST /Library/VirtualFolders` for
+   `Music` at `/media/music`; then `POST /Library/Refresh`.
+5. Writes `config/demo-credentials.json` (mode 600, ignored by Git) and prints the credentials.
+
+Running it again is safe: the saved password is reused, the wizard and library steps are skipped, and
+only a scan is triggered. If the server was set up by hand before this script existed, it says so and
+leaves it alone. The audio files and the Jellyfin `config/` folder are ignored by Git.
