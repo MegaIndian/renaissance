@@ -1,0 +1,14 @@
+# Demo Jellyfin for Renaissance: e2e tests and contributors without a library.
+# Start with `node docker/demo/start.mjs` (downloads the Creative Commons tracks first).
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.10.7
+    container_name: renaissance-demo-jellyfin
+    ports:
+      - '8096:8096'
+    environment:
+      JELLYFIN_PublishedServerUrl: http://localhost:8096
+    volumes:
+      - ./config:/config
+      - ./music:/media/music:ro
+    restart: unless-stopped
