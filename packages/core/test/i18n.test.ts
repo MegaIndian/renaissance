@@ -23,6 +23,9 @@ describe('i18n catalogs', () => {
   });
 
   it('interpolates names in Latin letters', () => {
-    expect(createI18n('gu').t('home.greeting', { name: 'Sahil' })).toContain('Sahil');
+    const gu = createI18n('gu');
+    expect(
+      gu.t('home.greetingWithName', { greeting: gu.t('home.greetingEvening'), name: 'Sahil' }),
+    ).toBe('શુભ સાંજ, Sahil');
   });
 });
