@@ -19,7 +19,7 @@
     "lint": "turbo run lint && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test && node --test docker/demo/",
+    "test": "turbo run test && node --test \"docker/demo/*.test.mjs\"",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "prepare": "husky",
