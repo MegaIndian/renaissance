@@ -10,4 +10,5 @@ export {
   serverBase,
 } from './adapters/jellyfin';
 export { greetingKey } from './greeting';
+export { trimTrailingSlashes } from './url';
 export type { JellyfinAdapterOptions } from './adapters/jellyfin';

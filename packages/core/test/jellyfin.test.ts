@@ -89,6 +89,8 @@ describe('JellyfinAdapter URL and header hygiene', () => {
     );
     expect(headerSafe('a"b\\c\u0000d')).toBe('abcd');
     expect(serverBase('https://x.test/')).toBe('https://x.test');
+    expect(serverBase('/'.repeat(5000))).toBe('');
+    expect(serverBase('http://a.test')).toBe('http://a.test');
   });
 
   it('the Server schema normalises the URL too', () => {

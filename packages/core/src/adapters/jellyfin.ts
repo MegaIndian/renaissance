@@ -3,6 +3,7 @@
  * (plan.md "Jellyfin API map"). Only the pure URL builders are real here so they can be tested.
  */
 import type { Lyrics, Server, Track } from '../models';
+import { trimTrailingSlashes } from '../url';
 import type {
   Credentials,
   Library,
@@ -35,7 +36,7 @@ export function headerSafe(value: string): string {
 
 /** The server URL without trailing slashes, whatever the caller stored. */
 export function serverBase(url: string): string {
-  return url.replace(/\/+$/, '');
+  return trimTrailingSlashes(url);
 }
 
 export class JellyfinAdapter implements ServerAdapter {
