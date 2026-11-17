@@ -2,6 +2,9 @@
  * Design tokens, taken from docs/design/mockup-2026-11-17.html and the T3 Code look:
  * flat cards, hairline borders, muted neutrals, one blue primary, segmented controls, compact type.
  * Dark is the reference theme; light mirrors it. Both apps consume these, nothing else defines a colour.
+ *
+ * Every `*Foreground` token is the text colour for its surface. `test/contrast.test.ts` computes the
+ * WCAG ratio of every pair in `textPairs` (see contrast.ts) and fails the build under 4.5:1.
  */
 
 export const colors = {
@@ -10,22 +13,28 @@ export const colors = {
     foreground: '#e8e8ee',
     card: '#17171e',
     border: '#2a2a35',
+    /** Form inputs: 3:1 or better against `background` and `card`, so the control's edge is visible. */
+    inputBorder: '#6a6a80',
     muted: '#22222c',
     mutedForeground: '#9a9aae',
-    primary: '#3b82f6',
+    primary: '#2f6fe0',
     primaryForeground: '#ffffff',
     secondary: '#1f1f28',
     secondaryForeground: '#e8e8ee',
-    ring: '#3b82f6',
+    ring: '#2f6fe0',
     success: '#22c55e',
-    info: '#3b82f6',
+    successForeground: '#0f0f14',
+    info: '#2f6fe0',
+    infoForeground: '#ffffff',
     danger: '#f87171',
+    dangerForeground: '#0f0f14',
   },
   light: {
     background: '#ffffff',
     foreground: '#111118',
     card: '#f7f7f9',
     border: '#e3e3e9',
+    inputBorder: '#8a8a9c',
     muted: '#eeeef2',
     mutedForeground: '#6b6b7e',
     primary: '#2563eb',
@@ -33,9 +42,12 @@ export const colors = {
     secondary: '#f1f1f5',
     secondaryForeground: '#111118',
     ring: '#2563eb',
-    success: '#16a34a',
+    success: '#15803d',
+    successForeground: '#ffffff',
     info: '#2563eb',
+    infoForeground: '#ffffff',
     danger: '#dc2626',
+    dangerForeground: '#ffffff',
   },
 } as const;
 
@@ -52,7 +64,7 @@ export const radius = {
   pill: 999,
 } as const;
 
-/** Spacing scale in px; 4-point grid. */
+/** Spacing scale in px; 4-point grid. Tailwind's `p-4` is `space[4]`, and so on. */
 export const space = { 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48 } as const;
 
 export const font = {
@@ -61,7 +73,8 @@ export const font = {
 } as const;
 
 /**
- * Type scale in px. Compact by default; simple mode multiplies every size by `simpleModeScale`.
+ * Type scale in px at the 16 px root. The CSS build emits every size in rem so the browser's font
+ * setting and simple mode (`simpleModeScale` on the root) scale all of them together.
  */
 export const type = {
   caption: { size: 11, lineHeight: 14, weight: 400 },
@@ -73,7 +86,11 @@ export const type = {
   display: { size: 24, lineHeight: 30, weight: 600 },
 } as const;
 
+/** Simple mode: the root font size is multiplied by this, so every rem value grows with it. */
 export const simpleModeScale = 1.25;
+
+/** The root size that `type` and `space` are expressed against; rem = px / rootFontSize. */
+export const rootFontSize = 16;
 
 export const border = { hairline: 1 } as const;
 
@@ -94,6 +111,8 @@ export const breakpoints = { phone: 0, tablet: 768, desktop: 1024 } as const;
 
 export type Theme = keyof typeof colors;
 export type ColorToken = keyof (typeof colors)['dark'];
+export type TypeToken = keyof typeof type;
+export type SpaceToken = keyof typeof space;
 
 export const tokens = {
   colors,
@@ -103,6 +122,7 @@ export const tokens = {
   font,
   type,
   simpleModeScale,
+  rootFontSize,
   border,
   shadow,
   motion,

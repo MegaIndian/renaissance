@@ -4,6 +4,8 @@
  */
 import { z } from 'zod';
 
+import { trimTrailingSlashes } from './url';
+
 export const ServerKind = z.enum(['jellyfin', 'subsonic']);
 export type ServerKind = z.infer<typeof ServerKind>;
 
@@ -11,8 +13,8 @@ export const Server = z.object({
   id: z.string().min(1),
   kind: ServerKind,
   name: z.string().min(1),
-  /** Base URL including scheme, no trailing slash. */
-  url: z.url(),
+  /** Base URL including scheme. Trailing slashes are removed so paths can be appended. */
+  url: z.url().transform(trimTrailingSlashes),
 });
 export type Server = z.infer<typeof Server>;
 

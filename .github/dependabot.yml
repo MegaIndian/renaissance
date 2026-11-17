@@ -18,12 +18,20 @@ updates:
             'typescript*',
             'prettier',
             'vitest',
+            '@vitest/*',
             'turbo',
             '@commitlint/*',
             '@changesets/*',
             'husky',
             'lint-staged',
           ]
+    ignore:
+      # TypeScript majors wait for typescript-eslint, tsx and Expo to support them (closed #7).
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      # The repo runs Node 22 (.nvmrc, engines, the hub image); types stay on 22 (closed #8).
+      - dependency-name: '@types/node'
+        versions: ['>=23']
     commit-message:
       prefix: 'chore(deps)'
   - package-ecosystem: github-actions
@@ -32,9 +40,16 @@ updates:
       interval: weekly
     commit-message:
       prefix: 'ci'
-  - package-ecosystem: docker
+  # docker/demo holds a compose file, not a Dockerfile.
+  - package-ecosystem: docker-compose
     directory: /docker/demo
     schedule:
       interval: weekly
     commit-message:
       prefix: 'chore(demo)'
+  - package-ecosystem: docker
+    directory: /apps/hub
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'build(hub)'

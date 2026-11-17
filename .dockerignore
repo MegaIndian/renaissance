@@ -1,0 +1,15 @@
+# Only the hub is built into an image (apps/hub/Dockerfile); keep everything else out of the context.
+.git
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+**/.expo
+apps/mobile
+apps/web
+docs
+docker
+.github
+*.md
+**/.env
+**/.env.*

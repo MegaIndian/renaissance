@@ -1,5 +1,5 @@
 import cors from '@fastify/cors';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import type { FastifyInstance } from 'fastify';
 
 import type { HubConfig } from './config.js';
@@ -22,7 +22,7 @@ export async function buildApp({
   const app = Fastify({
     logger,
     // Never log request bodies or headers: they may carry tokens or what the user typed.
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
   });
 
   if (config.corsOrigins.length > 0) {

@@ -50,9 +50,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community
-leaders responsible for enforcement through a GitHub issue marked "conduct" or by email to the
-maintainer listed on the repository's GitHub profile. All complaints will be reviewed and investigated
-promptly and fairly.
+leaders responsible for enforcement privately through the repository's security advisory form
+(Security tab, "Report a vulnerability", at
+https://github.com/MegaIndian/renaissance/security/advisories/new; only the maintainer can read it,
+and a conduct report is accepted there with "Conduct" as the title). Nothing about a report is posted
+publicly. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

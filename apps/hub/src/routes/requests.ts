@@ -1,21 +1,29 @@
 /**
  * /requests: what is on its way (F61, F63). Phase 0: an in-memory list so the Requests tab has a shape.
  * Phase 2 replaces the store with SQLite and the pipeline (catalogue, slskd, Lidarr import, scan).
+ * Strings are bounded and the store is capped so an unauthenticated phase-0 hub cannot be filled up.
  */
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
+/** Longest title, artist, album or name the hub accepts. */
+export const MAX_TEXT = 200;
+/** Requests kept in memory; the oldest are dropped past this. */
+export const STORE_CAP = 500;
+
 export const RequestKind = z.enum(['track', 'album']);
 export const RequestStatus = z.enum(['requested', 'finding', 'downloading', 'ready', 'failed']);
 
+const text = z.string().trim().min(1).max(MAX_TEXT);
+
 export const NewRequest = z.object({
   kind: RequestKind,
-  title: z.string().trim().min(1),
-  artist: z.string().trim().min(1),
-  album: z.string().trim().optional(),
-  musicBrainzId: z.string().trim().optional(),
-  requestedBy: z.string().trim().min(1).default('local'),
+  title: text,
+  artist: text,
+  album: text.optional(),
+  musicBrainzId: z.uuid().optional(),
+  requestedBy: z.string().trim().min(1).max(64).default('local'),
 });
 
 export const MusicRequest = NewRequest.extend({
@@ -33,7 +41,7 @@ export interface RequestStore {
   get(id: string): MusicRequest | undefined;
 }
 
-export function memoryRequestStore(): RequestStore {
+export function memoryRequestStore(cap: number = STORE_CAP): RequestStore {
   const items = new Map<string, MusicRequest>();
   return {
     list: () => [...items.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -48,6 +56,12 @@ export function memoryRequestStore(): RequestStore {
         updatedAt: now,
       };
       items.set(item.id, item);
+      // Map keeps insertion order, so the first key is the oldest.
+      while (items.size > cap) {
+        const oldest = items.keys().next().value;
+        if (oldest === undefined) break;
+        items.delete(oldest);
+      }
       return item;
     },
   };

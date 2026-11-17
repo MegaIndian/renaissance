@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { JellyfinAdapter, NotImplementedError } from '../src/adapters/jellyfin';
+import {
+  JellyfinAdapter,
+  NotImplementedError,
+  headerSafe,
+  serverBase,
+} from '../src/adapters/jellyfin';
+import { Server as ServerSchema } from '../src/models';
 import type { Server, Track } from '../src/models';
 import type { Session } from '../src/server-adapter';
 
@@ -53,5 +59,44 @@ describe('JellyfinAdapter', () => {
     await expect(adapter.signIn({ userName: 'a', password: 'b' })).rejects.toBeInstanceOf(
       NotImplementedError,
     );
+  });
+});
+
+describe('JellyfinAdapter URL and header hygiene', () => {
+  const slashServer: Server = { ...server, url: 'http://localhost:8096///' };
+  const slashAdapter = new JellyfinAdapter(slashServer, {
+    deviceName: 'Sahil\'s "Mac"\\\n',
+    deviceId: 'dev-1',
+    version: '0.0.0',
+  });
+
+  it('drops trailing slashes from the server URL', () => {
+    expect(slashAdapter.server.url).toBe('http://localhost:8096');
+    expect(slashAdapter.streamUrl(session, track, 'original')).toMatch(
+      /^http:\/\/localhost:8096\/Audio\/abc\/universal\?/,
+    );
+    expect(slashAdapter.downloadUrl(session, track)).toBe(
+      'http://localhost:8096/Items/abc/Download?api_key=tok',
+    );
+    expect(new URL(slashAdapter.imageUrl(session, 'img', 120)).pathname).toBe(
+      '/Items/img/Images/Primary',
+    );
+  });
+
+  it('escapes quotes, backslashes and control characters in the header', () => {
+    expect(slashAdapter.authorizationHeader()).toBe(
+      'MediaBrowser Client="Renaissance", Device="Sahil\'s Mac", DeviceId="dev-1", Version="0.0.0"',
+    );
+    expect(headerSafe('a"b\\c\u0000d')).toBe('abcd');
+    expect(serverBase('https://x.test/')).toBe('https://x.test');
+    expect(serverBase('/'.repeat(5000))).toBe('');
+    expect(serverBase('http://a.test')).toBe('http://a.test');
+  });
+
+  it('the Server schema normalises the URL too', () => {
+    expect(ServerSchema.parse({ ...server, url: 'https://music.example.com/' }).url).toBe(
+      'https://music.example.com',
+    );
+    expect(ServerSchema.safeParse({ ...server, url: 'not a url' }).success).toBe(false);
   });
 });

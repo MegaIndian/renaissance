@@ -1,6 +1,9 @@
 import { chart } from '@renaissance/design';
 
-/** Square placeholder art in the six chart colours, as in the mockup. */
+/**
+ * Square placeholder art in the six chart colours, as in the mockup. Stands in for art that exists
+ * (an album without a cover); an empty row shows an EmptyState instead (DESIGN.md rule 3).
+ */
 export function PlaceholderArt({
   index,
   label,
@@ -11,11 +14,16 @@ export function PlaceholderArt({
   size?: 'sm' | 'md';
 }) {
   const color = chart[index % chart.length];
-  const cls = size === 'sm' ? 'size-9 rounded-sm' : 'aspect-square w-full rounded-sm';
+  const cls = size === 'sm' ? 'size-12 rounded-sm' : 'aspect-square w-full rounded-sm';
   return (
-    <div aria-hidden className={`relative overflow-hidden ${cls}`} style={{ background: color }}>
+    <div
+      aria-hidden
+      data-testid="placeholder-art"
+      className={`relative shrink-0 overflow-hidden ${cls}`}
+      style={{ background: color }}
+    >
       {label ? (
-        <span className="absolute bottom-1.5 left-2 text-[11px] font-semibold text-white/85">
+        <span className="absolute bottom-1.5 left-2 text-caption font-semibold text-background">
           {label}
         </span>
       ) : null}

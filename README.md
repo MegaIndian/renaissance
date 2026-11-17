@@ -45,7 +45,11 @@ pnpm --filter mobile start # Expo dev server (needs Xcode or Android Studio, or 
 ```
 
 Checks: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. A demo Jellyfin with Creative Commons
-music for tests and for contributors without a library: `node docker/demo/start.mjs` (needs Docker).
+music for tests and for contributors without a library: `node docker/demo/start.mjs` (needs Docker;
+it completes the Jellyfin wizard, creates the `demo` user and the music library, and prints the
+password). The hub's routes and curl lines are in [docs/hub-api.md](docs/hub-api.md); its container
+image is `apps/hub/Dockerfile`. Screenshots at phone, tablet and desktop widths are in
+`docs/screens/`.
 
 ## Repository
 
@@ -55,7 +59,7 @@ apps/mobile     Expo (React Native), expo-router
 apps/hub        Node, Fastify: intent engine, catalogue, fetch pipeline, enrichment; holds every key
 packages/core   Everything that is not a screen: adapters, models, queue, playback policy, i18n
 packages/design Design tokens and DESIGN.md
-docs/           ROADMAP.md, adr/, design/
+docs/           ROADMAP.md, hub-api.md, adr/, design/, screens/
 docker/demo     Demo Jellyfin with Creative Commons tracks
 ```
 
@@ -66,4 +70,4 @@ rules live in `packages/design/DESIGN.md`; the hub's never-invent rule in `docs/
 
 ## Licence
 
-GPL-3.0-only. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -7,15 +7,23 @@
     "placeholder": "Ask for anything: a song, a mood, a chore, a request",
     "hint": "Try \"play something calm for cooking\"",
     "listening": "Listening…",
-    "noResults": "Nothing in your library matches yet"
+    "noResults": "Nothing in your library matches yet",
+    "shortcut": "⌘K"
   },
   "home": {
-    "greeting": "Good evening, {{name}}",
     "mySongs": "My songs",
     "recent": "Recently played",
     "mixes": "Made for you",
     "recentlyAdded": "Recently added",
-    "empty": "Sign in to a server to see your music here"
+    "empty": "Sign in to a server to see your music here",
+    "greetingMorning": "Good morning",
+    "greetingAfternoon": "Good afternoon",
+    "greetingEvening": "Good evening",
+    "greetingWithName": "{{greeting}}, {{name}}",
+    "emptyBody": "Renaissance plays from your own Jellyfin server. Sign in once and your songs, recent plays and mixes appear here.",
+    "mySongsEmpty": "Your favourite songs appear here",
+    "recentEmpty": "What you play shows up here",
+    "mixesEmpty": "Mixes built from what you play appear here, each named in words"
   },
   "signIn": {
     "title": "Sign in to your server",
@@ -32,7 +40,8 @@
     "search": "Search",
     "library": "Library",
     "requests": "Requests",
-    "settings": "Settings"
+    "settings": "Settings",
+    "primary": "Navigation"
   },
   "player": {
     "play": "Play",
@@ -43,5 +52,22 @@
   },
   "status": {
     "preAlpha": "Pre-alpha, phase 0: nothing plays yet."
+  },
+  "library": {
+    "empty": "Your library appears here after you sign in"
+  },
+  "requests": {
+    "empty": "Nothing requested yet",
+    "emptyBody": "Ask for a song or an album and it shows up here with its progress."
+  },
+  "settings": {
+    "language": "Language",
+    "mode": "Mode",
+    "modeSimple": "Simple",
+    "modeAdvanced": "Advanced"
+  },
+  "language": {
+    "en": "English",
+    "gu": "ગુજરાતી"
   }
 }
