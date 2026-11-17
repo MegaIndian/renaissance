@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+
+# builds and caches
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+*.tsbuildinfo
+.eslintcache
+
+# environment files: never committed
+.env
+.env.*
+!.env.example
+
+# Expo and React Native
+.expo/
+expo-env.d.ts
+web-build/
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+apps/mobile/ios/
+apps/mobile/android/
+
+# demo server data (downloaded or generated, never committed)
+docker/demo/music/*.mp3
+docker/demo/music/*.flac
+docker/demo/music/*.ogg
+docker/demo/config/
+
+# editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
