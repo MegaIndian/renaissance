@@ -326,22 +326,22 @@ importers:
         version: link:../../packages/design
       '@tanstack/react-query':
         specifier: ~5.107.0
-        version: 5.107.1(@types/react@19.3.0)(react@19.3.1)
+        version: 5.107.1(@types/react@19.3.0)(react@19.3.0)
       i18next:
         specifier: ^27.1.5
         version: 27.1.5(typescript@6.0.3)
       react:
-        specifier: ^19.3.1
-        version: 19.3.1
+        specifier: 19.3.0
+        version: 19.3.0
       react-dom:
-        specifier: ^19.3.1
-        version: 19.3.1(react@19.3.1)
+        specifier: 19.3.0
+        version: 19.3.0(react@19.3.0)
       react-i18next:
         specifier: ^18.0.2
-        version: 18.0.2(@types/react@19.3.0)(i18next@27.1.5(typescript@6.0.3))(react@19.3.1)(typescript@6.0.3)
+        version: 18.0.2(@types/react@19.3.0)(i18next@27.1.5(typescript@6.0.3))(react@19.3.0)(typescript@6.0.3)
       react-router:
         specifier: ^8.5.1
-        version: 8.5.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 8.5.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.5
@@ -3803,11 +3803,6 @@ packages:
     peerDependencies:
       react: ^19.3.0
 
-  react-dom@19.3.1:
-    resolution: {integrity: sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==}
-    peerDependencies:
-      react: ^19.3.1
-
   react-fast-compare@3.2.3:
     resolution: {integrity: sha512-WY9YHI1jjYC5a2lNRfHbeaNVQqiY+mMKWBSw1mPU0FgevlxI6V7izhNYz7Vp5ieFxetuRb6RmihPQxXEzg7oWQ==}
 
@@ -3923,10 +3918,6 @@ packages:
 
   react@19.3.0:
     resolution: {integrity: sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==}
-    engines: {node: '>=0.10.0'}
-
-  react@19.3.1:
-    resolution: {integrity: sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==}
     engines: {node: '>=0.10.0'}
 
   real-require@1.0.0:
@@ -6379,10 +6370,10 @@ snapshots:
 
   '@tanstack/query-core@5.107.1': {}
 
-  '@tanstack/react-query@5.107.1(@types/react@19.3.0)(react@19.3.1)':
+  '@tanstack/react-query@5.107.1(@types/react@19.3.0)(react@19.3.0)':
     dependencies:
       '@tanstack/query-core': 5.107.1
-      react: 19.3.1
+      react: 19.3.0
     optionalDependencies:
       '@types/react': 19.3.0
 
@@ -8417,11 +8408,6 @@ snapshots:
       react: 19.3.0
       scheduler: 0.28.0
 
-  react-dom@19.3.1(react@19.3.1):
-    dependencies:
-      react: 19.3.1
-      scheduler: 0.28.0
-
   react-fast-compare@3.2.3: {}
 
   react-freeze@1.0.4(react@19.3.0):
@@ -8433,15 +8419,6 @@ snapshots:
       html-parse-stringify: 4.0.1
       i18next: 27.1.5(typescript@6.0.3)
       react: 19.3.0
-    optionalDependencies:
-      '@types/react': 19.3.0
-      typescript: 6.0.3
-
-  react-i18next@18.0.2(@types/react@19.3.0)(i18next@27.1.5(typescript@6.0.3))(react@19.3.1)(typescript@6.0.3):
-    dependencies:
-      html-parse-stringify: 4.0.1
-      i18next: 27.1.5(typescript@6.0.3)
-      react: 19.3.1
     optionalDependencies:
       '@types/react': 19.3.0
       typescript: 6.0.3
@@ -8574,19 +8551,17 @@ snapshots:
 
   react-refresh@0.14.2: {}
 
-  react-router@8.5.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  react-router@8.5.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@remix-run/route-pattern': 0.22.1
       cookie-es: 3.1.1
-      react: 19.3.1
+      react: 19.3.0
     optionalDependencies:
       '@types/react': 19.3.0
       '@types/react-dom': 19.3.0(@types/react@19.3.0)
-      react-dom: 19.3.1(react@19.3.1)
+      react-dom: 19.3.0(react@19.3.0)
 
   react@19.3.0: {}
-
-  react@19.3.1: {}
 
   real-require@1.0.0: {}
 
