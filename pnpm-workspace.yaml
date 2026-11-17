@@ -17,3 +17,9 @@ minimumReleaseAgeExclude:
   - '@tanstack/query-core@5.108.0'
 # Supply-chain policy: a package must be at least a day old before it is installed (pnpm default, made explicit).
 minimumReleaseAge: 1440
+# `pnpm audit --audit-level high` runs in CI. Advisories listed here are known and unpatched upstream:
+auditConfig:
+  ignoreGhsas:
+    # picomatch <=4.0.7 (via vite/tinyglobby, vitest, metro/jest-util): no patched version yet.
+    # Build-time glob matching only; revisit when a fix is released.
+    - GHSA-fc5q-39xc-vjpf

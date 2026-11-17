@@ -22,3 +22,9 @@ to an `AudioEngine` interface.
 - This is the largest native risk; it is scheduled in phase 3 before offline work so it is known early.
 - Fallback if the module fights RNTP's player: a fork of RNTP with the DSP added, or `react-native-audio-api`.
 - Crossfade is disabled between tracks of the same album when gapless is on, and never used in CarPlay.
+
+## Note (2026-11-17, phase 0 rework)
+
+Phase numbers follow the revised table in the build program: the native audio module ships in phase 3
+(Mobile + audio), after the hub (phase 2). The earlier plan's Risks table still says "phase 2" from
+its original eight-phase layout; this ADR and the build program are the reference.

@@ -1,0 +1,15 @@
+Renaissance
+Copyright (C) 2026 Sahil Patel (MegaIndian) and contributors
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version. See LICENSE for the full text. There are no per-file licence
+headers; this notice and LICENSE cover every file in the repository unless a file says otherwise.
+
+Third-party material:
+
+- The demo server's four tracks (docker/demo) are by Kevin MacLeod (incompetech.com), licensed
+  CC BY 4.0; attribution and source URLs are in docker/demo/music/LICENSE.md. They are downloaded on
+  first run and never committed.
+- The code of conduct is adapted from the Contributor Covenant 2.1 (CC BY 4.0).
+- Dependencies keep their own licences (see each package's package.json and node_modules).
