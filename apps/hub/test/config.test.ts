@@ -1,15 +1,24 @@
 import { describe as suite, expect, it } from 'vitest';
 
-import { ConfigError, describe, loadConfig } from '../src/config.js';
+import { ConfigError, DEV_CORS_ORIGINS, describe, loadConfig } from '../src/config.js';
 
 suite('loadConfig', () => {
-  it('uses defaults with an empty environment', () => {
+  it('uses defaults with an empty environment, including the dev CORS origin', () => {
     const c = loadConfig({});
     expect(c.port).toBe(8787);
     expect(c.host).toBe('0.0.0.0');
-    expect(c.corsOrigins).toEqual([]);
+    expect(c.environment).toBe('development');
+    expect(c.corsOrigins).toEqual([...DEV_CORS_ORIGINS]);
     expect(c.anthropic.intentModel).toBe('claude-opus-5-5');
     expect(c.anthropic.enrichmentModel).toBe('claude-haiku-5-5');
+  });
+
+  it('allows no browser origin in production unless configured', () => {
+    expect(loadConfig({ NODE_ENV: 'production' }).corsOrigins).toEqual([]);
+    expect(
+      loadConfig({ NODE_ENV: 'production', RENAISSANCE_HUB_CORS_ORIGINS: 'https://m.test' })
+        .corsOrigins,
+    ).toEqual(['https://m.test']);
   });
 
   it('reads values and splits CORS origins', () => {

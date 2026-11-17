@@ -1,6 +1,8 @@
 /**
  * Hub configuration. Reads environment variables only: no config files, no CLI flags, nothing in the
- * repo. Secrets are typed as `secret` so they are never logged; `describe()` prints presence, not values.
+ * repo. `.env` is loaded by Node itself (`--env-file-if-exists=.env` in the package scripts), so this
+ * module still sees nothing but `process.env`. Secrets are typed as `secret` so they are never logged;
+ * `describe()` prints presence, not values.
  */
 import { z } from 'zod';
 
@@ -17,7 +19,11 @@ const secret = z
   .optional()
   .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.trim()));
 
+/** The web app's Vite dev server; allowed by default outside production so a fresh clone just works. */
+export const DEV_CORS_ORIGINS = ['http://localhost:5173'] as const;
+
 const schema = z.object({
+  NODE_ENV: z.string().trim().default('development'),
   RENAISSANCE_HUB_HOST: z.string().trim().min(1).default('0.0.0.0'),
   RENAISSANCE_HUB_PORT: z.coerce.number().int().min(1).max(65535).default(8787),
   RENAISSANCE_HUB_CORS_ORIGINS: z
@@ -42,8 +48,11 @@ const schema = z.object({
 });
 
 export interface HubConfig {
+  /** `production` or anything else; only CORS defaults depend on it. */
+  environment: string;
   host: string;
   port: number;
+  /** Browser origins allowed to call the hub. Empty means same origin only. */
   corsOrigins: string[];
   jellyfin: { url: string | undefined; apiKey: string | undefined };
   anthropic: { apiKey: string | undefined; intentModel: string; enrichmentModel: string };
@@ -65,10 +74,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new ConfigError(`Invalid hub configuration: ${issues}`);
   }
   const e = parsed.data;
+  const production = e.NODE_ENV === 'production';
+  const corsOrigins =
+    e.RENAISSANCE_HUB_CORS_ORIGINS.length > 0 || production
+      ? e.RENAISSANCE_HUB_CORS_ORIGINS
+      : [...DEV_CORS_ORIGINS];
   return {
+    environment: e.NODE_ENV,
     host: e.RENAISSANCE_HUB_HOST,
     port: e.RENAISSANCE_HUB_PORT,
-    corsOrigins: e.RENAISSANCE_HUB_CORS_ORIGINS,
+    corsOrigins,
     jellyfin: { url: e.JELLYFIN_URL, apiKey: e.JELLYFIN_API_KEY },
     anthropic: {
       apiKey: e.ANTHROPIC_API_KEY,
@@ -83,6 +98,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 /** Safe to log: says which integrations are configured, never a value. */
 export function describe(config: HubConfig): Record<string, string | number | boolean> {
   return {
+    environment: config.environment,
     host: config.host,
     port: config.port,
     corsOrigins: config.corsOrigins.length,

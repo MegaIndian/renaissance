@@ -37,3 +37,11 @@ history.
 - Nothing leaves the house except the words typed and the metadata a call needs; no audio is uploaded.
 - Not adopted: a talking DJ (F85, later). Explain (F81) answers only from MusicBrainz and Wikipedia pages
   the hub fetched, with sources.
+
+## Addendum (2026-11-17, phase 0 rework)
+
+- The hub has no authentication in phase 0: it is a stub on a home network behind nothing. Phase 2
+  introduces a hub token that every app sends; from then on `GET /health` answers `status` only to
+  anonymous callers and the `integrations` detail (which services and models are configured) only
+  with the token. Request strings are bounded (200 characters) and the in-memory request store is
+  capped (500, oldest dropped) so an unauthenticated phase-0 hub cannot be filled up.
