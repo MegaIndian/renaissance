@@ -96,6 +96,10 @@ export function AskBar({
     const text = value.trim();
     if (!text || !client || status !== 'ready') return;
     abort.current?.abort();
+    // The typeahead for these letters, in flight or still waiting its debounce, must not land
+    // after the answer and refill the rows under it (design R).
+    abortTypeahead.current?.abort();
+    setTypeahead(null);
     const controller = new AbortController();
     abort.current = controller;
     setOpen(true);

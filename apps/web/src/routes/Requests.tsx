@@ -20,7 +20,9 @@ type Scope = 'mine' | 'house';
  * the pill, a sentence for a failure everyone can act on, progress in words, and the song that will
  * actually arrive when the catalogue matched something other than the words typed. The pipeline's
  * own words sit behind a collapsed "What happened" in advanced mode only (design B, W); those
- * detail lines are the hub's English and the panel says so in Gujarati.
+ * detail lines are the hub's English and the panel says so in Gujarati. A request someone else
+ * made and this person watches says who asked, in every scope, and offers no Cancel or Retry: the
+ * hub answers 404 to anyone but the asker (design AB).
  */
 export function Requests() {
   const { t } = useTranslation();
@@ -118,7 +120,8 @@ export function Requests() {
             <RequestRow
               key={request.id}
               request={request}
-              showWho={effectiveScope === 'house'}
+              showWho={effectiveScope === 'house' || request.requestedBy !== profile?.id}
+              owner={request.requestedBy === profile?.id || (admin && effectiveScope === 'house')}
               onCancel={() => void cancel(request)}
               onRetry={() => void retry(request)}
             />
@@ -156,18 +159,21 @@ export function progressWords(progress: RequestProgress, t: TFunction): string {
 function RequestRow({
   request,
   showWho,
+  owner,
   onCancel,
   onRetry,
 }: {
   request: MusicRequest;
   showWho: boolean;
+  /** The viewer asked for it (or is the admin looking at the house): Cancel and Retry are theirs. */
+  owner: boolean;
   onCancel: () => void;
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
   const { showDetail } = useDetailLevel();
-  const canCancel = request.status === 'requested' || request.status === 'finding';
-  const canRetry = request.status === 'failed';
+  const canCancel = owner && (request.status === 'requested' || request.status === 'finding');
+  const canRetry = owner && request.status === 'failed';
   const reason =
     request.status === 'failed'
       ? t(`requests.reason.${request.reason ?? 'error'}`, {
@@ -215,8 +221,17 @@ function RequestRow({
       ) : null}
       {reason ? <p className="text-caption text-danger">{reason}</p> : null}
       {request.matched ? (
-        <p className="truncate text-caption text-muted-foreground">
-          {t('requests.matched', { title: request.matched.title, artist: request.matched.artist })}
+        <p className="line-clamp-2 break-words text-caption text-muted-foreground">
+          {request.matched.album
+            ? t('requests.matchedOn', {
+                title: request.matched.title,
+                artist: request.matched.artist,
+                album: request.matched.album,
+              })
+            : t('requests.matched', {
+                title: request.matched.title,
+                artist: request.matched.artist,
+              })}
         </p>
       ) : null}
       {showDetail && request.steps.length > 0 ? (

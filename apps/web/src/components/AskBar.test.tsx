@@ -295,11 +295,23 @@ describe('AskBar, round 2', () => {
     expect(adds).toHaveLength(2);
     expect(adds[0]!.className).toContain('bg-primary');
     expect(adds[1]!.className).not.toContain('bg-primary');
-    // Broken art falls back to the placeholder square, never the browser's broken-image glyph.
+    // The placeholder square sits under every picture until it has loaded (design AF); broken art
+    // falls back to it, never the browser's broken-image glyph (design U).
     const img = view.container.querySelector('img')!;
+    expect(img.className).toContain('opacity-0');
+    expect(img.parentElement?.children).toHaveLength(2);
+    const second = view.container.querySelectorAll('img')[1]!;
+    second.dispatchEvent(new Event('load'));
+    await waitFor(() => expect(second.className).toContain('opacity-100'));
     img.dispatchEvent(new Event('error'));
     await waitFor(() => expect(view.container.querySelectorAll('img')).toHaveLength(1));
+    // Enter aborts the typeahead still waiting for these letters (design R): on a cold cache it
+    // would otherwise land after the answer and refill the rows under the card.
+    const signals = (hub.catalogueSearch as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[1] as AbortSignal,
+    );
     await user.type(input, '{Enter}');
+    await waitFor(() => expect(signals.every((s) => s.aborted)).toBe(true));
     expect(await screen.findByText('Play Carefree')).toBeInTheDocument();
     // The leftover rows are gone, and the card is the first thing in the panel.
     expect(screen.queryByText('Carefree Spa Days')).not.toBeInTheDocument();
@@ -355,10 +367,21 @@ describe('AskBar, round 2', () => {
       await screen.findByText('Already on its way, asked by Mom. You will see it in Requests too'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
-    // The second row: requested, then an undo the hub refuses because it is downloading.
+    // The second row: requested, then an undo the hub refuses because it is downloading. While
+    // the hub is asked the caption says so (design AE), never "Undo" as a status.
     await user.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('Requested. Progress is in Requests')).toBeInTheDocument();
+    let refuse: () => void = () => {};
+    (hub.cancelRequest as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          refuse = () => reject(new HubClientError(409, 'too_late'));
+        }),
+    );
     await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByText('Undoing…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    refuse();
     expect(
       await screen.findByText('Too late, it is already downloading. It stays in Requests'),
     ).toBeInTheDocument();

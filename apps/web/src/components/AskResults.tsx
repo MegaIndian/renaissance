@@ -147,23 +147,25 @@ export function formatDuration(seconds: number | undefined): string {
 /**
  * 34 px art (DESIGN.md rule 8): the picture when there is one and it loads, else a placeholder
  * square (a Cover Art Archive URL exists for every release group whether or not the archive has
- * a picture, so the broken-image glyph must never show).
+ * a picture, so the broken-image glyph must never show). The placeholder sits under the picture
+ * until it has loaded, so a row never shows an empty square while the picture is on its way.
  */
 function Art({ src, index }: { src: string | undefined; index: number }) {
   const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
-  if (src && brokenSrc !== src) {
-    return (
-      <img
-        src={src}
-        alt={''}
-        className="size-8.5 shrink-0 rounded-sm object-cover"
-        onError={() => setBrokenSrc(src)}
-      />
-    );
-  }
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const showImage = !!src && brokenSrc !== src;
   return (
-    <div className="size-8.5 shrink-0">
+    <div className="relative size-8.5 shrink-0">
       <PlaceholderArt index={index} />
+      {showImage ? (
+        <img
+          src={src}
+          alt={''}
+          className={`absolute inset-0 size-full rounded-sm object-cover ${loadedSrc === src ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setLoadedSrc(src)}
+          onError={() => setBrokenSrc(src)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -301,7 +303,7 @@ function AddOutcome({ state, onUndo }: { state: AddState; onUndo: () => void }) 
           : state.kind === 'already'
             ? t('ask.alreadyHere')
             : state.kind === 'undoing'
-              ? t('ask.undo')
+              ? t('ask.undoing')
               : state.kind === 'undone'
                 ? t('ask.undone')
                 : state.kind === 'undoFailed'

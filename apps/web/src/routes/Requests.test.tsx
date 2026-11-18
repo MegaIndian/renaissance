@@ -98,7 +98,7 @@ describe('Requests', () => {
     expect(hub.requests).toHaveBeenCalledWith('house');
   });
 
-  it('hides the house switch and every machine detail from members, and cancels or retries on tap', async () => {
+  it('hides the house switch and every machine detail from members, cancels or retries their own on tap, and only watches the rest', async () => {
     setLanguage('en');
     const hub = fakeHub(
       {
@@ -109,6 +109,8 @@ describe('Requests', () => {
             title: 'Drowning',
             status: 'failed',
             reason: 'download_failed',
+            requestedBy: 'u-mom',
+            requestedByName: 'Mom',
             steps: [
               {
                 at: '2026-11-18T00:00:00.000Z',
@@ -122,9 +124,37 @@ describe('Requests', () => {
             id: '66666666-6666-4666-8666-666666666666',
             title: 'Stopped one',
             status: 'cancelled',
+            requestedBy: 'u-mom',
+            requestedByName: 'Mom',
             steps: [
               { at: '2026-11-18T00:00:00.000Z', status: 'cancelled', detail: 'Cancelled by Mom' },
             ],
+          }),
+          // Sahil asked first; Mom asked for the same album and watches it (design AB): the card
+          // says who asked and offers no Cancel, since the hub would answer 404.
+          request({
+            id: '88888888-8888-4888-8888-888888888888',
+            kind: 'album',
+            title: 'Hoodie SZN',
+            artist: 'A Boogie Wit da Hoodie',
+            album: undefined,
+            status: 'finding',
+            watchers: ['u-mom'],
+          }),
+          // The requested album stays on the card; the release the file lands on is its own line.
+          request({
+            id: '99999999-9999-4999-8999-999999999999',
+            title: 'Why This Kolaveri Di',
+            artist: 'Dhanush',
+            album: '3',
+            status: 'finding',
+            requestedBy: 'u-mom',
+            requestedByName: 'Mom',
+            matched: {
+              title: 'Why This Kolaveri Di?: The Soup of Love',
+              artist: 'Dhanush',
+              album: 'The Bollywood Remix Project',
+            },
           }),
         ]),
       },
@@ -140,8 +170,19 @@ describe('Requests', () => {
     // A cancelled request: a muted pill, no reason, no retry.
     expect(screen.getByText('Cancelled')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+    // The watched card: "asked by Sahil" in Mine, no Cancel; Mom's own cards carry no name.
+    expect(screen.getByText(/A Boogie Wit da Hoodie · asked by Sahil/)).toBeInTheDocument();
+    expect(screen.queryByText(/asked by Mom/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(2);
+    // The subtitle keeps the album asked for; the import target wraps on its own line.
+    expect(screen.getByText('Dhanush · 3')).toBeInTheDocument();
+    const arrive = screen.getByText(
+      'Will arrive as Why This Kolaveri Di?: The Soup of Love by Dhanush, on The Bollywood Remix Project',
+    );
+    expect(arrive.className).toContain('line-clamp-2');
+    expect(arrive.className).not.toContain('truncate');
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getAllByRole('button', { name: 'Cancel' })[0]!);
     expect(hub.cancelRequest).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
     await waitFor(() => expect(screen.getAllByText('Cancelled')).toHaveLength(2));
     expect(screen.getAllByText('Failed')).toHaveLength(1);
