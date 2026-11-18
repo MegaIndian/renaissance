@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import Fastify, { LogController } from 'fastify';
 import type { FastifyInstance } from 'fastify';
 
@@ -27,6 +28,11 @@ export async function buildApp({
 
   if (config.corsOrigins.length > 0) {
     await app.register(cors, { origin: config.corsOrigins });
+  }
+
+  // Per client address, every route but /health; 429 with retry-after past the limit.
+  if (config.rateLimitPerMinute > 0) {
+    await app.register(rateLimit, { max: config.rateLimitPerMinute, timeWindow: '1 minute' });
   }
 
   await healthRoutes(app, config);

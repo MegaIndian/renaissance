@@ -8,6 +8,7 @@ import {
   emptyQueue,
   next,
   playNext,
+  playedBefore,
   previous,
   replace,
   setRepeat,
@@ -41,7 +42,7 @@ describe('queue', () => {
     q = next(q);
     expect(current(q)?.id).toBe('2');
     expect(ids(upNext(q))).toEqual(['3', '4']);
-    expect(ids(q.history)).toEqual(['1']);
+    expect(ids(playedBefore(q))).toEqual(['1']);
   });
 
   it('clamps the start position', () => {
@@ -65,10 +66,21 @@ describe('queue', () => {
     expect(next(next(again)).history).toEqual([]);
   });
 
-  it('repeat one stays put without touching history', () => {
+  it('repeat one holds the track when it ends on its own', () => {
     const q = setRepeat(replace(emptyQueue, tracks, 1), 'one');
     expect(next(q)).toBe(q);
     expect(current(next(q))?.id).toBe('2');
+    expect(q.history).toEqual([]);
+  });
+
+  it('repeat one still moves on when the user presses Next', () => {
+    const q = setRepeat(replace(emptyQueue, tracks), 'one');
+    const pressed = next(q, { manual: true });
+    expect(current(pressed)?.id).toBe('2');
+    expect(ids(playedBefore(pressed))).toEqual(['1']);
+    expect(pressed.repeat).toBe('one');
+    const end = next(replace(q, tracks, 3), { manual: true });
+    expect(current(end)?.id).toBe('4');
   });
 
   it('play next inserts after the current track; add to end appends; both keep the added order', () => {
@@ -128,11 +140,46 @@ describe('queue', () => {
     expect(current(q)?.id).toBe('3');
     q = previous(q);
     expect(current(q)?.id).toBe('2');
-    expect(ids(q.history)).toEqual(['1']);
+    expect(ids(playedBefore(q))).toEqual(['1']);
     q = previous(q);
     expect(current(q)?.id).toBe('1');
     expect(q.history).toEqual([]);
     expect(previous(q)).toBe(q);
+  });
+
+  it('previous goes back to the copy that played, not to a newer copy of the same track', () => {
+    const [a, b, c] = tracks as [Track, Track, Track, Track];
+    let q = replace(emptyQueue, [a, b, c]);
+    q = next(q);
+    q = playNext(q, [a]);
+    expect(ids(q.items)).toEqual(['1', '2', '1', '3']);
+    q = previous(q);
+    expect(q.index).toBe(0);
+  });
+
+  it('play next inserts after the playing copy when the same track is queued twice', () => {
+    const [a, b, c] = tracks as [Track, Track, Track, Track];
+    let q = replace(emptyQueue, [a, b, a, c], 2);
+    q = playNext(q, [track('D')]);
+    expect(ids(q.items)).toEqual(['1', '2', '1', 'D', '3']);
+    expect(ids(q.order)).toEqual(['1', '2', '1', 'D', '3']);
+    q = setShuffle(
+      setShuffle(q, true, () => 0.4),
+      false,
+    );
+    expect(q.index).toBe(2);
+    expect(current(q)).toBe(a);
+  });
+
+  it('replace and clear drop the old history', () => {
+    const [a, b, c] = tracks as [Track, Track, Track, Track];
+    let q = replace(emptyQueue, [a, b, c]);
+    q = next(q);
+    q = replace(q, [c, a, b], 0);
+    expect(q.history).toEqual([]);
+    expect(previous(q)).toBe(q);
+    expect(current(previous(setRepeat(q, 'all')))?.id).toBe('2');
+    expect(clear(next(replace(q, tracks))).history).toEqual([]);
   });
 
   it('previous follows history across a shuffle', () => {

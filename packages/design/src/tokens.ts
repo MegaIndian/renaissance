@@ -4,7 +4,8 @@
  * Dark is the reference theme; light mirrors it. Both apps consume these, nothing else defines a colour.
  *
  * Every `*Foreground` token is the text colour for its surface. `test/contrast.test.ts` computes the
- * WCAG ratio of every pair in `textPairs` (see contrast.ts) and fails the build under 4.5:1.
+ * WCAG ratio of every pair in `textPairs` and `controlPairs` (see contrast.ts) and fails the build
+ * under 4.5:1 for text and 3:1 for control boundaries, the rendered focus outline included.
  */
 
 export const colors = {
@@ -21,7 +22,11 @@ export const colors = {
     primaryForeground: '#ffffff',
     secondary: '#1f1f28',
     secondaryForeground: '#e8e8ee',
-    ring: '#2f6fe0',
+    /**
+     * The focus outline (2 px solid, 2 px outside the control). Not the primary: it has to read at 3:1
+     * on every surface it is drawn next to, the primary button included, so it is a pale blue in dark.
+     */
+    ring: '#cfdeff',
     success: '#22c55e',
     successForeground: '#0f0f14',
     info: '#2f6fe0',
@@ -41,7 +46,8 @@ export const colors = {
     primaryForeground: '#ffffff',
     secondary: '#f1f1f5',
     secondaryForeground: '#111118',
-    ring: '#2563eb',
+    /** Focus outline in light: a navy that passes 3:1 on white, card, muted and the primary. */
+    ring: '#0b1a3f',
     success: '#15803d',
     successForeground: '#ffffff',
     info: '#2563eb',

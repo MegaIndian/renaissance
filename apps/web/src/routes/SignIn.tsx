@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../components/Button';
+import { focusRing } from '../components/focus';
 
 /** Sign-in placeholder (F1). Phase 1 wires it to JellyfinAdapter.signIn; nothing is sent here. */
 export function SignIn() {
@@ -50,7 +51,7 @@ function Field({
         id={id}
         type={type}
         autoComplete={type === 'password' ? 'current-password' : 'off'}
-        className="rounded-sm border border-input-border bg-background px-2.5 py-1.5 text-body font-normal text-foreground outline-none focus:ring-3 focus:ring-ring/25"
+        className={`rounded-sm border border-input-border bg-background px-2.5 py-1.5 text-body font-normal text-foreground ${focusRing}`}
       />
       {hint ? <span className="text-caption font-normal text-muted-foreground">{hint}</span> : null}
     </label>

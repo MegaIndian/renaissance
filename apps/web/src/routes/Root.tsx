@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import { useTranslation } from 'react-i18next';
 
@@ -7,14 +8,16 @@ import { LanguageSwitch } from '../components/LanguageSwitch';
 import { NowPlayingBar } from '../components/NowPlayingBar';
 import { Sidebar } from '../components/Sidebar';
 import { TabBar } from '../components/TabBar';
+import { focusRing } from '../components/focus';
 import { useIsDesktop } from '../lib/media';
 
 /**
  * The shell. Desktop (768 px and up): Sidebar, the Ask bar as a top bar, content, player.
  * Phone: header with the language switch and sign-in, content, the Ask bar above the player, TabBar.
- * The Ask bar is rendered once, here, so it is on every screen (DESIGN.md rule 7).
+ * The Ask bar is rendered once, here, so it is on every screen (DESIGN.md rule 7). The router's
+ * error element passes its own content as `children`; routes render through the Outlet.
  */
-export function Root() {
+export function Root({ children }: { children?: ReactNode }) {
   const { t } = useTranslation();
   const desktop = useIsDesktop();
   return (
@@ -34,7 +37,7 @@ export function Root() {
               to="/sign-in"
               aria-label={t('signIn.submit')}
               className={({ isActive }) =>
-                `grid size-8 place-items-center rounded-pill border border-border outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${
+                `grid size-8 place-items-center rounded-pill border border-border ${focusRing} ${
                   isActive ? 'bg-muted text-foreground' : 'text-muted-foreground'
                 }`
               }
@@ -44,7 +47,7 @@ export function Root() {
           </header>
         )}
         <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6">
-          <Outlet />
+          {children ?? <Outlet />}
         </main>
         {desktop ? null : (
           <div className="border-t border-border px-4 py-2">

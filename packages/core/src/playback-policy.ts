@@ -5,6 +5,11 @@
 import type { Track } from './models';
 import type { StreamQuality } from './server-adapter';
 
+/**
+ * `unknown` (the platform could not say) is treated as cellular, the cautious choice. `offline`
+ * means the caller plays from the cache only; the policy then decides for a file on disk, so no
+ * network cap applies and a supported codec direct-plays.
+ */
 export type NetworkClass = 'wifi' | 'cellular' | 'offline' | 'unknown';
 
 export interface PlaybackSettings {
@@ -32,7 +37,8 @@ export function decidePlayback(
   network: NetworkClass,
   settings: PlaybackSettings = defaultPlaybackSettings,
 ): PlaybackDecision {
-  const cap = network === 'cellular' ? settings.cellularMaxBitrate : settings.wifiMaxBitrate;
+  const metered = network === 'cellular' || network === 'unknown';
+  const cap = metered ? settings.cellularMaxBitrate : settings.wifiMaxBitrate;
   const codec = track.codec?.toLowerCase();
   const codecOk = codec !== undefined && settings.directPlayCodecs.includes(codec);
   const bitrateOk = cap === 0 || track.bitrate === undefined || track.bitrate <= cap;

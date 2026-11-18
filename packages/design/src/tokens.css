@@ -11,7 +11,7 @@
   --primary-foreground: #ffffff;
   --secondary: #1f1f28;
   --secondary-foreground: #e8e8ee;
-  --ring: #2f6fe0;
+  --ring: #cfdeff;
   --success: #22c55e;
   --success-foreground: #0f0f14;
   --info: #2f6fe0;
@@ -80,7 +80,7 @@
   --primary-foreground: #ffffff;
   --secondary: #f1f1f5;
   --secondary-foreground: #111118;
-  --ring: #2563eb;
+  --ring: #0b1a3f;
   --success: #15803d;
   --success-foreground: #ffffff;
   --info: #2563eb;
@@ -108,7 +108,7 @@
     --primary-foreground: #ffffff;
     --secondary: #f1f1f5;
     --secondary-foreground: #111118;
-    --ring: #2563eb;
+    --ring: #0b1a3f;
     --success: #15803d;
     --success-foreground: #ffffff;
     --info: #2563eb;

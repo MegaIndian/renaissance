@@ -45,11 +45,20 @@ updates:
     directory: /docker/demo
     schedule:
       interval: weekly
+    ignore:
+      # docker/demo/jellyfin-setup.mjs drives the 10.10 Startup API; a Jellyfin major is a deliberate
+      # upgrade with a live run against the new image, not a bot bump (closed #11).
+      - dependency-name: jellyfin/jellyfin
+        update-types: ['version-update:semver-major']
     commit-message:
       prefix: 'chore(demo)'
   - package-ecosystem: docker
     directory: /apps/hub
     schedule:
       interval: weekly
+    ignore:
+      # The repo runs Node 22 (.nvmrc, engines, @types/node); the image follows when they move (closed #10).
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
     commit-message:
       prefix: 'build(hub)'

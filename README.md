@@ -21,8 +21,15 @@ history never leave your house and one hub serves every phone and browser in it.
 
 ## Screenshots
 
-_Coming with phase 1._ Until then, the look is in [`docs/design/mockup-2026-11-17.html`](docs/design/mockup-2026-11-17.html)
-and the rules in [`packages/design/DESIGN.md`](packages/design/DESIGN.md).
+Phase 0, signed out, simple mode, dark. Every width, language and theme is in
+[`docs/screens/phase-0/`](docs/screens/phase-0/); the rules are in
+[`packages/design/DESIGN.md`](packages/design/DESIGN.md) and the mockup in
+[`docs/design/mockup-2026-11-17.html`](docs/design/mockup-2026-11-17.html).
+
+<p>
+  <img src="docs/screens/phase-0/home-phone-en-dark.png" alt="Phone home, English, dark: greeting, sign-in card, three empty rows, the Ask bar and three tabs" width="240" />
+  <img src="docs/screens/phase-0/home-desktop-en-dark.png" alt="Desktop home, English, dark: sidebar, the Ask bar as the top bar, greeting, sign-in card and three empty rows" width="620" />
+</p>
 
 ## What you need on the server
 

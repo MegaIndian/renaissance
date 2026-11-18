@@ -1,9 +1,10 @@
 # Phase 0 screenshots
 
-Taken from the production build with headless Chrome over the DevTools protocol at exact viewports
-(device scale 2): phone 390×844, tablet 820×1180, desktop 1280×800, English and Gujarati, dark and
-light. The URL parameters `?lang=`, `?theme=` and `?mode=` select the language, theme and mode for a
-run. `home-phone-en-dark-scrolled.png` is the phone home scrolled to the third row.
+Taken from the production build with Playwright's Chromium at exact viewports (device scale 2):
+phone 390×844, tablet 820×1180, desktop 1280×800, English and Gujarati, dark and light. Retake them
+with `pnpm --filter web build && pnpm --filter web screenshots` (`apps/web/scripts/screenshots.mjs`).
+The URL parameters `?lang=`, `?theme=` and `?mode=` select the language, theme and mode for a run.
+`home-phone-en-dark-scrolled.png` is the phone home scrolled to the third row.
 
 | File pattern                                           | What                                                               |
 | ------------------------------------------------------ | ------------------------------------------------------------------ |

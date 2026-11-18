@@ -26,6 +26,8 @@ const schema = z.object({
   NODE_ENV: z.string().trim().default('development'),
   RENAISSANCE_HUB_HOST: z.string().trim().min(1).default('0.0.0.0'),
   RENAISSANCE_HUB_PORT: z.coerce.number().int().min(1).max(65535).default(8787),
+  /** Requests per minute per client address; 0 turns the limit off. */
+  RENAISSANCE_HUB_RATE_LIMIT: z.coerce.number().int().min(0).default(120),
   RENAISSANCE_HUB_CORS_ORIGINS: z
     .string()
     .trim()
@@ -54,6 +56,8 @@ export interface HubConfig {
   port: number;
   /** Browser origins allowed to call the hub. Empty means same origin only. */
   corsOrigins: string[];
+  /** Requests per minute one client address may make; 0 means no limit. */
+  rateLimitPerMinute: number;
   jellyfin: { url: string | undefined; apiKey: string | undefined };
   anthropic: { apiKey: string | undefined; intentModel: string; enrichmentModel: string };
   lidarr: { url: string | undefined; apiKey: string | undefined };
@@ -84,6 +88,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     host: e.RENAISSANCE_HUB_HOST,
     port: e.RENAISSANCE_HUB_PORT,
     corsOrigins,
+    rateLimitPerMinute: e.RENAISSANCE_HUB_RATE_LIMIT,
     jellyfin: { url: e.JELLYFIN_URL, apiKey: e.JELLYFIN_API_KEY },
     anthropic: {
       apiKey: e.ANTHROPIC_API_KEY,
@@ -102,6 +107,7 @@ export function describe(config: HubConfig): Record<string, string | number | bo
     host: config.host,
     port: config.port,
     corsOrigins: config.corsOrigins.length,
+    rateLimitPerMinute: config.rateLimitPerMinute,
     jellyfin: config.jellyfin.url !== undefined && config.jellyfin.apiKey !== undefined,
     anthropic: config.anthropic.apiKey !== undefined,
     intentModel: config.anthropic.intentModel,

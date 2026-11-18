@@ -1,4 +1,9 @@
-/** Pill group on a `muted` track; the active segment sits on `card` with the low shadow (DESIGN.md rule 4). */
+import { focusRing } from './focus';
+
+/**
+ * Pill group on a `muted` track; the active segment sits on `card` with the low shadow (DESIGN.md
+ * rule 4). Each segment is at least 24 px tall (30 px in simple mode), the target minimum.
+ */
 export function SegmentedControl<T extends string>({
   label,
   value,
@@ -21,7 +26,7 @@ export function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={active}
             onClick={() => onChange(option.value)}
-            className={`rounded-sm px-2 py-0.5 text-caption outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${
+            className={`min-h-6 min-w-6 rounded-sm px-2 py-1.5 text-caption ${focusRing} ${
               active
                 ? 'bg-card text-foreground shadow-low'
                 : 'text-muted-foreground hover:text-foreground'

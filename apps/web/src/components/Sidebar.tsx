@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Icon } from './Icon';
 import { LanguageSwitch } from './LanguageSwitch';
+import { focusRing } from './focus';
 import { primaryNav } from './navigation';
 
 /** Desktop navigation (768 px and up). The phone equivalent is TabBar. */
@@ -21,7 +22,7 @@ export function Sidebar() {
             to={item.to}
             end={item.to === '/'}
             className={({ isActive }) =>
-              `flex items-center gap-2 rounded-sm px-2 py-1.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${
+              `flex min-h-6 items-center gap-2 rounded-sm px-2 py-1.5 ${focusRing} ${
                 isActive
                   ? 'bg-muted text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
@@ -37,7 +38,7 @@ export function Sidebar() {
         <LanguageSwitch />
         <NavLink
           to="/sign-in"
-          className="flex items-center gap-2 text-caption text-muted-foreground hover:text-foreground"
+          className={`flex min-h-6 items-center gap-2 rounded-sm py-1.5 text-caption text-muted-foreground hover:text-foreground ${focusRing}`}
         >
           <Icon name="person" />
           {t('signIn.submit')}

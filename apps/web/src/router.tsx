@@ -3,6 +3,7 @@ import type { RouteObject } from 'react-router';
 
 import { Home } from './routes/Home';
 import { Library } from './routes/Library';
+import { NotFound } from './routes/NotFound';
 import { Requests } from './routes/Requests';
 import { Root } from './routes/Root';
 import { SignIn } from './routes/SignIn';
@@ -11,6 +12,7 @@ export const routes: RouteObject[] = [
   {
     path: '/',
     Component: Root,
+    ErrorBoundary: NotFound,
     children: [
       { index: true, Component: Home },
       { path: 'library', Component: Library },

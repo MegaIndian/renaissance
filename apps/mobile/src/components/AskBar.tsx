@@ -4,6 +4,8 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useTheme } from '@/lib/theme';
 
+import { Icon } from './Icon';
+
 /**
  * The one box on every screen (F75), rendered by the TabBar shell and the sign-in screen.
  * Phase 0: the input and its hint only; voice, library hits and the hub's answer come later.
@@ -29,15 +31,7 @@ export function AskBar({ compact = false }: { compact?: boolean }) {
           },
         ]}
       >
-        <View
-          accessibilityElementsHidden
-          style={[
-            styles.glass,
-            { borderColor: colors.mutedForeground, width: space[3], height: space[3] },
-          ]}
-        >
-          <View style={[styles.handle, { backgroundColor: colors.mutedForeground }]} />
-        </View>
+        <Icon name="search" />
         <TextInput
           accessibilityLabel={t('ask.placeholder')}
           placeholder={t('ask.placeholder')}
@@ -66,14 +60,5 @@ export function AskBar({ compact = false }: { compact?: boolean }) {
 
 const styles = StyleSheet.create({
   box: { flexDirection: 'row', alignItems: 'center', borderWidth: 1 },
-  glass: { borderRadius: 999, borderWidth: 1.5 },
-  handle: {
-    position: 'absolute',
-    width: 1.5,
-    height: 5,
-    right: -3,
-    bottom: -4,
-    transform: [{ rotate: '-45deg' }],
-  },
   input: { flex: 1, padding: 0 },
 });

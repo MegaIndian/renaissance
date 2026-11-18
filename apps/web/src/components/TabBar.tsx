@@ -2,6 +2,7 @@ import { NavLink } from 'react-router';
 import { useTranslation } from 'react-i18next';
 
 import { Icon } from './Icon';
+import { focusRing } from './focus';
 import { primaryNav } from './navigation';
 
 /** Phone navigation (under 768 px): three tabs, as the DESIGN.md wireframe. Mirrored on mobile. */
@@ -18,7 +19,7 @@ export function TabBar() {
           to={item.to}
           end={item.to === '/'}
           className={({ isActive }) =>
-            `flex min-w-16 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${
+            `flex min-w-16 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption ${focusRing} ${
               isActive ? 'text-foreground' : 'text-muted-foreground'
             }`
           }

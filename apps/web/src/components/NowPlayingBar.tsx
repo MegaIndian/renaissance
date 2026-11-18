@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
 import { Icon } from './Icon';
+import { focusRing } from './focus';
 
 /** Bottom player (phase 0: nothing plays, so the Play button is muted, never a second blue). */
 export function NowPlayingBar() {
@@ -13,7 +14,7 @@ export function NowPlayingBar() {
         type="button"
         aria-label={t('player.play')}
         disabled
-        className="ml-auto grid size-8 shrink-0 place-items-center rounded-pill bg-muted text-muted-foreground disabled:cursor-not-allowed"
+        className={`ml-auto grid size-8 shrink-0 place-items-center rounded-pill bg-muted text-muted-foreground disabled:cursor-not-allowed ${focusRing}`}
       >
         <Icon name="play" className="size-4" />
       </button>
