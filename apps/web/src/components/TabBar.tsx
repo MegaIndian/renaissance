@@ -1,19 +1,21 @@
 import { NavLink } from 'react-router';
 import { useTranslation } from 'react-i18next';
 
+import { useMode } from '../lib/mode';
 import { Icon } from './Icon';
 import { focusRing } from './focus';
-import { primaryNav } from './navigation';
+import { navFor } from './navigation';
 
-/** Phone navigation (under 768 px): three tabs, as the DESIGN.md wireframe. Mirrored on mobile. */
+/** Phone navigation (under 768 px): three tabs in simple mode, four with Search in advanced. Mirrored on mobile. */
 export function TabBar() {
   const { t } = useTranslation();
+  const mode = useMode();
   return (
     <nav
       aria-label={t('nav.primary')}
       className="flex justify-around border-t border-border bg-card px-2 pt-2 pb-3"
     >
-      {primaryNav.map((item) => (
+      {navFor(mode).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

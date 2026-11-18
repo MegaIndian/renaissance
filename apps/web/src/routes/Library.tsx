@@ -1,13 +1,454 @@
+import { filterAlbums, filterTracks, sortItems } from '@renaissance/core';
+import type { Album, Artist, SortKey, SortOrder, Track } from '@renaissance/core';
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link, useSearchParams } from 'react-router';
 
+import { playNow } from '../lib/actions';
+import { openDialog } from '../lib/dialogs';
+import { useMode } from '../lib/mode';
+import { useLibrary, useSession } from '../lib/queries';
+import { usePlayer } from '../lib/usePlayer';
+import { Button, LinkButton } from '../components/Button';
+import { AlbumCard, ArtistCard, LabelCard, PlaylistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
+import { Icon } from '../components/Icon';
+import { SegmentedControl } from '../components/SegmentedControl';
+import { SortBar } from '../components/SortBar';
+import type { View } from '../components/SortBar';
+import { SyncStatus } from '../components/SyncStatus';
+import { TRACK_ROW_HEIGHT, TrackRow } from '../components/TrackRow';
+import { VirtualList, useColumns } from '../components/VirtualList';
 
+type Section = 'artists' | 'albumArtists' | 'albums' | 'tracks' | 'genres' | 'years' | 'playlists';
+const simpleSections: Section[] = ['artists', 'albums', 'tracks', 'playlists'];
+const advancedSections: Section[] = [
+  'artists',
+  'albumArtists',
+  'albums',
+  'tracks',
+  'genres',
+  'years',
+  'playlists',
+];
+const sortKeysFor: Record<Section, readonly SortKey[]> = {
+  artists: ['name', 'random'],
+  albumArtists: ['name', 'random'],
+  albums: ['name', 'dateAdded', 'year', 'playCount', 'random'],
+  tracks: ['name', 'dateAdded', 'year', 'playCount', 'lastPlayed', 'random'],
+  genres: ['name'],
+  years: ['name'],
+  playlists: ['name', 'dateAdded'],
+};
+
+function isSection(value: string | null): value is Section {
+  return !!value && advancedSections.includes(value as Section);
+}
+
+/**
+ * The library (F8, F15): sections in a segmented control, grid or list, sort and filter from the URL
+ * so a view can be bookmarked and the Back button works. Everything reads the local cache (F14), so
+ * it answers at once and works offline; 20,000 songs scroll through a virtualised list.
+ */
 export function Library() {
   const { t } = useTranslation();
+  const mode = useMode();
+  const session = useSession();
+  const { snapshot, ready, sync } = useLibrary();
+  const [params, setParams] = useSearchParams();
+  const sections = mode === 'advanced' ? advancedSections : simpleSections;
+  const requested = params.get('section');
+  const section: Section =
+    isSection(requested) && sections.includes(requested) ? requested : 'artists';
+  const sortParam = params.get('sort') as SortKey | null;
+  const sort: SortKey = sortParam && sortKeysFor[section].includes(sortParam) ? sortParam : 'name';
+  const order: SortOrder =
+    params.get('order') === 'asc' || params.get('order') === 'desc'
+      ? (params.get('order') as SortOrder)
+      : sort === 'name'
+        ? 'asc'
+        : 'desc';
+  const view: View =
+    params.get('view') === 'list' ? 'list' : section === 'tracks' ? 'list' : 'grid';
+  const favoritesOnly = params.get('favorites') === '1';
+  const genre = params.get('genre');
+  const yearParam = Number(params.get('year'));
+  const year = Number.isInteger(yearParam) && yearParam > 0 ? yearParam : null;
+  const seed = Number(params.get('seed')) || 1;
+
+  const update = (patch: Record<string, string | null>): void => {
+    const next = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === '') next.delete(key);
+      else next.set(key, value);
+    }
+    setParams(next, { replace: true });
+  };
+
+  const tracks = useMemo(
+    () =>
+      sortItems(
+        filterTracks(snapshot.tracks, {
+          favorites: favoritesOnly,
+          ...(genre ? { genre } : {}),
+          ...(year ? { year } : {}),
+        }),
+        sort,
+        order,
+        seed,
+      ),
+    [snapshot.tracks, favoritesOnly, genre, year, sort, order, seed],
+  );
+  const albums = useMemo(
+    () =>
+      sortItems(
+        filterAlbums(snapshot.albums, {
+          favorites: favoritesOnly,
+          ...(genre ? { genre } : {}),
+          ...(year ? { year } : {}),
+        }),
+        sort,
+        order,
+        seed,
+      ),
+    [snapshot.albums, favoritesOnly, genre, year, sort, order, seed],
+  );
+  const artists = useMemo(
+    () =>
+      sortItems(
+        (section === 'albumArtists' ? snapshot.albumArtists : snapshot.artists).filter(
+          (a) => !favoritesOnly || a.isFavorite,
+        ),
+        sort,
+        order,
+        seed,
+      ),
+    [section, snapshot.albumArtists, snapshot.artists, favoritesOnly, sort, order, seed],
+  );
+  const playlists = useMemo(
+    () => sortItems(snapshot.playlists, sort, order, seed),
+    [snapshot.playlists, sort, order, seed],
+  );
+
+  if (session.status === 'signedOut') {
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <h1 className="text-heading font-semibold">{t('nav.library')}</h1>
+        <EmptyState
+          title={t('library.empty')}
+          action={
+            <LinkButton to="/sign-in" tone="primary" className="shrink-0">
+              {t('signIn.submit')}
+            </LinkButton>
+          }
+        />
+      </div>
+    );
+  }
+
+  const sectionLabel: Record<Section, string> = {
+    artists: t('library.artists'),
+    albumArtists: t('library.albumArtists'),
+    albums: t('library.albums'),
+    tracks: t('library.tracks'),
+    genres: t('library.genres'),
+    years: t('library.years'),
+    playlists: t('library.playlists'),
+  };
+  const hasFilters = favoritesOnly || !!genre || !!year;
+  const empty = (count: number) =>
+    count === 0 ? (
+      !ready || sync.status === 'loading' || (sync.status === 'syncing' && !snapshot.syncedAt) ? (
+        <EmptyState title={t('library.syncingFirst')} quiet />
+      ) : (
+        <EmptyState
+          title={hasFilters ? t('library.nothingMatches') : t('library.nothingHere')}
+          quiet
+        />
+      )
+    ) : null;
+
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3">
-      <h1 className="text-heading font-semibold">{t('nav.library')}</h1>
-      <EmptyState title={t('library.empty')} quiet />
+    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-heading font-semibold">{t('nav.library')}</h1>
+        <SyncStatus />
+      </div>
+      <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <SegmentedControl
+          label={t('library.section')}
+          value={section}
+          options={sections.map((s) => ({ value: s, label: sectionLabel[s] }))}
+          onChange={(s) =>
+            update({
+              section: s,
+              sort: null,
+              order: null,
+              view: null,
+              favorites: null,
+              genre: null,
+              year: null,
+              seed: null,
+            })
+          }
+        />
+      </div>
+      {mode === 'advanced' && section !== 'genres' && section !== 'years' ? (
+        <SortBar
+          sort={sort}
+          order={order}
+          onSort={(s, o) =>
+            update({ sort: s, order: o, seed: s === 'random' ? String(Date.now()) : null })
+          }
+          allowedSorts={sortKeysFor[section]}
+          onClear={() => update({ favorites: null, genre: null, year: null })}
+          {...(section !== 'tracks' && section !== 'playlists'
+            ? { view, onView: (v: View) => update({ view: v }) }
+            : {})}
+          {...(section !== 'playlists'
+            ? {
+                favoritesOnly,
+                onFavoritesOnly: (v: boolean) => update({ favorites: v ? '1' : null }),
+              }
+            : {})}
+          {...(section === 'tracks' || section === 'albums'
+            ? {
+                genres: snapshot.genres,
+                genre,
+                onGenre: (g: string | null) => update({ genre: g }),
+                years: snapshot.years,
+                year,
+                onYear: (y: number | null) => update({ year: y === null ? null : String(y) }),
+              }
+            : {})}
+        />
+      ) : null}
+      {section === 'tracks' ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
+            <span>{t('library.tracksCount', { count: tracks.length })}</span>
+            {tracks.length ? (
+              <>
+                <Button tone="primary" className="min-h-6 py-1" onClick={() => playNow(tracks, 0)}>
+                  <Icon name="play" className="size-3.5" />
+                  {t('home.playAll')}
+                </Button>
+                <Button
+                  tone="secondary"
+                  className="min-h-6 py-1"
+                  onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+                >
+                  <Icon name="shuffle" className="size-3.5" />
+                  {t('home.shuffleAll')}
+                </Button>
+              </>
+            ) : null}
+          </div>
+          {empty(tracks.length) ?? <TrackList tracks={tracks} />}
+        </>
+      ) : null}
+      {section === 'albums' ? (
+        <>
+          <p className="text-caption text-muted-foreground">
+            {t('library.albumsCount', { count: albums.length })}
+          </p>
+          {empty(albums.length) ?? <AlbumGrid albums={albums} view={view} />}
+        </>
+      ) : null}
+      {section === 'artists' || section === 'albumArtists' ? (
+        <>
+          <p className="text-caption text-muted-foreground">
+            {t('library.artistsCount', { count: artists.length })}
+          </p>
+          {empty(artists.length) ?? <ArtistGrid artists={artists} view={view} />}
+        </>
+      ) : null}
+      {section === 'genres'
+        ? (empty(snapshot.genres.length) ?? (
+            <CardGrid
+              items={snapshot.genres}
+              keyOf={(g) => g}
+              render={(g, i) => (
+                <LabelCard
+                  to={`/library?section=tracks&genre=${encodeURIComponent(g)}`}
+                  title={g}
+                  subtitle={t('library.tracksCount', {
+                    count: snapshot.tracks.filter((x) => x.genres.includes(g)).length,
+                  })}
+                  index={i}
+                />
+              )}
+            />
+          ))
+        : null}
+      {section === 'years'
+        ? (empty(snapshot.years.length) ?? (
+            <CardGrid
+              items={snapshot.years}
+              keyOf={(y) => String(y)}
+              render={(y, i) => (
+                <LabelCard
+                  to={`/library?section=tracks&year=${y}`}
+                  title={String(y)}
+                  subtitle={t('library.tracksCount', {
+                    count: snapshot.tracks.filter((x) => x.year === y).length,
+                  })}
+                  index={i}
+                />
+              )}
+            />
+          ))
+        : null}
+      {section === 'playlists' ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/favorites"
+              className="text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              {t('nav.favorites')}
+            </Link>
+            <Button
+              tone="secondary"
+              className="ml-auto min-h-6 py-1"
+              onClick={() => openDialog({ kind: 'newPlaylist' })}
+            >
+              <Icon name="plus" className="size-3.5" />
+              {t('playlist.new')}
+            </Button>
+          </div>
+          {playlists.length === 0 ? (
+            <EmptyState title={t('playlist.empty')} description={t('playlist.emptyBody')} />
+          ) : (
+            <CardGrid
+              items={playlists}
+              keyOf={(p) => p.id}
+              render={(p) => <PlaylistCard playlist={p} />}
+            />
+          )}
+        </>
+      ) : null}
     </div>
+  );
+}
+
+/** Songs: a virtualised list that reads the player so the current row is marked. */
+export function TrackList({
+  tracks,
+  showNumber = false,
+  hideAlbumLink = false,
+}: {
+  tracks: Track[];
+  showNumber?: boolean;
+  hideAlbumLink?: boolean;
+}) {
+  const player = usePlayer();
+  const currentId = player.queue.items[player.queue.index]?.id;
+  const paused = player.status !== 'playing' && player.status !== 'loading';
+  return (
+    <VirtualList
+      items={tracks}
+      rowHeight={TRACK_ROW_HEIGHT}
+      keyOf={(track) => track.id}
+      renderItem={(track, i) => (
+        <TrackRow
+          track={track}
+          index={i}
+          showNumber={showNumber}
+          showArt={!showNumber}
+          hideAlbumLink={hideAlbumLink}
+          playing={track.id === currentId}
+          paused={paused}
+          onPlay={() => playNow(tracks, i)}
+        />
+      )}
+    />
+  );
+}
+
+function CardGrid<T>({
+  items,
+  keyOf,
+  render,
+}: {
+  items: readonly T[];
+  keyOf: (item: T) => string;
+  render: (item: T, index: number) => React.ReactNode;
+}) {
+  const [columns, ref] = useColumns(144, 8);
+  return (
+    <div ref={ref}>
+      <VirtualList
+        items={items}
+        columns={columns}
+        gap={8}
+        rowHeight={224}
+        role="grid"
+        keyOf={keyOf}
+        renderItem={render}
+      />
+    </div>
+  );
+}
+
+function AlbumGrid({ albums, view }: { albums: Album[]; view: View }) {
+  const { t } = useTranslation();
+  if (view === 'list') {
+    return (
+      <VirtualList
+        items={albums}
+        rowHeight={TRACK_ROW_HEIGHT}
+        keyOf={(a) => a.id}
+        renderItem={(album) => (
+          <Link
+            to={`/album/${encodeURIComponent(album.id)}`}
+            className="flex h-14 items-center gap-3 border-b border-border px-2 hover:bg-muted/40"
+          >
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-body font-medium">{album.title}</span>
+              <span className="truncate text-caption text-muted-foreground">
+                {[
+                  album.artistName || t('library.unknownArtist'),
+                  album.year,
+                  album.trackCount ? t('album.tracks', { count: album.trackCount }) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </span>
+          </Link>
+        )}
+      />
+    );
+  }
+  return (
+    <CardGrid items={albums} keyOf={(a) => a.id} render={(album) => <AlbumCard album={album} />} />
+  );
+}
+
+function ArtistGrid({ artists, view }: { artists: Artist[]; view: View }) {
+  if (view === 'list') {
+    return (
+      <VirtualList
+        items={artists}
+        rowHeight={TRACK_ROW_HEIGHT}
+        keyOf={(a) => a.id}
+        renderItem={(artist) => (
+          <Link
+            to={`/artist/${encodeURIComponent(artist.id)}`}
+            className="flex h-14 items-center gap-3 border-b border-border px-2 text-body font-medium hover:bg-muted/40"
+          >
+            <span className="truncate">{artist.name}</span>
+          </Link>
+        )}
+      />
+    );
+  }
+  return (
+    <CardGrid
+      items={artists}
+      keyOf={(a) => a.id}
+      render={(artist) => <ArtistCard artist={artist} />}
+    />
   );
 }

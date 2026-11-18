@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { setLanguage } from '../lib/i18n';
 import { renderWithI18n } from '../test/render';
+import { signInFake } from '../test/fakes';
 import { AskBar } from './AskBar';
 
 function setPlatform(value: string): void {
@@ -13,11 +14,11 @@ function setPlatform(value: string): void {
 describe('AskBar', () => {
   afterEach(() => setPlatform(''));
 
-  it('focuses on ⌘K and Ctrl K and reports no results while typing', async () => {
+  it('focuses on ⌘K and Ctrl K and asks to sign in while signed out', async () => {
     setLanguage('en');
     renderWithI18n(<AskBar />);
     const user = userEvent.setup();
-    const input = screen.getByRole('searchbox', { name: 'Ask for anything' });
+    const input = screen.getByRole('combobox', { name: 'Ask for anything' });
     expect(input).toHaveAttribute('placeholder', 'Ask for anything');
     expect(input).not.toHaveFocus();
     await user.keyboard('{Meta>}k{/Meta}');
@@ -25,17 +26,40 @@ describe('AskBar', () => {
     (input as HTMLInputElement).blur();
     await user.keyboard('{Control>}k{/Control}');
     expect(input).toHaveFocus();
-    expect(screen.getByText(/A song, a mood, a chore, a request/)).toBeInTheDocument();
-    await user.type(input, 'kishore');
+    expect(screen.getByText('Sign in to search your library')).toBeInTheDocument();
+  });
+
+  it('lists library hits instantly while typing and plays a song on Enter', async () => {
+    setLanguage('en');
+    const { player } = signInFake();
+    renderWithI18n(<AskBar />);
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox');
+    expect(screen.getByText(/A song, an album, an artist or a playlist/)).toBeInTheDocument();
+    await user.type(input, 'duck');
+    const options = screen.getAllByRole('option');
+    expect(options[0]).toHaveTextContent('Fluffing a Duck');
+    expect(options.at(-1)).toHaveTextContent('See all results');
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(player.snapshot.queue.items[0]?.title).toBe('Fluffing a Duck');
+    expect(input).toHaveValue('');
+    await user.type(input, 'zzzz');
     expect(screen.getByText('Nothing in your library matches yet')).toBeInTheDocument();
   });
 
-  it('compact mode hides the hint until there is text', async () => {
+  it('shows recent searches when empty and can clear them', async () => {
     setLanguage('en');
+    signInFake();
+    localStorage.setItem('renaissance.recentSearches', JSON.stringify(['kevin']));
+    const { recentSearchesStore } = await import('../lib/recent');
+    recentSearchesStore.set(['kevin']);
     renderWithI18n(<AskBar compact />);
-    expect(screen.queryByText(/Try "play/)).not.toBeInTheDocument();
-    await userEvent.setup().type(screen.getByRole('searchbox'), 'x');
-    expect(screen.getByText('Nothing in your library matches yet')).toBeInTheDocument();
+    const user = userEvent.setup();
+    expect(screen.queryByText(/A song, an album/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByRole('option', { name: 'kevin' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear recent searches' }));
+    expect(recentSearchesStore.get()).toEqual([]);
   });
 
   it('spells the shortcut for the platform', () => {

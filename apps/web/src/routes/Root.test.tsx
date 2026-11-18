@@ -19,24 +19,26 @@ describe('Root shell', () => {
     expect(within(tabs).getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(within(tabs).getByRole('link', { name: 'Library' })).toBeInTheDocument();
     expect(within(tabs).getByRole('link', { name: 'Requests' })).toBeInTheDocument();
+    expect(within(tabs).queryByRole('link', { name: 'Search' })).not.toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Language' })).toBeInTheDocument();
     const header = screen.getByRole('banner');
     expect(within(header).getByRole('link', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.getByRole('search')).toBeInTheDocument();
   });
 
-  it('on desktop shows the sidebar and the Ask bar once', () => {
+  it('on desktop shows the sidebar and the Ask bar once', async () => {
     setViewport(1280);
     renderApp('/library');
-    expect(screen.getByRole('complementary')).toBeInTheDocument();
+    expect(await screen.findByRole('complementary')).toBeInTheDocument();
     expect(screen.getAllByRole('search')).toHaveLength(1);
-    expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument();
   });
 
-  it('keeps the Ask bar on every screen', () => {
+  it('keeps the Ask bar on every screen', async () => {
     setViewport(390);
-    for (const path of ['/', '/library', '/requests', '/sign-in']) {
+    for (const path of ['/', '/library', '/requests', '/sign-in', '/settings', '/queue']) {
       const view = renderApp(path);
+      await screen.findByRole('heading', { level: 1 });
       expect(screen.getAllByRole('search')).toHaveLength(1);
       view.unmount();
     }
@@ -74,13 +76,14 @@ describe('Root shell', () => {
     expect(screen.getByRole('link', { name: 'હોમ પર જાઓ' })).toBeInTheDocument();
   });
 
-  it('gives every control the solid focus outline (DESIGN.md rule 7)', () => {
+  it('gives every control the solid focus outline (DESIGN.md rule 7)', async () => {
     for (const [width, path] of [
       [390, '/'],
       [1280, '/sign-in'],
     ] as const) {
       setViewport(width);
       const view = renderApp(path);
+      await screen.findByRole('heading', { level: 1 });
       const controls = document.querySelectorAll<HTMLElement>('a, button, input');
       expect(controls.length).toBeGreaterThan(5);
       for (const control of controls) {

@@ -4,16 +4,18 @@ import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { RouterProvider } from 'react-router';
 
-import { applyDocumentAttributes } from './lib/document';
+import { startApp } from './lib/app';
 import { i18n } from './lib/i18n';
+import { applyDocumentAttributes } from './lib/settings';
 import './styles.css';
 import { router } from './router';
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
 applyDocumentAttributes();
+startApp(queryClient);
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root is missing from index.html');
