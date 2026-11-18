@@ -27,10 +27,23 @@ export const Account = z.object({
 });
 export type Account = z.infer<typeof Account>;
 
+/** Per-user state the server keeps for an item (F86: each household member is their own user). */
+const userFields = {
+  isFavorite: z.boolean().default(false),
+  playCount: z.number().int().nonnegative().default(0),
+  /** ISO datetime of the last play on any client, from the server. */
+  lastPlayed: z.iso.datetime({ offset: true }).optional(),
+};
+
 export const Artist = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   imageId: z.string().optional(),
+  /** Biography from the server's metadata, when it has one. */
+  bio: z.string().optional(),
+  albumCount: z.number().int().nonnegative().optional(),
+  dateAdded: z.iso.datetime({ offset: true }).optional(),
+  ...userFields,
 });
 export type Artist = z.infer<typeof Artist>;
 
@@ -42,7 +55,11 @@ export const Album = z.object({
   year: z.number().int().optional(),
   genres: z.array(z.string()).default([]),
   trackCount: z.number().int().nonnegative().optional(),
+  /** Total duration in seconds. */
+  duration: z.number().nonnegative().optional(),
   imageId: z.string().optional(),
+  dateAdded: z.iso.datetime({ offset: true }).optional(),
+  ...userFields,
 });
 export type Album = z.infer<typeof Album>;
 
@@ -53,15 +70,22 @@ export const Track = z.object({
   albumTitle: z.string().optional(),
   artistIds: z.array(z.string()),
   artistName: z.string(),
+  albumArtistName: z.string().optional(),
   /** Duration in seconds. */
   duration: z.number().nonnegative(),
   trackNumber: z.number().int().optional(),
   discNumber: z.number().int().optional(),
-  /** Container or codec as the server reports it, for example "flac" or "mp3". */
+  /** Codec as the server reports it, lower case, for example "flac" or "mp3". */
   codec: z.string().optional(),
+  /** File container, lower case, for example "flac", "mp3", "m4a". */
+  container: z.string().optional(),
   bitrate: z.number().int().nonnegative().optional(),
-  isFavorite: z.boolean().default(false),
+  sampleRate: z.number().int().nonnegative().optional(),
+  year: z.number().int().optional(),
+  genres: z.array(z.string()).default([]),
   imageId: z.string().optional(),
+  dateAdded: z.iso.datetime({ offset: true }).optional(),
+  ...userFields,
 });
 export type Track = z.infer<typeof Track>;
 
@@ -69,9 +93,23 @@ export const Playlist = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   trackCount: z.number().int().nonnegative(),
+  /** Total duration in seconds. */
+  duration: z.number().nonnegative().optional(),
   imageId: z.string().optional(),
+  dateAdded: z.iso.datetime({ offset: true }).optional(),
+  ...userFields,
 });
 export type Playlist = z.infer<typeof Playlist>;
+
+/** A track inside a playlist; `entryId` is what reorder and remove address, since a track can be in a playlist twice. */
+export const PlaylistEntry = Track.extend({ entryId: z.string().min(1) });
+export type PlaylistEntry = z.infer<typeof PlaylistEntry>;
+
+export const Genre = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+});
+export type Genre = z.infer<typeof Genre>;
 
 export const LyricLine = z.object({
   /** Start time in milliseconds; absent for unsynced lyrics. */

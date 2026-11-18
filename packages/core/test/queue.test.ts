@@ -23,6 +23,8 @@ const track = (id: string): Track => ({
   artistName: 'Artist',
   duration: 180,
   isFavorite: false,
+  playCount: 0,
+  genres: [],
 });
 
 const tracks = ['1', '2', '3', '4'].map(track);

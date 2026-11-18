@@ -12,6 +12,8 @@ const flac: Track = {
   codec: 'flac',
   bitrate: 900_000,
   isFavorite: false,
+  playCount: 0,
+  genres: [],
 };
 
 describe('decidePlayback', () => {
