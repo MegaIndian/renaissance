@@ -53,6 +53,10 @@ if (phase2) {
     ['ask-answer-phone-en-dark', '/', 'phone', 'en', 'dark'],
     ['ask-answer-desktop-en-light', '/', 'desktop', 'en', 'light'],
     ['ask-answer-desktop-gu-dark', '/', 'desktop', 'gu', 'dark'],
+    ['ask-typeahead-phone-en-dark', '/', 'phone', 'en', 'dark'],
+    ['ask-typeahead-phone-gu-light', '/', 'phone', 'gu', 'light'],
+    ['ask-typeahead-desktop-en-dark', '/', 'desktop', 'en', 'dark'],
+    ['requests-advanced-desktop-en-dark', '/requests?mode=advanced', 'desktop', 'en', 'dark'],
   ];
 }
 
@@ -75,8 +79,9 @@ const cannedRequests = [
   request({
     id: '11111111-1111-4111-8111-111111111111',
     status: 'downloading',
-    progress: { done: 42, total: 100 },
+    progress: { unit: 'percent', done: 42, total: 100, etaSeconds: 70 },
     steps: [
+      { at, status: 'finding', detail: '"lil wayne fireman": 0 files, 0 usable' },
       {
         at,
         status: 'downloading',
@@ -84,6 +89,32 @@ const cannedRequests = [
           '04 Fireman.flac from a sharer (score 108: title 100% in name, duration matches, flac, free slot, artist in path)',
       },
     ],
+  }),
+  request({
+    id: '55555555-5555-4555-8555-555555555555',
+    title: 'Red (Taylor’s Version)',
+    artist: 'Taylor Swift',
+    album: 'Red (Taylor’s Version)',
+    kind: 'album',
+    requestedByName: 'Sahil',
+    status: 'finding',
+    progress: { unit: 'songs', done: 14, total: 30 },
+    steps: [
+      {
+        at,
+        status: 'finding',
+        detail:
+          'Lidarr is looking for Red (Taylor’s Version) (album 91); the hub checks every minute for up to 7 days',
+      },
+    ],
+  }),
+  request({
+    id: '66666666-6666-4666-8666-666666666666',
+    title: 'Monkeys Spinning Monkeys',
+    artist: 'Kevin MacLeod',
+    requestedByName: 'Mom',
+    status: 'cancelled',
+    steps: [{ at, status: 'cancelled', detail: 'Cancelled by Mom' }],
   }),
   request({
     id: '22222222-2222-4222-8222-222222222222',
@@ -150,16 +181,74 @@ const cannedCollection = [
     source: 'import',
   },
 ];
+const cannedCatalogue = {
+  query: 'fireman',
+  songs: [
+    {
+      id: 'mb:recording:da9023df-cd6b-48dc-b82c-2c43ad9a89dc',
+      recordingId: 'da9023df-cd6b-48dc-b82c-2c43ad9a89dc',
+      title: 'Fireman',
+      artist: 'Lil Wayne',
+      album: 'Tha Carter II',
+      duration: 264,
+      year: 2005,
+      preview: 'https://cdn.deezer.test/fireman.mp3',
+    },
+    {
+      id: 'mb:recording:9c1a7a4e-0000-4000-8000-000000000002',
+      recordingId: '9c1a7a4e-0000-4000-8000-000000000002',
+      title: 'Drowning',
+      artist: 'A Boogie Wit da Hoodie',
+      album: 'The Bigger Artist',
+      duration: 209,
+      libraryId: 'jf-drowning',
+    },
+    {
+      id: 'mb:recording:9c1a7a4e-0000-4000-8000-000000000003',
+      recordingId: '9c1a7a4e-0000-4000-8000-000000000003',
+      title: 'Fireman',
+      artist: 'Elliphant',
+      album: 'Living Life Golden',
+      duration: 211,
+    },
+  ],
+  albums: [
+    {
+      id: 'mb:release-group:d97d9f3b-3dc1-3330-a240-b84b74e62044',
+      releaseGroupId: 'd97d9f3b-3dc1-3330-a240-b84b74e62044',
+      title: 'Tha Carter II',
+      artist: 'Lil Wayne',
+      type: 'Album',
+      year: 2005,
+    },
+  ],
+  artists: [
+    {
+      id: 'mb:artist:ac9a487a-d9d2-4f27-bb23-0f4686488345',
+      artistId: 'ac9a487a-d9d2-4f27-bb23-0f4686488345',
+      name: 'Lil Wayne',
+    },
+  ],
+  cached: false,
+};
 const answerFor = (lang) => ({
   model: 'claude-opus-5-5',
   language: lang,
   instant: {
     tracks: [
-      { id: 't1', kind: 'track', title: 'Fireman', artist: 'Lil Wayne', album: 'Tha Carter II' },
+      {
+        id: 't1',
+        kind: 'track',
+        title: 'Fireman',
+        artist: 'Lil Wayne',
+        album: 'Tha Carter II',
+        duration: 264,
+      },
     ],
     albums: [],
     artists: [],
   },
+  catalogue: { ...cannedCatalogue, songs: cannedCatalogue.songs.slice(2) },
   actions: [
     {
       tool: 'request',
@@ -173,7 +262,8 @@ const answerFor = (lang) => ({
     {
       tool: 'queue',
       input: { trackIds: ['t1'] },
-      summary: lang === 'gu' ? 'કતારમાં 1 ગીત ઉમેર્યાં' : 'Added 1 songs to the queue',
+      summary: lang === 'gu' ? '1 ગીત કતારમાં મૂકો' : 'Queue 1 song',
+      doneSummary: lang === 'gu' ? 'કતારમાં 1 ગીત ઉમેર્યું' : 'Added 1 song to the queue',
       ranBy: 'app',
       undoable: true,
     },
@@ -223,6 +313,7 @@ async function playHub(context, lang) {
       );
     }
     if (path === '/requests') return route.fulfill(json(cannedRequests));
+    if (path === '/catalogue/search') return route.fulfill(json(cannedCatalogue));
     if (path === '/collection') return route.fulfill(json(cannedCollection));
     if (path === '/events') {
       return route.fulfill({
@@ -294,7 +385,15 @@ try {
         .first()
         .waitFor();
     }
+    if (phase2 && file.startsWith('ask-typeahead')) {
+      const box = page.getByRole('searchbox').first();
+      await box.fill('fireman');
+      await page.getByRole('button', { name: lang === 'gu' ? 'આલ્બમ ઉમેરો' : 'Add album' }).waitFor();
+    }
     if (phase2 && file.startsWith('requests')) await page.getByText('Fireman').first().waitFor();
+    if (phase2 && file.startsWith('requests-advanced')) {
+      await page.getByText('What happened').first().click();
+    }
     if (phase2 && file.startsWith('library')) await page.getByText('Fireman').first().waitFor();
     await page.screenshot({ path: `${out}${file}.png` });
     if (!phase2 && file === 'home-phone-en-dark') {
