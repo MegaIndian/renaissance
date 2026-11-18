@@ -202,6 +202,7 @@ describe('createHubClient', () => {
     expect((await hub.catalogueSearch('x')).songs).toEqual([]);
     expect((await hub.request(request.id)).id).toBe(request.id);
     expect((await hub.cancelRequest(request.id)).id).toBe(request.id);
+    expect((await hub.retryRequest(request.id)).id).toBe(request.id);
     expect(await hub.collection()).toEqual([]);
     expect(await hub.rules()).toEqual([]);
     expect((await hub.addRule('no live versions')).id).toBe(1);
@@ -209,6 +210,22 @@ describe('createHubClient', () => {
     expect((await hub.budget()).capUsd).toBe(10);
     expect((await hub.ask({ text: 'hi' })).model).toBe('off');
     await expect(hub.removeFromCollection(3)).resolves.toBeDefined();
+    expect(
+      await hub.undo({ tool: 'play', input: {}, summary: '', ranBy: 'app', undoable: true }),
+    ).toBe(false);
+    expect(
+      await hub.undo({
+        tool: 'set_rule',
+        input: {},
+        summary: '',
+        ranBy: 'hub',
+        undoable: true,
+        undo: { method: 'DELETE', path: '/rules/1' },
+      }),
+    ).toBe(true);
+    expect((fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit])[1].method).toBe(
+      'DELETE',
+    );
   });
 
   it('streams /ask: instant first, then the answer', async () => {

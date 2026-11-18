@@ -9,7 +9,34 @@
     "listening": "Listening…",
     "noResults": "Nothing in your library matches yet",
     "shortcut": "Ctrl K",
-    "shortcutMac": "⌘K"
+    "shortcutMac": "⌘K",
+    "enterToAsk": "Press Enter to ask",
+    "signInFirst": "Sign in to search your library",
+    "hubOff": "The hub is not reachable. Library search still works in the app",
+    "results": "Library results",
+    "thinking": "Asking…",
+    "modelOff": "The model is off. These are library results only",
+    "budgetOff": "This month's model budget is used up. These are library results only",
+    "undo": "Undo",
+    "undone": "Undone",
+    "undoFailed": "Could not undo that",
+    "rejected": "{{count}} suggestion was left out because it named something no search returned",
+    "rejected_other": "{{count}} suggestions were left out because they named something no search returned",
+    "kind": {
+      "track": "Song",
+      "album": "Album",
+      "artist": "Artist"
+    },
+    "tool": {
+      "search_library": "Library search",
+      "lookup_catalogue": "Catalogue",
+      "play": "Play",
+      "queue": "Queue",
+      "make_playlist": "Playlist",
+      "request": "Request",
+      "set_rule": "Rule",
+      "explain": "About"
+    }
   },
   "home": {
     "mySongs": "My songs",
@@ -55,11 +82,60 @@
     "preAlpha": "Pre-alpha, phase 0: nothing plays yet."
   },
   "library": {
-    "empty": "Your library appears here after you sign in"
+    "empty": "Your library appears here after you sign in",
+    "scope": "Library",
+    "mine": "Mine",
+    "everythingOnServer": "Everything on the server",
+    "mineSignIn": "Sign in to see your music",
+    "mineEmpty": "Nothing in your music yet",
+    "mineEmptyBody": "Ask for a song or add one from the catalogue and it lands here.",
+    "source": {
+      "request": "Requested",
+      "add": "Added",
+      "import": "Imported",
+      "favourite": "Favourite"
+    }
   },
   "requests": {
     "empty": "Nothing requested yet",
-    "emptyBody": "Ask for a song or an album and it shows up here with its progress."
+    "emptyBody": "Ask for a song or an album and it shows up here with its progress.",
+    "signIn": "Sign in to see your requests",
+    "signInBody": "Requests belong to the person who asked. Sign in and yours appear here with their progress.",
+    "hubOff": "The hub is not reachable",
+    "hubOffBody": "Requests live on the hub. Check that it is running and reachable from this device.",
+    "scope": "Whose requests",
+    "mine": "Mine",
+    "house": "Whole house",
+    "requestedBy": "asked by {{name}}",
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "readyNotice": "{{title}} is ready",
+    "cancelledNotice": "{{title}} was cancelled",
+    "tooLate": "{{title}} has started downloading and cannot be cancelled",
+    "retriedNotice": "{{title}} is being tried again",
+    "retryFailed": "{{title}} could not be retried",
+    "status": {
+      "requested": "Requested",
+      "finding": "Finding",
+      "downloading": "Downloading",
+      "importing": "Importing",
+      "ready": "Ready",
+      "failed": "Failed"
+    },
+    "reason": {
+      "catalogue_miss": "MusicBrainz has no record of this song",
+      "no_results": "Nobody on Soulseek is sharing it right now",
+      "no_candidates": "Files were found, but none matched the song closely enough",
+      "download_failed": "The download did not finish",
+      "lidarr_artist": "Lidarr could not add the artist",
+      "lidarr_album": "Lidarr could not add the album",
+      "track_unmapped": "The file could not be matched to a track on the album",
+      "import_failed": "Lidarr did not import the file",
+      "not_configured": "The hub has no Soulseek or Lidarr configured",
+      "interrupted": "The hub restarted while this was in progress",
+      "cancelled": "Cancelled",
+      "error": "Something went wrong on the hub"
+    }
   },
   "settings": {
     "language": "Language",

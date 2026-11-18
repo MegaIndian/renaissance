@@ -3,7 +3,7 @@
  * they already hold; the hub turns it into a profile. Every answer is validated against the shapes
  * in `hub.ts`, so a hub of another version fails loudly instead of rendering nonsense.
  */
-import type { z } from 'zod';
+import { z } from 'zod';
 
 import {
   AlreadyHere,
@@ -16,7 +16,7 @@ import {
   Profile,
   Rule,
 } from './hub';
-import type { AskRequest, HubEvent as HubEventT, NewRequest } from './hub';
+import type { AskAction, AskRequest, HubEvent as HubEventT, NewRequest } from './hub';
 import { trimTrailingSlashes } from './url';
 
 export interface HubClientOptions {
@@ -113,6 +113,8 @@ export function createHubClient(options: HubClientOptions) {
       call(MusicRequest.or(AlreadyHere), 'POST', '/requests', input),
     cancelRequest: (id: string) =>
       call(MusicRequest, 'DELETE', `/requests/${encodeURIComponent(id)}`),
+    retryRequest: (id: string) =>
+      call(MusicRequest, 'POST', `/requests/${encodeURIComponent(id)}/retry`),
     collection: () => call(CollectionItem.array(), 'GET', '/collection'),
     removeFromCollection: (id: number) =>
       call(CollectionItem, 'DELETE', `/collection/${encodeURIComponent(String(id))}`),
@@ -122,6 +124,12 @@ export function createHubClient(options: HubClientOptions) {
     budget: (scope: 'mine' | 'house' = 'mine') =>
       call(Budget, 'GET', scope === 'house' ? '/budget?scope=house' : '/budget'),
     ask: (input: AskRequest) => call(AskResponse, 'POST', '/ask', input),
+    /** Undo a hub-side action by calling the route the action named; false when it has none. */
+    async undo(action: AskAction): Promise<boolean> {
+      if (!action.undo) return false;
+      await call(z.unknown(), action.undo.method, action.undo.path);
+      return true;
+    },
 
     /**
      * `POST /ask` as a stream: `onInstant` fires with the library hits at once, the promise
