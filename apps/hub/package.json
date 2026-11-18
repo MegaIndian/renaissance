@@ -1,6 +1,6 @@
 {
   "name": "hub",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Renaissance Hub: the one server-side piece. Intent engine, catalogue, fetch pipeline, enrichment. Holds every key.",
   "license": "GPL-3.0-or-later",
