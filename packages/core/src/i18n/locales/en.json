@@ -7,36 +7,44 @@
     "placeholder": "Ask for anything",
     "hint": "A song, a mood, a chore, a request. Try \"play something calm for cooking\"",
     "listening": "Listening…",
-    "noResults": "Nothing in your library matches yet",
+    "noResults": "Nothing matches yet. Try the song or artist's name",
     "shortcut": "Ctrl K",
     "shortcutMac": "⌘K",
     "enterToAsk": "Press Enter to ask",
     "signInFirst": "Sign in to search your library",
-    "hubOff": "The hub is not reachable. Library search still works in the app",
-    "results": "Library results",
-    "thinking": "Asking…",
-    "modelOff": "The model is off. These are library results only",
-    "budgetOff": "This month's model budget is used up. These are library results only",
+    "hubOff": "Smart search can't be reached right now. Try again in a minute",
+    "results": "Results",
+    "thinking": "Looking…",
+    "modelOff": "Smart answers are off right now. Type a song or artist name",
+    "budgetOff": "This month's smart-answer allowance is used up until the 1st. Names still work",
     "undo": "Undo",
     "undone": "Undone",
     "undoFailed": "Could not undo that",
-    "rejected": "{{count}} suggestion was left out because it named something no search returned",
-    "rejected_other": "{{count}} suggestions were left out because they named something no search returned",
+    "rejected_other": "{{count}} suggestions were left out because they aren't in your library or the catalogue",
     "kind": {
       "track": "Song",
       "album": "Album",
       "artist": "Artist"
     },
-    "tool": {
-      "search_library": "Library search",
-      "lookup_catalogue": "Catalogue",
+    "rejected_one": "One suggestion was left out because it isn't in your library or the catalogue",
+    "inLibrary": "In your library",
+    "add": "Add",
+    "addAlbum": "Add album",
+    "play": "Play",
+    "preview": "Play a 30-second preview of {{title}}",
+    "stopPreview": "Stop the preview",
+    "adding": "Adding…",
+    "requested": "Requested. Progress is in Requests",
+    "alreadyHere": "Already on the server. Added to your music",
+    "addFailed": "Could not add that. Try again",
+    "playerUnavailable": "Playback isn't connected on this device yet",
+    "close": "Close the results",
+    "do": {
       "play": "Play",
       "queue": "Queue",
-      "make_playlist": "Playlist",
-      "request": "Request",
-      "set_rule": "Rule",
-      "explain": "About"
-    }
+      "make_playlist": "Make playlist"
+    },
+    "done": "Done"
   },
   "home": {
     "mySongs": "My songs",
@@ -101,8 +109,8 @@
     "emptyBody": "Ask for a song or an album and it shows up here with its progress.",
     "signIn": "Sign in to see your requests",
     "signInBody": "Requests belong to the person who asked. Sign in and yours appear here with their progress.",
-    "hubOff": "The hub is not reachable",
-    "hubOffBody": "Requests live on the hub. Check that it is running and reachable from this device.",
+    "hubOff": "Requests can't be reached right now",
+    "hubOffBody": "Try again in a minute.",
     "scope": "Whose requests",
     "mine": "Mine",
     "house": "Whole house",
@@ -120,22 +128,32 @@
       "downloading": "Downloading",
       "importing": "Importing",
       "ready": "Ready",
-      "failed": "Failed"
+      "failed": "Failed",
+      "cancelled": "Cancelled"
     },
     "reason": {
-      "catalogue_miss": "MusicBrainz has no record of this song",
-      "no_results": "Nobody on Soulseek is sharing it right now",
-      "no_candidates": "Files were found, but none matched the song closely enough",
-      "download_failed": "The download did not finish",
-      "lidarr_artist": "Lidarr could not add the artist",
-      "lidarr_album": "Lidarr could not add the album",
-      "track_unmapped": "The file could not be matched to a track on the album",
-      "import_failed": "Lidarr did not import the file",
-      "not_configured": "The hub has no Soulseek or Lidarr configured",
-      "interrupted": "The hub restarted while this was in progress",
-      "cancelled": "Cancelled",
-      "error": "Something went wrong on the hub"
-    }
+      "catalogue_miss": "This song isn't in the music catalogue. Check the spelling or try the artist's name",
+      "no_results": "We couldn't find this one anywhere right now. Try again later",
+      "no_candidates": "Files turned up, but none was this song. Try again later",
+      "download_failed": "The download didn't finish. Try again",
+      "lidarr_artist": "The artist couldn't be set up on the server. Whoever runs the server can look",
+      "lidarr_album": "The album couldn't be set up on the server. Whoever runs the server can look",
+      "track_unmapped": "The file didn't match a song on the album. Whoever runs the server can look",
+      "import_failed": "It arrived but couldn't be filed. Whoever runs the server can look",
+      "not_configured": "Fetching isn't set up on the server yet",
+      "interrupted": "The server restarted while this was in progress. Try again",
+      "error": "Something went wrong. Try again",
+      "not_found_in_time": "Nobody had this album in a week. Try again later"
+    },
+    "progress": {
+      "percent": "{{percent}}% downloaded",
+      "songs": "{{done}} of {{total}} songs",
+      "etaMinutes_one": "about a minute left",
+      "etaMinutes_other": "about {{count}} minutes left",
+      "etaSoon": "less than a minute left"
+    },
+    "whatHappened": "What happened",
+    "code": "Code: {{reason}}"
   },
   "settings": {
     "language": "Language",
@@ -158,22 +176,31 @@
   },
   "hub": {
     "summary": {
-      "searchLibrary": "Searched the library for \"{{query}}\": {{count}} results",
-      "lookupCatalogue": "Looked up \"{{query}}\" in the catalogue: {{count}} results",
       "alreadyHere": "{{title}} by {{artist}} is already on the server. Added to your music",
       "requested": "Requested {{title}} by {{artist}}",
       "ruleSaved": "Rule saved: \"{{text}}\"",
       "explain": "About {{title}}",
-      "play": "Playing {{title}}",
-      "queue": "Added {{count}} songs to the queue",
-      "playlist": "Made the playlist {{name}} with {{count}} songs"
+      "play": "Play {{title}}",
+      "played": "Playing {{title}}",
+      "queue_one": "Queue {{count}} song",
+      "queue_other": "Queue {{count}} songs",
+      "queued_one": "Added {{count}} song to the queue",
+      "queued_other": "Added {{count}} songs to the queue",
+      "playlist_one": "Make the playlist {{name}} with {{count}} song",
+      "playlist_other": "Make the playlist {{name}} with {{count}} songs",
+      "playlistMade_one": "Made the playlist {{name}} with {{count}} song",
+      "playlistMade_other": "Made the playlist {{name}} with {{count}} songs",
+      "searchLibrary_one": "Searched the library for \"{{query}}\": {{count}} result",
+      "searchLibrary_other": "Searched the library for \"{{query}}\": {{count}} results",
+      "lookupCatalogue_one": "Looked up \"{{query}}\" in the catalogue: {{count}} result",
+      "lookupCatalogue_other": "Looked up \"{{query}}\" in the catalogue: {{count}} results"
     },
     "why": {
       "exact": "{{title}} is in your library",
-      "budget": "This month's model budget is used up. Library search still works",
-      "error": "The model did not answer. Library search still works",
-      "refusal": "The model declined that one",
-      "nothing": "Nothing in your library or the catalogue matches that"
+      "budget": "This month's smart-answer allowance is used up until the 1st. Names still work",
+      "error": "Smart answers didn't come through. Type a song or artist name",
+      "refusal": "I can't help with that one. Try a song, an artist or a mood",
+      "nothing": "Nothing in your library or the catalogue matches that. Check the spelling or try the artist's name"
     }
   }
 }

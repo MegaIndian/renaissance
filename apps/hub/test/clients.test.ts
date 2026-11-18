@@ -107,6 +107,26 @@ describe('slskdClient', () => {
     ]);
     expect(await client.transfers('gone')).toEqual([]);
     expect(log.lines.some((l) => l.includes('slskd search finished'))).toBe(true);
+    // The finished search is deleted so slskd's list does not grow by every query tried.
+    expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/api/v0/searches/abc'))).toBe(
+      true,
+    );
+    const failing = fakeFetch({
+      '/api/v0/searches/abc/responses': () => [],
+      '/api/v0/searches/abc': (_u, init) =>
+        init.method === 'DELETE' ? { __status: 500 } : { id: 'abc', state: 'Completed' },
+      '/api/v0/searches': () => ({ id: 'abc', state: 'Completed' }),
+    });
+    const log2 = recordingLogger();
+    const client2 = slskdClient({
+      url: 'http://slskd.test',
+      apiKey: 'key',
+      log: log2,
+      fetch: failing.fetch,
+      sleep: instantSleep,
+    });
+    expect(await client2.search('x', { timeoutMs: 10 })).toEqual([]);
+    expect(log2.lines.some((l) => l.includes('slskd search not deleted'))).toBe(true);
   });
 
   it('logs instead of writing in dry-run mode', async () => {

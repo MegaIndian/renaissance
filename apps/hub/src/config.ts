@@ -61,6 +61,8 @@ const schema = z.object({
   RENAISSANCE_BUDGET_USD_MONTH: z.coerce.number().min(0).default(10),
   /** Log every slskd and Lidarr write instead of doing it; searches still run. */
   RENAISSANCE_HUB_DRY_RUN: flag,
+  /** Days an album request waits on Lidarr before it fails with `not_found_in_time`. */
+  RENAISSANCE_ALBUM_DEADLINE_DAYS: z.coerce.number().min(0).default(7),
   /** The slskd completed-downloads folder as Lidarr's container sees it. */
   RENAISSANCE_LIDARR_DOWNLOADS_DIR: z.string().trim().min(1).default('/downloads/complete'),
   /** Lidarr root folder for new artists; empty takes Lidarr's first root folder. */
@@ -95,6 +97,8 @@ export interface HubConfig {
   admins: string[];
   budgetUsdPerMonth: number;
   dryRun: boolean;
+  /** Milliseconds an album request may wait on Lidarr. */
+  albumDeadlineMs: number;
   lidarrDownloadsDir: string;
   contact: string | undefined;
   jellyfin: { url: string | undefined; apiKey: string | undefined };
@@ -134,6 +138,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     admins: e.RENAISSANCE_HUB_ADMINS,
     budgetUsdPerMonth: e.RENAISSANCE_BUDGET_USD_MONTH,
     dryRun: e.RENAISSANCE_HUB_DRY_RUN,
+    albumDeadlineMs: e.RENAISSANCE_ALBUM_DEADLINE_DAYS * 24 * 60 * 60_000,
     lidarrDownloadsDir: e.RENAISSANCE_LIDARR_DOWNLOADS_DIR,
     contact: e.RENAISSANCE_CONTACT,
     jellyfin: { url: e.JELLYFIN_URL, apiKey: e.JELLYFIN_API_KEY },
@@ -161,6 +166,7 @@ export function describe(config: HubConfig): Record<string, string | number | bo
     admins: config.admins.length,
     budgetUsdPerMonth: config.budgetUsdPerMonth,
     dryRun: config.dryRun,
+    albumDeadlineDays: config.albumDeadlineMs / (24 * 60 * 60_000),
     jellyfin: config.jellyfin.url !== undefined && config.jellyfin.apiKey !== undefined,
     anthropic: config.anthropic.apiKey !== undefined,
     intentModel: config.anthropic.intentModel,

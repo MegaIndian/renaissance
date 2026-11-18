@@ -28,9 +28,9 @@ describe('budget meter', () => {
     const budget = createBudget({ usage: stores.usage, capUsd: 0.01, model: 'claude-opus-5-5' });
     const now = new Date('2026-11-17T12:00:00Z');
     expect(budget.allows(now)).toBe(true);
-    budget.record(sahil.id, { input_tokens: 1000, output_tokens: 100 }, now);
+    budget.record(sahil.id, { input_tokens: 1000, output_tokens: 100 }, null, now);
     expect(budget.allows(now)).toBe(true);
-    budget.record(sahil.id, { input_tokens: 2_000_000, output_tokens: 0 }, now);
+    budget.record(sahil.id, { input_tokens: 2_000_000, output_tokens: 0 }, null, now);
     expect(budget.allows(now)).toBe(false);
     const report = budget.report(sahil.id, now);
     expect(report).toMatchObject({
@@ -44,5 +44,28 @@ describe('budget meter', () => {
     expect(budget.report('house', now).days).toHaveLength(1);
     expect(budget.allows(new Date('2026-12-01T00:00:00Z'))).toBe(true);
     expect(createBudget({ usage: stores.usage, capUsd: 0, model: 'x' }).allows()).toBe(false);
+  });
+});
+
+describe('budget reservations', () => {
+  it('counts calls in flight against the cap and settles or releases them', () => {
+    const stores = memoryStores();
+    const budget = createBudget({ usage: stores.usage, capUsd: 0.03, model: 'claude-opus-5-5' });
+    const now = new Date('2026-11-17T12:00:00Z');
+    const first = budget.reserve(now);
+    const second = budget.reserve(now);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(budget.inFlight()).toBe(2);
+    // 2 × 0.02 reserved: the third concurrent ask is refused although nothing is recorded yet.
+    expect(budget.reserve(now)).toBeNull();
+    expect(budget.allows(now)).toBe(false);
+    second!.release();
+    second!.release();
+    expect(budget.inFlight()).toBe(1);
+    expect(budget.allows(now)).toBe(true);
+    budget.record(sahil.id, { input_tokens: 1000, output_tokens: 10 }, first, now);
+    expect(budget.inFlight()).toBe(0);
+    expect(budget.report(sahil.id, now).days[0]?.calls).toBe(1);
   });
 });

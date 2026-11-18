@@ -78,6 +78,10 @@ export const migrations: readonly string[] = [
   `,
   // 2: the downloaded file's Soulseek path, so a failed import can be retried without a new download.
   `ALTER TABLE requests ADD COLUMN source_file TEXT;`,
+  // 3: progress in a shape the apps can word (songs or percent, with an estimate), DESIGN.md rule 9.
+  `ALTER TABLE requests ADD COLUMN progress_unit TEXT;
+   ALTER TABLE requests ADD COLUMN progress_eta INTEGER;
+   UPDATE requests SET status = 'cancelled', reason = NULL WHERE status = 'failed' AND reason = 'cancelled';`,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

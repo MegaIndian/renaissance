@@ -27,9 +27,13 @@ export type Profile = z.infer<typeof Profile>;
 // Catalogue (F61)
 
 export const CatalogueSong = z.object({
-  /** `mb:recording:<mbid>`; stable across searches so the apps can key on it. */
+  /**
+   * `mb:recording:<mbid>` for a MusicBrainz row, `dz:track:<id>` for a Deezer row the typeahead
+   * answered before MusicBrainz could; stable across searches so the apps can key on it.
+   */
   id: z.string().min(1),
-  recordingId: z.uuid(),
+  /** Absent on a Deezer row: the hub resolves it from the title and artist when the song is requested. */
+  recordingId: z.uuid().optional(),
   title: z.string().min(1),
   artist: z.string().min(1),
   artistId: z.uuid().optional(),
@@ -49,7 +53,7 @@ export type CatalogueSong = z.infer<typeof CatalogueSong>;
 
 export const CatalogueArtist = z.object({
   id: z.string().min(1),
-  artistId: z.uuid(),
+  artistId: z.uuid().optional(),
   name: z.string().min(1),
   disambiguation: z.string().optional(),
   art: z.url().optional(),
@@ -58,7 +62,7 @@ export type CatalogueArtist = z.infer<typeof CatalogueArtist>;
 
 export const CatalogueAlbum = z.object({
   id: z.string().min(1),
-  releaseGroupId: z.uuid(),
+  releaseGroupId: z.uuid().optional(),
   title: z.string().min(1),
   artist: z.string().min(1),
   artistId: z.uuid().optional(),
@@ -76,6 +80,11 @@ export const CatalogueSearch = z.object({
   albums: z.array(CatalogueAlbum),
   /** True when the whole answer came from the hub's cache. */
   cached: z.boolean(),
+  /**
+   * True when MusicBrainz was not asked (the typeahead never waits for its one request a second):
+   * the rows come from Deezer and the cache, and their ids are resolved when something is added.
+   */
+  partial: z.boolean().optional(),
 });
 export type CatalogueSearch = z.infer<typeof CatalogueSearch>;
 
@@ -91,8 +100,22 @@ export const RequestStatus = z.enum([
   'importing',
   'ready',
   'failed',
+  /** Stopped by the person who asked (or an admin): no reason, no retry. */
+  'cancelled',
 ]);
 export type RequestStatus = z.infer<typeof RequestStatus>;
+
+/**
+ * What is happening, in a shape the apps can word (DESIGN.md rule 9): a single reports a
+ * percentage with an estimate from its transfer rate, an album reports songs with files.
+ */
+export const RequestProgress = z.object({
+  unit: z.enum(['songs', 'percent']),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  etaSeconds: z.number().int().nonnegative().optional(),
+});
+export type RequestProgress = z.infer<typeof RequestProgress>;
 
 export const NewRequest = z.object({
   kind: RequestKind,
@@ -127,7 +150,7 @@ export const MusicRequest = NewRequest.extend({
   detail: z.string().optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-  progress: z.object({ done: z.number().int(), total: z.number().int() }).optional(),
+  progress: RequestProgress.optional(),
   /** The Soulseek path of the file that was downloaded; a retry imports it without a new download. */
   sourceFile: z.string().optional(),
   steps: z.array(RequestStep),
@@ -216,8 +239,13 @@ export const AskAction = z.object({
   tool: AskTool,
   /** Arguments as validated by the hub; every id comes from a tool result in the same call. */
   input: z.record(z.string(), z.unknown()),
-  /** What the hub did or what the app should do, one line, in the question's language. */
+  /**
+   * One line in the question's language: what the hub did (`ranBy: hub`, past tense) or what the
+   * app should do (`ranBy: app`, imperative: "Play Carefree").
+   */
   summary: z.string(),
+  /** For app actions: the past-tense line the app shows once it has performed the action. */
+  doneSummary: z.string().optional(),
   /** Where the action ran: `hub` (done, with `result`) or `app` (the app performs it). */
   ranBy: z.enum(['hub', 'app']),
   result: z.unknown().optional(),
@@ -232,6 +260,12 @@ export const AskResponse = z.object({
   model: z.string(),
   language: z.enum(['en', 'gu']),
   instant: InstantResults,
+  /**
+   * The catalogue rows for the words typed (songs, albums, artists with art, duration and
+   * `libraryId` when already on the server): the deterministic add path, present with or without
+   * the model. Absent when the instant layer had an exact hit or the catalogue did not answer.
+   */
+  catalogue: CatalogueSearch.optional(),
   actions: z.array(AskAction),
   /** One line saying why, in the question's language. Empty when the model was off. */
   why: z.string(),

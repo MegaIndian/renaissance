@@ -1,7 +1,8 @@
 /**
  * Runs requests one at a time in the hub process and recovers after a restart: `requested` rows
  * start again, in-flight singles are marked failed (`interrupted`) since a half-done download
- * cannot be resumed safely, album rows waiting on Lidarr keep waiting.
+ * cannot be resumed safely, album rows waiting on Lidarr keep waiting. The queue never wedges: a
+ * run that throws is logged and the next request still runs.
  */
 import type { Stores } from '../db/index.js';
 import type { EventBus } from '../events/bus.js';
@@ -23,10 +24,31 @@ export function createRunner(options: {
   let timer: NodeJS.Timeout | undefined;
 
   async function drain(): Promise<void> {
-    for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-      await pipeline.run(id);
+    try {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        try {
+          await pipeline.run(id);
+        } catch (error) {
+          // `run()` writes its own failures; this is the last line of defence for the queue.
+          log.error(
+            { request: id, error: error instanceof Error ? error.message : String(error) },
+            'request run threw',
+          );
+        }
+      }
+    } finally {
+      running = undefined;
     }
-    running = undefined;
+  }
+
+  /** Expired catalogue answers and token checks go; the album poll runs. */
+  async function tick(): Promise<void> {
+    try {
+      stores.cache.sweep();
+    } catch (error) {
+      log.warn({ error: error instanceof Error ? error.message : String(error) }, 'sweep failed');
+    }
+    await pipeline.pollAlbums();
   }
 
   return {
@@ -59,7 +81,8 @@ export function createRunner(options: {
     },
     start(): void {
       this.recover();
-      timer = setInterval(() => void pipeline.pollAlbums(), options.albumPollMs ?? ALBUM_POLL_MS);
+      void tick();
+      timer = setInterval(() => void tick(), options.albumPollMs ?? ALBUM_POLL_MS);
       timer.unref();
     },
     stop(): void {

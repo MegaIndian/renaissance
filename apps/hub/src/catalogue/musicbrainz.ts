@@ -6,7 +6,7 @@ import { HttpError, httpJson, sleep } from '../http.js';
 import type { Fetch } from '../http.js';
 import { luceneEscape } from '../text.js';
 import { createRateLimiter } from './rate-limiter.js';
-import type { RateLimiter } from './rate-limiter.js';
+import type { RateLimiter, ScheduleOptions } from './rate-limiter.js';
 
 export const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2';
 
@@ -87,43 +87,61 @@ export function musicBrainzClient(options: {
   const wait = options.sleep ?? sleep;
   const headers = { 'user-agent': userAgent(options.version, options.contact) };
 
-  function get<T>(path: string, params: Record<string, string>): Promise<T> {
+  function get<T>(
+    path: string,
+    params: Record<string, string>,
+    who: Omit<ScheduleOptions, 'key'> = {},
+  ): Promise<T> {
     const url = new URL(`${base}/${path}`);
     url.searchParams.set('fmt', 'json');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     // MusicBrainz answers 503 when a client is over its share; wait and try again, twice.
-    return limiter.schedule(async () => {
-      for (let attempt = 0; ; attempt++) {
-        try {
-          const res = await httpJson<T>(
-            'musicbrainz',
-            url.toString(),
-            { headers, timeoutMs: 12_000 },
-            doFetch,
-          );
-          return res.body;
-        } catch (error) {
-          const retry = error instanceof HttpError && error.status === 503 && attempt < 2;
-          if (!retry) throw error;
-          await wait(2_000 * (attempt + 1));
+    // Identical URLs in flight share one call; see the limiter for the queue rules.
+    return limiter.schedule(
+      async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            const res = await httpJson<T>(
+              'musicbrainz',
+              url.toString(),
+              { headers, timeoutMs: 12_000 },
+              doFetch,
+            );
+            return res.body;
+          } catch (error) {
+            const retry = error instanceof HttpError && error.status === 503 && attempt < 2;
+            if (!retry) throw error;
+            await wait(2_000 * (attempt + 1));
+          }
         }
-      }
-    });
+      },
+      { ...who, key: url.toString() },
+    );
   }
 
   return {
-    async searchRecordings(query: string, limit = 10): Promise<MbRecording[]> {
-      const body = await get<{ recordings?: MbRecording[] }>('recording', {
-        query,
-        limit: String(limit),
-      });
+    async searchRecordings(
+      query: string,
+      limit = 10,
+      who: Omit<ScheduleOptions, 'key'> = {},
+    ): Promise<MbRecording[]> {
+      const body = await get<{ recordings?: MbRecording[] }>(
+        'recording',
+        { query, limit: String(limit) },
+        who,
+      );
       return body.recordings ?? [];
     },
-    async searchReleaseGroups(query: string, limit = 8): Promise<MbReleaseGroup[]> {
-      const body = await get<{ 'release-groups'?: MbReleaseGroup[] }>('release-group', {
-        query,
-        limit: String(limit),
-      });
+    async searchReleaseGroups(
+      query: string,
+      limit = 8,
+      who: Omit<ScheduleOptions, 'key'> = {},
+    ): Promise<MbReleaseGroup[]> {
+      const body = await get<{ 'release-groups'?: MbReleaseGroup[] }>(
+        'release-group',
+        { query, limit: String(limit) },
+        who,
+      );
       return body['release-groups'] ?? [];
     },
     async searchArtists(query: string, limit = 5): Promise<MbArtist[]> {

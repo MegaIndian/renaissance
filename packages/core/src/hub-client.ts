@@ -77,9 +77,11 @@ export function createHubClient(options: HubClientOptions) {
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
     const init: RequestInit = { method, headers: headers(body !== undefined) };
     if (body !== undefined) init.body = JSON.stringify(body);
+    if (signal) init.signal = signal;
     const res = await doFetch(`${base}${path}`, init);
     if (!res.ok) {
       let code = 'http_error';
@@ -100,8 +102,15 @@ export function createHubClient(options: HubClientOptions) {
   return {
     url: base,
     me: () => call(Profile, 'GET', '/me'),
-    catalogueSearch: (q: string) =>
-      call(CatalogueSearch, 'GET', `/catalogue/search?q=${encodeURIComponent(q)}`),
+    /** Typeahead (F61): abortable, so the app drops the answer to letters already replaced. */
+    catalogueSearch: (q: string, signal?: AbortSignal) =>
+      call(
+        CatalogueSearch,
+        'GET',
+        `/catalogue/search?q=${encodeURIComponent(q)}`,
+        undefined,
+        signal,
+      ),
     requests: (scope: 'mine' | 'house' = 'mine') =>
       call(
         MusicRequest.array().transform((items) => items),

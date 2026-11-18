@@ -8,8 +8,10 @@ import { version } from '../version.js';
 
 /**
  * Liveness for container checks, never rate limited. `status` is public; the `integrations` detail
- * (which services and models are configured) is answered only to a valid Jellyfin token (ADR 0007
- * addendum).
+ * (which services and models are configured) is answered only to a Jellyfin token the hub has
+ * checked recently (ADR 0007 addendum). The check is read from the cache alone: an unauthenticated,
+ * unlimited route must not turn every header it is sent into a Jellyfin request, nor fail when
+ * Jellyfin is down.
  */
 export async function healthRoutes(
   app: FastifyInstance,
@@ -19,8 +21,12 @@ export async function healthRoutes(
   app.get('/health', { config: { rateLimit: false } }, async (request) => {
     const body: Record<string, unknown> = { status: 'ok', service: 'renaissance-hub', version };
     const token = tokenFrom(request);
-    if (token && authenticator.configured && (await authenticator.authenticate(token))) {
-      body.integrations = describe(config);
+    if (token && authenticator.configured) {
+      try {
+        if (authenticator.peek(token)) body.integrations = describe(config);
+      } catch {
+        /* a cache error never fails liveness */
+      }
     }
     return body;
   });

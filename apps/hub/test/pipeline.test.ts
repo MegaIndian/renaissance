@@ -14,6 +14,7 @@ import type { PipelineDeps } from '../src/fetch/pipeline.js';
 import { createRunner } from '../src/fetch/runner.js';
 import { recordingLogger } from '../src/log.js';
 import { createRequestService } from '../src/requests/service.js';
+import type { CreateResult } from '../src/requests/service.js';
 import {
   FLAC,
   MP3,
@@ -149,6 +150,7 @@ describe('helpers', () => {
 
 describe('pipeline: a single', () => {
   it('finds, downloads, maps and imports with albumReleaseId and disableReleaseSwitching, then scans and fills the collection', async () => {
+    let clock = 1_000_000;
     const t = setup({
       transfers: {
         [FLAC]: [
@@ -156,6 +158,10 @@ describe('pipeline: a single', () => {
           { state: 'Completed, Succeeded' },
         ],
       },
+      downloadTimeoutMs: 60_000,
+      tracksTimeoutMs: 60_000,
+      // Each look at the clock is two seconds later, so the estimate has a rate to work from.
+      now: () => (clock += 2_000),
     });
     const req = t.stores.requests.create(
       { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
@@ -171,10 +177,20 @@ describe('pipeline: a single', () => {
       'finding',
       'finding',
       'downloading',
+      'downloading',
+      'downloading',
+      'importing',
       'importing',
       'importing',
       'ready',
     ]);
+    // The progress write carried the percentage and an estimate, and added no step.
+    const progressEvent = t.events.find(
+      (e) => e.type === 'request' && e.request.progress?.done === 50,
+    ) as Extract<HubEvent, { type: 'request' }>;
+    expect(progressEvent.request.progress).toMatchObject({ unit: 'percent', total: 100 });
+    expect(progressEvent.request.progress?.etaSeconds).toBeGreaterThanOrEqual(1);
+    expect(result?.steps.filter((s) => s.status === 'downloading')).toHaveLength(2);
     expect(t.events.some((e) => e.type === 'ready')).toBe(true);
     expect(t.slskd.searches).toEqual(['lil wayne fireman']);
     expect(t.slskd.enqueued).toEqual([
@@ -233,6 +249,7 @@ describe('pipeline: a single', () => {
     });
     expect(result?.steps.map((s) => s.status)).toContain('downloading');
     expect(result?.detail).toBe('Imported 03 - Fireman.flac');
+    expect(result?.steps.some((s) => s.detail === 'Importing 03 - Fireman.flac')).toBe(true);
   });
 
   it('drops the leading Lil when the first query returns nothing', async () => {
@@ -326,7 +343,7 @@ describe('pipeline: a single', () => {
     );
     const out = await both.pipeline.run(r2.id);
     expect(out).toMatchObject({ status: 'failed', reason: 'download_failed' });
-    expect(out?.detail).toContain('no progress');
+    expect(out?.detail).toContain('not finished after');
   });
 
   it('fails when no Lidarr track matches, when Lidarr cannot see the file, and when the import command fails', async () => {
@@ -361,19 +378,32 @@ describe('pipeline: a single', () => {
     expect(out3?.detail).toContain('Has unmatched tracks');
   });
 
-  it('reuses an existing artist, switching it to the singles profile, and an existing singles profile', async () => {
+  it('never touches an existing artist (profile or monitoring); adds the album explicitly and says so', async () => {
     const t = setup({
       lidarrOptions: { singlesProfile: true, existingArtist: true, releaseMonitored: true },
     });
     const req = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
-    expect((await t.pipeline.run(req.id))?.status).toBe('ready');
+    const out = await t.pipeline.run(req.id);
+    expect(out?.status).toBe('ready');
     expect(t.lidarr.writes.find((w) => w.path === 'metadataprofile')).toBeUndefined();
     expect(t.lidarr.writes.find((w) => w.path === 'artist')).toBeUndefined();
-    expect(
-      (t.lidarr.writes.find((w) => w.path === 'artist/7')!.body as { metadataProfileId: number })
-        .metadataProfileId,
-    ).toBe(3);
+    expect(t.lidarr.writes.find((w) => w.path.startsWith('artist/'))).toBeUndefined();
+    expect(t.lidarr.artists[0]?.metadataProfileId).toBe(1);
+    expect(t.lidarr.writes.find((w) => w.path === 'album')).toBeDefined();
     expect(t.lidarr.writes.find((w) => w.path.startsWith('album/'))).toBeUndefined();
+    expect(
+      out?.steps.find((s) => s.detail?.includes('profile and monitoring unchanged'))?.detail,
+    ).toContain('Using the Lidarr artist Lil Wayne as it is');
+    // A new artist still gets the singles profile and no monitoring of new items.
+    const fresh = setup({ lidarrOptions: { singlesProfile: true } });
+    const r2 = fresh.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    expect((await fresh.pipeline.run(r2.id))?.status).toBe('ready');
+    const added = fresh.lidarr.writes.find((w) => w.path === 'artist')!.body as Record<
+      string,
+      unknown
+    >;
+    expect(added.metadataProfileId).toBe(3);
+    expect(added.monitorNewItems).toBe('none');
   });
 
   it('fails cleanly when MusicBrainz has nothing, when slskd or Lidarr are not configured, and keeps going when scans fail', async () => {
@@ -454,10 +484,118 @@ describe('pipeline: a single', () => {
       { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
       sahil.id,
     );
-    expect(service.cancel(sahil, req.id)).toMatchObject({ status: 'failed', reason: 'cancelled' });
+    const cancelled = await service.cancel(sahil, req.id);
+    expect(cancelled).toMatchObject({ status: 'cancelled', detail: 'Cancelled by Sahil' });
+    expect((cancelled as { reason?: string }).reason).toBeUndefined();
     expect(await t.pipeline.run(req.id)).toBeUndefined();
     expect(t.slskd.enqueued).toEqual([]);
+    expect(t.stores.requests.get(req.id)?.status).toBe('cancelled');
     expect(new PipelineError('x', 'y').reason).toBe('x');
+  });
+
+  it('a cancel that lands mid-search stops everything: no download, no overwrite, still cancelled', async () => {
+    const t = setup({
+      slskdResults: {
+        'lil wayne fireman': [],
+        'wayne fireman': [response('cuchillo', [{}])],
+      },
+    });
+    const service = createRequestService({
+      stores: t.stores,
+      library: t.lib.library,
+      bus: t.bus,
+      enqueue: () => {},
+    });
+    const req = t.stores.requests.create(
+      { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
+      sahil.id,
+    );
+    // Mom taps cancel while the first slskd query is still out.
+    const original = t.slskd.client.search.bind(t.slskd.client);
+    t.slskd.client.search = async (text) => {
+      const out = await original(text);
+      if (text === 'lil wayne fireman') await service.cancel(sahil, req.id);
+      return out;
+    };
+    expect(await t.pipeline.run(req.id)).toBeUndefined();
+    const row = t.stores.requests.get(req.id)!;
+    expect(row.status).toBe('cancelled');
+    expect(row.reason).toBeUndefined();
+    expect(t.slskd.enqueued).toEqual([]);
+    expect(row.steps.map((s) => s.status)).toEqual([
+      'requested',
+      'finding',
+      'finding',
+      'cancelled',
+    ]);
+    expect(t.log.lines.some((l) => l.includes('request stopped'))).toBe(true);
+  });
+
+  it('a cancel that lands while a step is failing never throws and leaves the row cancelled', async () => {
+    const t = setup({ slskdResults: { 'lil wayne fireman': [] } });
+    const service = createRequestService({
+      stores: t.stores,
+      library: t.lib.library,
+      bus: t.bus,
+      enqueue: () => {},
+    });
+    const req = t.stores.requests.create(
+      { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
+      sahil.id,
+    );
+    t.slskd.client.search = async () => {
+      await service.cancel(sahil, req.id);
+      throw new Error('slskd unreachable');
+    };
+    const runner = createRunner({
+      pipeline: t.pipeline,
+      stores: t.stores,
+      bus: t.bus,
+      log: t.log,
+      albumPollMs: 60_000,
+    });
+    runner.enqueue(req.id);
+    await expect(runner.idle()).resolves.toBeUndefined();
+    expect(runner.pending()).toBe(0);
+    expect(t.stores.requests.get(req.id)).toMatchObject({ status: 'cancelled' });
+    // The queue is not wedged: the next request runs.
+    const next = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    t.slskd.client.search = async () => [response('cuchillo', [{}])];
+    runner.enqueue(next.id);
+    await runner.idle();
+    expect(t.stores.requests.get(next.id)?.status).toBe('ready');
+    // A run whose pipeline throws outright is logged and the queue still drains.
+    const throwing = createRunner({
+      pipeline: {
+        run: async () => {
+          throw new Error('unexpected');
+        },
+        pollAlbums: async () => {},
+        abandon: async () => undefined,
+      },
+      stores: t.stores,
+      bus: t.bus,
+      log: t.log,
+    });
+    throwing.enqueue('x');
+    await expect(throwing.idle()).resolves.toBeUndefined();
+    expect(throwing.pending()).toBe(0);
+    expect(t.log.lines.some((l) => l.includes('request run threw'))).toBe(true);
+  });
+
+  it('counts a missing transfer record as a failed attempt, and in dry run as downloaded', async () => {
+    const t = setup({ missingTransferPolls: 1 });
+    t.slskd.client.transfers = async () => [];
+    const req = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    const out = await t.pipeline.run(req.id);
+    expect(out).toMatchObject({ status: 'failed', reason: 'download_failed' });
+    expect(out?.detail).toContain('slskd has no transfer for it');
+    const dry = setup({ dryRun: true });
+    dry.slskd.client.transfers = async () => [];
+    const r2 = dry.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    const out2 = await dry.pipeline.run(r2.id);
+    expect(out2?.status).toBe('ready');
+    expect(out2?.steps.some((s) => s.detail?.startsWith('Dry run:'))).toBe(true);
   });
 });
 
@@ -478,9 +616,14 @@ describe('pipeline: an album', () => {
       true,
     );
     expect(t.slskd.searches).toEqual([]);
+    expect(result?.progress).toEqual({ unit: 'songs', done: 0, total: 0 });
     t.lidarr.setAlbumStats({ trackCount: 22, trackFileCount: 10 });
     await t.pipeline.pollAlbums();
-    expect(t.stores.requests.get(req.id)?.progress).toEqual({ done: 10, total: 22 });
+    await t.pipeline.pollAlbums();
+    const polled = t.stores.requests.get(req.id)!;
+    expect(polled.progress).toEqual({ unit: 'songs', done: 10, total: 22 });
+    // Polls change progress only: the step log did not grow.
+    expect(polled.steps).toHaveLength(result!.steps.length);
     t.lidarr.setAlbumStats({ trackCount: 22, trackFileCount: 22 });
     await t.pipeline.pollAlbums();
     const done = t.stores.requests.get(req.id)!;
@@ -589,6 +732,8 @@ describe('pipeline: retries and releases', () => {
     });
     expect(service.retry(sahil, req.id)).toMatchObject({ status: 'requested' });
     expect(service.retry(sahil, req.id)).toBe('not_failed');
+    const requested = t.stores.requests.get(req.id)!;
+    expect(requested.steps.map((s) => s.status)).toEqual(['requested', 'failed', 'requested']);
     expect(service.retry(sahil, 'nope')).toBe('not_found');
     const result = await t.pipeline.run(req.id);
     expect(result?.status).toBe('ready');
@@ -596,7 +741,7 @@ describe('pipeline: retries and releases', () => {
     expect(t.slskd.enqueued).toEqual([]);
     expect(result?.steps.some((s) => s.detail?.includes('downloaded earlier'))).toBe(true);
     const cancelled = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
-    t.stores.requests.update(cancelled.id, { status: 'failed', reason: 'cancelled' });
+    t.stores.requests.update(cancelled.id, { status: 'cancelled' });
     expect(service.retry(sahil, cancelled.id)).toBe('not_failed');
   });
 
@@ -674,5 +819,119 @@ describe('pipeline: retries and releases', () => {
     )!.body as { files: { trackIds: number[]; quality: { quality: { name: string } } }[] };
     expect(importCmd.files[0]!.trackIds).toEqual([-1]);
     expect(importCmd.files[0]!.quality.quality.name).toBe('Unknown');
+  });
+});
+
+describe('pipeline: album deadline and cancel', () => {
+  it('fails an album nobody found within the deadline and unmonitors it', async () => {
+    let clock = Date.parse('2026-11-18T00:00:00Z');
+    const t = setup({ albumDeadlineMs: 2 * 24 * 60 * 60_000, now: () => clock });
+    const req = t.stores.requests.create({ kind: 'album', ...carterAlbum }, mom.id);
+    // created_at is the store's clock: pin it to the test clock.
+    t.stores.db
+      .prepare('UPDATE requests SET created_at = ? WHERE id = ?')
+      .run(new Date(clock).toISOString(), req.id);
+    expect((await t.pipeline.run(req.id))?.status).toBe('finding');
+    expect(t.stores.requests.get(req.id)?.detail).toContain('for up to 2 days');
+    t.lidarr.setAlbumStats({ trackCount: 22, trackFileCount: 3 });
+    clock += 24 * 60 * 60_000;
+    await t.pipeline.pollAlbums();
+    expect(t.stores.requests.get(req.id)).toMatchObject({
+      status: 'finding',
+      progress: { unit: 'songs', done: 3, total: 22 },
+    });
+    clock += 2 * 24 * 60 * 60_000;
+    await t.pipeline.pollAlbums();
+    const failed = t.stores.requests.get(req.id)!;
+    expect(failed).toMatchObject({ status: 'failed', reason: 'not_found_in_time' });
+    expect(failed.detail).toContain('3 of 22 tracks in 2 days');
+    expect(failed.detail).toContain('no longer monitors');
+    const albumWrite = t.lidarr.writes.filter((w) => w.path.startsWith('album/')).pop()!.body as {
+      monitored: boolean;
+    };
+    expect(albumWrite.monitored).toBe(false);
+  });
+
+  it('cancelling an album request unmonitors it in Lidarr and says so; a poll of a cancelled row is skipped', async () => {
+    const t = setup();
+    const service = createRequestService({
+      stores: t.stores,
+      library: t.lib.library,
+      bus: t.bus,
+      enqueue: () => {},
+      abandon: (r) => t.pipeline.abandon(r),
+    });
+    const req = t.stores.requests.create({ kind: 'album', ...carterAlbum }, mom.id);
+    expect((await t.pipeline.run(req.id))?.status).toBe('finding');
+    const cancelled = await service.cancel(mom, req.id);
+    expect(cancelled).toMatchObject({ status: 'cancelled' });
+    expect((cancelled as { detail: string }).detail).toBe(
+      'Cancelled by Mom; Lidarr no longer monitors Tha Carter II',
+    );
+    expect(t.lidarr.albums[0]?.monitored).toBe(false);
+    t.lidarr.setAlbumStats({ trackCount: 22, trackFileCount: 22 });
+    await t.pipeline.pollAlbums();
+    expect(t.stores.requests.get(req.id)?.status).toBe('cancelled');
+    expect(t.stores.collection.list(mom.id)).toEqual([]);
+    // Unmonitoring is best effort: a Lidarr error is logged, the cancel still lands.
+    const r2 = t.stores.requests.create({ kind: 'album', ...carterAlbum }, mom.id);
+    t.lidarr.client.albumByForeignId = async () => {
+      throw new Error('lidarr down');
+    };
+    expect(await service.cancel(mom, r2.id)).toMatchObject({
+      status: 'cancelled',
+      detail: 'Cancelled by Mom',
+    });
+    expect(t.log.lines.some((l) => l.includes('could not unmonitor'))).toBe(true);
+    // Nothing to do without ids or without Lidarr.
+    const bare = t.stores.requests.create(
+      { kind: 'album', title: 'Red', artist: 'Taylor Swift' },
+      mom.id,
+    );
+    expect(await t.pipeline.abandon(bare)).toBeUndefined();
+    const r3 = t.stores.requests.create({ kind: 'track', ...firemanSong }, mom.id);
+    expect(await service.cancel(mom, r3.id)).toMatchObject({ detail: 'Cancelled by Mom' });
+  });
+});
+
+describe('request service: duplicates', () => {
+  it('answers a second request for the same song with the one already running', async () => {
+    const t = setup();
+    const enqueued: string[] = [];
+    const service = createRequestService({
+      stores: t.stores,
+      library: t.lib.library,
+      bus: t.bus,
+      enqueue: (id) => enqueued.push(id),
+    });
+    const first = (await service.create(sahil, { kind: 'track', ...firemanSong })) as Extract<
+      CreateResult,
+      { kind: 'request' }
+    >;
+    expect(first.kind).toBe('request');
+    const again = await service.create(mom, { kind: 'track', ...firemanSong });
+    expect(again).toMatchObject({ kind: 'duplicate', request: { id: first.request.id } });
+    const byName = await service.create(mom, {
+      kind: 'track',
+      title: 'FIREMAN',
+      artist: 'lil wayne',
+    });
+    expect(byName.kind).toBe('duplicate');
+    const album = await service.create(mom, { kind: 'album', ...carterAlbum });
+    expect(album.kind).toBe('request');
+    expect(await service.create(sahil, { kind: 'album', ...carterAlbum })).toMatchObject({
+      kind: 'duplicate',
+    });
+    const other = (await service.create(mom, {
+      kind: 'track',
+      ...firemanSong,
+      recordingId: '00000000-0000-4000-8000-000000000001',
+    })) as Extract<CreateResult, { kind: 'request' }>;
+    expect(other.kind).toBe('request');
+    expect(enqueued).toHaveLength(3);
+    // Once the first is done (or failed), a new request for the same song is allowed again.
+    t.stores.requests.update(first.request.id, { status: 'failed', reason: 'no_results' });
+    t.stores.requests.update(other.request.id, { status: 'ready' });
+    expect((await service.create(mom, { kind: 'track', ...firemanSong })).kind).toBe('request');
   });
 });

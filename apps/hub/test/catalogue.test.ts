@@ -7,7 +7,7 @@ import {
   releaseGroupQuery,
   userAgent,
 } from '../src/catalogue/musicbrainz.js';
-import { createRateLimiter } from '../src/catalogue/rate-limiter.js';
+import { LimiterBusyError, createRateLimiter } from '../src/catalogue/rate-limiter.js';
 import {
   SEARCH_TTL_MS,
   albumFromReleaseGroup,
@@ -424,5 +424,171 @@ describe('recording choice', () => {
       sleep: async () => {},
     });
     await expect(other.searchRecordings('x')).rejects.toThrow('400');
+  });
+});
+
+describe('rate limiter: four typists', () => {
+  it('shares identical in-flight keys, drops a superseded search, and fails fast past the cap', async () => {
+    vi.useFakeTimers();
+    const limiter = createRateLimiter(1000, { maxQueue: 3 });
+    const ran: string[] = [];
+    const call = (name: string) => async () => {
+      ran.push(name);
+      return name;
+    };
+    // Two phones typing the same word cost one call.
+    const a1 = limiter.schedule(call('fireman'), { key: 'fireman', owner: 'sahil', batch: 'f' });
+    const a2 = limiter.schedule(call('fireman'), { key: 'fireman', owner: 'mom', batch: 'f' });
+    expect(a1).toBe(a2);
+    // Mom types on: her earlier prefix (a different batch) is dropped while it waits.
+    const old = limiter.schedule(call('fire'), { key: 'fire', owner: 'mom', batch: 'fire' });
+    const older = limiter.schedule(call('fir'), { key: 'fir', owner: 'kevin', batch: 'fir' });
+    const newer = limiter.schedule(call('firem'), { key: 'firem', owner: 'mom', batch: 'firem' });
+    // "fireman" is running; "fir" and "firem" wait; "fire" was dropped.
+    expect(limiter.queued()).toBe(2);
+    // The queue is capped: a fourth waiting call is refused at once.
+    const spare = limiter.schedule(call('x'), { key: 'x', owner: 'dad', batch: 'x' });
+    const refused = limiter.schedule(call('too many'));
+    await expect(old).rejects.toMatchObject({ name: 'LimiterBusyError', code: 'superseded' });
+    await expect(refused).rejects.toMatchObject({ code: 'busy' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await a1).toBe('fireman');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await older).toBe('fir');
+    expect(await newer).toBe('firem');
+    expect(await spare).toBe('x');
+    expect(ran).toEqual(['fireman', 'fir', 'firem', 'x']);
+    // Once settled the key is free again, and a call without options still works.
+    const again = limiter.schedule(call('fireman'), { key: 'fireman' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await again).toBe('fireman');
+    const plain = limiter.schedule(call('plain'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await plain).toBe('plain');
+    expect(new LimiterBusyError('busy').message).toContain('busy');
+    vi.useRealTimers();
+  });
+
+  it('catalogueService shares one search between concurrent callers and passes the owner on', async () => {
+    const stores = memoryStores();
+    let mbCalls = 0;
+    const { fetch } = fakeFetch({
+      'musicbrainz.org/ws/2/recording?': () => {
+        mbCalls += 1;
+        return { recordings: [fireman] };
+      },
+      'musicbrainz.org/ws/2/release-group?': () => {
+        mbCalls += 1;
+        return { 'release-groups': [{ ...rg, 'artist-credit': [wayne] }] };
+      },
+      'api.deezer.com/search': () => ({ data: [] }),
+    });
+    const scheduled: unknown[] = [];
+    const limiter = createRateLimiter(0);
+    const spy = {
+      schedule: <T>(fn: () => Promise<T>, opts?: unknown) => {
+        scheduled.push(opts);
+        return limiter.schedule(fn, opts as never);
+      },
+      queued: () => 0,
+    };
+    const svc = catalogueService({
+      musicBrainz: musicBrainzClient({ version: '1', contact: undefined, fetch, limiter: spy }),
+      deezer: deezerClient({ fetch }),
+      cache: stores.cache,
+    });
+    const [one, two] = await Promise.all([
+      svc.search('fireman', { owner: 'u-mom' }),
+      svc.search('fireman', { owner: 'u-sahil' }),
+    ]);
+    expect(one).toBe(two);
+    expect(mbCalls).toBe(2);
+    expect(scheduled[0]).toMatchObject({ owner: 'u-mom', batch: 'fireman' });
+    expect((scheduled[0] as { key: string }).key).toContain('/recording?');
+    expect((await svc.search('fireman')).cached).toBe(true);
+  });
+});
+
+describe('the fast path (typeahead)', () => {
+  it('answers from Deezer without a MusicBrainz call, caches briefly, and prefers a full cached answer', async () => {
+    const { fromDeezer, FAST_TTL_MS } = await import('../src/catalogue/service.js');
+    const stores = memoryStores();
+    let mbCalls = 0;
+    let dzCalls = 0;
+    const { fetch } = fakeFetch({
+      'musicbrainz.org/ws/2/recording?': () => {
+        mbCalls += 1;
+        return { recordings: [fireman] };
+      },
+      'musicbrainz.org/ws/2/release-group?': () => {
+        mbCalls += 1;
+        return { 'release-groups': [{ ...rg, 'artist-credit': [wayne] }] };
+      },
+      'api.deezer.com/search': () => {
+        dzCalls += 1;
+        return { data: [deezerTrack, { ...deezerTrack, id: 9, title: 'Fireman' }] };
+      },
+    });
+    const svc = catalogueService({
+      musicBrainz: musicBrainzClient({
+        version: '1',
+        contact: undefined,
+        fetch,
+        limiter: createRateLimiter(0),
+      }),
+      deezer: deezerClient({ fetch }),
+      cache: stores.cache,
+    });
+    const fast = await svc.search('fireman', { owner: 'u-mom', fast: true });
+    expect(mbCalls).toBe(0);
+    expect(dzCalls).toBe(1);
+    expect(fast.partial).toBe(true);
+    expect(fast.songs).toEqual([
+      {
+        id: 'dz:track:1',
+        title: 'Fireman',
+        artist: 'Lil Wayne',
+        album: 'Tha Carter II',
+        duration: 183,
+        art: 'https://cdn.deezer.test/carter2.jpg',
+        preview: 'https://cdn.deezer.test/fireman.mp3',
+      },
+    ]);
+    expect(fast.albums[0]).toMatchObject({ id: 'dz:album:3', title: 'Tha Carter II' });
+    expect(fast.artists[0]).toMatchObject({
+      id: 'dz:artist:2',
+      name: 'Lil Wayne',
+      art: 'https://cdn.deezer.test/wayne.jpg',
+    });
+    expect((await svc.search('fireman', { fast: true })).cached).toBe(true);
+    expect(dzCalls).toBe(1);
+    expect(FAST_TTL_MS).toBe(600_000);
+    // Enter: the full search asks MusicBrainz; from then on the typeahead gets the full answer.
+    const full = await svc.search('fireman');
+    expect(mbCalls).toBe(2);
+    expect(full.partial).toBeUndefined();
+    const again = await svc.search('fireman', { fast: true });
+    expect(again.cached).toBe(true);
+    expect(again.partial).toBeUndefined();
+    expect(again.songs[0]?.recordingId).toBe(fireman.id);
+    expect(fromDeezer([])).toEqual({ songs: [], albums: [], artists: [] });
+    const bare = fromDeezer([
+      {
+        id: 5,
+        title: 'X',
+        duration: 1,
+        artist: { id: 6, name: 'Y' },
+        album: { id: 7, title: 'Z' },
+      },
+    ]);
+    expect(bare.songs[0]).toEqual({
+      id: 'dz:track:5',
+      title: 'X',
+      artist: 'Y',
+      album: 'Z',
+      duration: 1,
+    });
+    expect(bare.albums[0]?.art).toBeUndefined();
+    expect(bare.artists[0]?.art).toBeUndefined();
   });
 });

@@ -100,6 +100,39 @@ describe('GET /health', () => {
     await app.close();
   });
 
+  it('never calls Jellyfin and never fails when Jellyfin is down: the cache alone decides', async () => {
+    const { jellyfinAuthenticator } = await import('../src/auth/authenticator.js');
+    const { fakeFetch } = await import('./helpers.js');
+    const stores = memoryStores();
+    const { fetch: jf, calls } = fakeFetch({
+      '/Users/Me': () => {
+        throw new Error('ECONNREFUSED');
+      },
+    });
+    const real = jellyfinAuthenticator({
+      url: 'http://jf.test',
+      admins: [],
+      profiles: stores.profiles,
+      cache: stores.cache,
+      fetch: jf,
+    });
+    const { app } = await build({ authenticator: real, stores });
+    const res = await app.inject({ url: '/health', headers: auth('any-token') });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().integrations).toBeUndefined();
+    expect(calls).toHaveLength(0);
+    // A token the hub has checked recently (through any other route) unlocks the detail.
+    stores.cache.set(
+      `auth:${(await import('node:crypto')).createHash('sha256').update('seen').digest('hex')}`,
+      { Id: 'u-sahil', Name: 'Sahil', IsAdministrator: true },
+      60_000,
+    );
+    const seen = await app.inject({ url: '/health', headers: auth('seen') });
+    expect(seen.json().integrations).toBeDefined();
+    expect(calls).toHaveLength(0);
+    await app.close();
+  });
+
   it('reports the version from the package manifest', async () => {
     const manifest = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -304,6 +337,28 @@ describe('/requests', () => {
     await app.close();
   });
 
+  it('answers a second request for the same song with the running one (200), by anyone', async () => {
+    const { app } = await build({ startRunner: false });
+    const first = await app.inject({
+      method: 'POST',
+      url: '/requests',
+      headers: auth(),
+      payload: { kind: 'track', ...firemanSong },
+    });
+    expect(first.statusCode).toBe(201);
+    const second = await app.inject({
+      method: 'POST',
+      url: '/requests',
+      headers: auth('tok-mom'),
+      payload: { kind: 'track', ...firemanSong },
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json().id).toBe(first.json().id);
+    expect(second.json().alreadyHere).toBeUndefined();
+    await app.hub.runner.idle();
+    await app.close();
+  });
+
   it('cancels a request that has not started, refuses later', async () => {
     const { app, stores } = await build({ startRunner: false });
     const created = await app.inject({
@@ -330,7 +385,8 @@ describe('/requests', () => {
       url: `/requests/${second.id}`,
       headers: auth(),
     });
-    expect(cancelled.json()).toMatchObject({ status: 'failed', reason: 'cancelled' });
+    expect(cancelled.json()).toMatchObject({ status: 'cancelled' });
+    expect(cancelled.json().reason).toBeUndefined();
     expect(
       (await app.inject({ method: 'POST', url: `/requests/${second.id}/retry`, headers: auth() }))
         .statusCode,
@@ -407,6 +463,25 @@ describe('/rules and /budget', () => {
 });
 
 describe('/catalogue/search', () => {
+  it('answers 503 busy with retry-after when the limiter is full or the search was superseded', async () => {
+    const { LimiterBusyError } = await import('../src/catalogue/rate-limiter.js');
+    const owners: unknown[] = [];
+    const catalogue = {
+      ...fakeCatalogue(),
+      search: async (_q: string, who?: unknown) => {
+        owners.push(who);
+        throw new LimiterBusyError('busy');
+      },
+    } as unknown as ReturnType<typeof fakeCatalogue>;
+    const { app } = await build({ catalogue });
+    const res = await app.inject({ url: '/catalogue/search?q=fireman', headers: auth() });
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['retry-after']).toBe('1');
+    expect(res.json()).toMatchObject({ error: 'busy' });
+    expect(owners).toEqual([{ owner: sahil.id, fast: true }]);
+    await app.close();
+  });
+
   it('validates q and marks library hits', async () => {
     const lib = fakeLibrary();
     lib.library.search = async () => ({

@@ -143,6 +143,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     ...(navidrome ? { navidrome } : {}),
     lidarrDownloadsDir: config.lidarrDownloadsDir,
     dryRun: config.dryRun,
+    albumDeadlineMs: config.albumDeadlineMs,
     ...(config.lidarr.rootFolder ? { rootFolder: config.lidarr.rootFolder } : {}),
     log,
   });
@@ -158,6 +159,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     library,
     bus,
     enqueue: (id) => runner.enqueue(id),
+    abandon: (req) => pipeline.abandon(req),
   });
 
   const budget = createBudget({

@@ -52,16 +52,55 @@ export function sampleFrom(model: string, usage: RawUsage): UsageSample {
   };
 }
 
+/**
+ * What one intent call is assumed to cost until its usage is known: about 2,000 input tokens
+ * (mostly cached) and 200 output on Opus 5.5 is a cent; this is a safe margin above it.
+ */
+export const RESERVED_CALL_USD = 0.02;
+
+export interface Reservation {
+  /** Gives the reserved amount back without recording anything (the call failed or was refused). */
+  release(): void;
+}
+
 export function createBudget(options: { usage: UsageStore; capUsd: number; model: string }) {
   const { usage, capUsd, model } = options;
+  let inFlight = 0;
+  const spentWithReservations = (now: Date): number =>
+    usage.monthSpent(now) + inFlight * RESERVED_CALL_USD;
   return {
-    /** True when the household may still call the model this month. */
+    /** True when the household may still call the model this month, counting calls in flight. */
     allows(now = new Date()): boolean {
-      return capUsd > 0 && usage.monthSpent(now) < capUsd;
+      return capUsd > 0 && spentWithReservations(now) < capUsd;
     },
-    record(profile: string, raw: RawUsage, now = new Date()): UsageSample {
+    /**
+     * Holds an estimated cost for one call so concurrent asks cannot all pass at the cap; null
+     * when the cap is reached. Settled by `record()` or given back by `release()`.
+     */
+    reserve(now = new Date()): Reservation | null {
+      if (!this.allows(now)) return null;
+      inFlight += 1;
+      let open = true;
+      return {
+        release: () => {
+          if (!open) return;
+          open = false;
+          inFlight -= 1;
+        },
+      };
+    },
+    inFlight(): number {
+      return inFlight;
+    },
+    record(
+      profile: string,
+      raw: RawUsage,
+      reservation?: Reservation | null,
+      now = new Date(),
+    ): UsageSample {
       const sample = sampleFrom(model, raw);
       usage.record(profile, sample, now);
+      reservation?.release();
       return sample;
     },
     report(profile: string | 'house', now = new Date()): Budget {

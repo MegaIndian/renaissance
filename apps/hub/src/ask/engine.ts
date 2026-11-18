@@ -1,9 +1,10 @@
 /**
- * The intent engine (F76, ADR 0009). One model call per utterance, strict tools, and a grounding
+ * The intent engine (F76, ADR 0010). One model call per utterance, strict tools, and a grounding
  * check the model cannot talk its way past: every id, title and artist in an action must be in the
  * context the hub built (library search, catalogue lookup) or in the user's words. Deterministic
- * paths first: an exact library title match plays without the model; no key or no budget means
- * the instant layer alone, with `model: "off"`.
+ * paths first: an exact library title match plays without the model and skips the catalogue; the
+ * catalogue rows (the add path) are in every other answer; no key or no budget means the instant
+ * layer and the catalogue alone, with `model: "off"`.
  */
 import type Anthropic from '@anthropic-ai/sdk';
 import type { i18n as I18n } from 'i18next';
@@ -70,12 +71,31 @@ export function detectLanguage(
   return profile.language;
 }
 
+/** "play X" / "X vagad" → "x": the title the words ask for, without the command around it. */
+export function stripCommand(text: string): string {
+  return normalize(text)
+    .replace(/^(play|put on|start|queue)\s+/, '')
+    .replace(/\s+(vagad|vagado|chalu kar|chalavo|વગાડ|વગાડો)$/u, '')
+    .trim();
+}
+
 /** "play X" / "X vagad" with X exactly a library track title: no model needed. */
 export function exactTrack(text: string, instant: InstantResults) {
-  const stripped = normalize(text)
-    .replace(/^(play|put on|start)\s+/, '')
-    .replace(/\s+(vagad|vagado|chalu kar|chalavo)$/, '');
+  const stripped = stripCommand(text);
   return instant.tracks.find((t) => normalize(t.title) === stripped);
+}
+
+/** Library hits for the raw words and for the stripped title, in one list, no duplicates. */
+export function unionInstant(a: InstantResults, b: InstantResults): InstantResults {
+  const merge = (x: InstantResults['tracks'], y: InstantResults['tracks']) => {
+    const seen = new Set(x.map((h) => h.id));
+    return [...x, ...y.filter((h) => !seen.has(h.id) && seen.add(h.id))];
+  };
+  return {
+    tracks: merge(a.tracks, b.tracks),
+    albums: merge(a.albums, b.albums),
+    artists: merge(a.artists, b.artists),
+  };
 }
 
 const i18nByLanguage = new Map<'en' | 'gu', I18n>();
@@ -240,7 +260,7 @@ export function createEngine(deps: EngineDeps) {
           newRequest.kind = 'track';
           newRequest.title = song.title;
           newRequest.artist = song.artist;
-          newRequest.recordingId = song.recordingId;
+          if (song.recordingId) newRequest.recordingId = song.recordingId;
           if (song.releaseGroupId) newRequest.releaseGroupId = song.releaseGroupId;
           if (song.releaseId) newRequest.releaseId = song.releaseId;
           if (song.artistId) newRequest.artistId = song.artistId;
@@ -250,7 +270,7 @@ export function createEngine(deps: EngineDeps) {
           newRequest.kind = 'album';
           newRequest.title = album.title;
           newRequest.artist = album.artist;
-          newRequest.releaseGroupId = album.releaseGroupId;
+          if (album.releaseGroupId) newRequest.releaseGroupId = album.releaseGroupId;
           if (album.artistId) newRequest.artistId = album.artistId;
         }
         const created = await requests.create(input.profile, newRequest);
@@ -309,6 +329,8 @@ export function createEngine(deps: EngineDeps) {
           summary: t(language, 'hub.summary.explain', { title: subject?.title ?? '' }),
         };
       }
+      // App-side actions are worded before they run (imperative) and carry the past-tense line
+      // the app shows once it has done them (design G): the hub never claims something played.
       case 'play': {
         const { itemId } = grounded.input as ToolInput<'play'>;
         const subject = describe(ctx, itemId);
@@ -318,6 +340,7 @@ export function createEngine(deps: EngineDeps) {
           ranBy: 'app',
           undoable: true,
           summary: t(language, 'hub.summary.play', { title: subject?.title ?? '' }),
+          doneSummary: t(language, 'hub.summary.played', { title: subject?.title ?? '' }),
         };
       }
       case 'queue': {
@@ -328,6 +351,7 @@ export function createEngine(deps: EngineDeps) {
           ranBy: 'app',
           undoable: true,
           summary: t(language, 'hub.summary.queue', { count: trackIds.length }),
+          doneSummary: t(language, 'hub.summary.queued', { count: trackIds.length }),
         };
       }
       case 'make_playlist': {
@@ -338,6 +362,7 @@ export function createEngine(deps: EngineDeps) {
           ranBy: 'app',
           undoable: true,
           summary: t(language, 'hub.summary.playlist', { name, count: trackIds.length }),
+          doneSummary: t(language, 'hub.summary.playlistMade', { name, count: trackIds.length }),
         };
       }
     }
@@ -347,19 +372,27 @@ export function createEngine(deps: EngineDeps) {
     async ask(input: AskInput): Promise<AskResponse> {
       const language = detectLanguage(input.text, input.language, input.profile);
       const base = { language, rejected: [] as AskResponse['rejected'], tools: [...askTools] };
-      const [instant, cat] = await Promise.all([
-        library.search(input.token, input.text).catch((error: unknown) => {
+      // The instant layer: the words as typed and the title inside them ("play carefree",
+      // "carefree vagad"), so a command around a library title still finds it.
+      const empty: InstantResults = { tracks: [], albums: [], artists: [] };
+      const searchLibrary = (words: string): Promise<InstantResults> =>
+        library.search(input.token, words).catch((error: unknown) => {
           log.warn(
             { error: error instanceof Error ? error.message : String(error) },
             'instant layer failed',
           );
-          return { tracks: [], albums: [], artists: [] } as InstantResults;
-        }),
-        catalogue.search(input.text).catch(() => undefined),
+          return empty;
+        });
+      const stripped = stripCommand(input.text);
+      const [raw, byTitle] = await Promise.all([
+        searchLibrary(input.text),
+        stripped && stripped !== normalize(input.text) ? searchLibrary(stripped) : empty,
       ]);
+      const instant = unionInstant(raw, byTitle);
       deps.onInstant?.(instant);
 
-      // Deterministic first (ADR 0007 point 3): an exact title in the library plays at once.
+      // Deterministic first (ADR 0007 point 3): an exact title in the library plays at once, and
+      // the catalogue is not asked (one MusicBrainz slot saved per such ask).
       const exact = exactTrack(input.text, instant);
       if (exact) {
         return {
@@ -374,16 +407,36 @@ export function createEngine(deps: EngineDeps) {
               ranBy: 'app',
               undoable: true,
               summary: t(language, 'hub.summary.play', { title: exact.title }),
+              doneSummary: t(language, 'hub.summary.played', { title: exact.title }),
             },
           ],
           why: t(language, 'hub.why.exact', { title: exact.title }),
         };
       }
+      // The catalogue rows are the add path with or without the model (design A).
+      const cat = await catalogue.search(input.text).catch((error: unknown) => {
+        log.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'catalogue lookup failed',
+        );
+        return undefined;
+      });
+      const withCatalogue = cat ? { catalogue: cat } : {};
       if (!deps.client)
-        return { ...base, model: 'off', reason: 'no_key', instant, actions: [], why: '' };
-      if (!budget.allows())
         return {
           ...base,
+          ...withCatalogue,
+          model: 'off',
+          reason: 'no_key',
+          instant,
+          actions: [],
+          why: '',
+        };
+      const reservation = budget.reserve();
+      if (!reservation)
+        return {
+          ...base,
+          ...withCatalogue,
           model: 'off',
           reason: 'budget',
           instant,
@@ -410,12 +463,14 @@ export function createEngine(deps: EngineDeps) {
           messages: [{ role: 'user', content: userMessage(ctx, input.text) }],
         });
       } catch (error) {
+        reservation.release();
         log.error(
           { error: error instanceof Error ? error.message : String(error) },
           'model call failed',
         );
         return {
           ...base,
+          ...withCatalogue,
           model: deps.model,
           reason: 'error',
           instant,
@@ -423,7 +478,7 @@ export function createEngine(deps: EngineDeps) {
           why: t(language, 'hub.why.error'),
         };
       }
-      const usage = budget.record(input.profile.id, message.usage);
+      const usage = budget.record(input.profile.id, message.usage, reservation);
       const usageOut = {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
@@ -433,6 +488,7 @@ export function createEngine(deps: EngineDeps) {
       if (message.stop_reason === 'refusal') {
         return {
           ...base,
+          ...withCatalogue,
           model: deps.model,
           reason: 'refusal',
           instant,
@@ -473,7 +529,15 @@ export function createEngine(deps: EngineDeps) {
         }
       }
       if (!why && actions.length === 0) why = t(language, 'hub.why.nothing');
-      return { ...base, model: deps.model, instant, actions, why, usage: usageOut };
+      return {
+        ...base,
+        ...withCatalogue,
+        model: deps.model,
+        instant,
+        actions,
+        why,
+        usage: usageOut,
+      };
     },
   };
 }

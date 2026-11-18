@@ -2,6 +2,12 @@
  * The catalogue (F61): songs, artists and albums for the words typed, from MusicBrainz, with art
  * and previews from Deezer and a Cover Art Archive URL where Deezer has nothing. Not an LLM.
  * Answers are cached in SQLite for a day; lookups by id for a week.
+ *
+ * Two speeds. MusicBrainz allows one request a second for the whole house, so the typeahead
+ * (`fast`) never waits for it: it answers from the cache when the words were looked up before, else
+ * from Deezer alone (art, previews, durations, no MusicBrainz ids), marked `partial`. A full search
+ * (Enter, the model's context, the pipeline) asks MusicBrainz and waits its turn. A song added from
+ * a Deezer row gets its MusicBrainz ids in the pipeline from its title and artist.
  */
 import type {
   CatalogueAlbum,
@@ -24,6 +30,72 @@ import { recordingQuery, releaseGroupQuery } from './musicbrainz.js';
 
 export const SEARCH_TTL_MS = 24 * 60 * 60_000;
 export const LOOKUP_TTL_MS = 7 * 24 * 60 * 60_000;
+
+export interface SearchOptions {
+  /** The profile typing; a newer search from the same profile drops this one while it waits. */
+  owner?: string;
+  /** Typeahead: answer at once from the cache or Deezer; never wait for MusicBrainz. */
+  fast?: boolean;
+}
+
+export const FAST_TTL_MS = 10 * 60_000;
+
+/** A Deezer track as a catalogue song: no MusicBrainz ids yet, everything the row needs. */
+export function songFromDeezer(track: DeezerTrack): CatalogueSong {
+  const song: CatalogueSong = {
+    id: `dz:track:${track.id}`,
+    title: track.title,
+    artist: track.artist.name,
+    album: track.album.title,
+    duration: track.duration,
+  };
+  const cover = track.album.cover_medium ?? track.album.cover_big;
+  if (cover) song.art = cover;
+  if (track.preview) song.preview = track.preview;
+  return song;
+}
+
+/** The albums and artists the Deezer tracks belong to, each once. */
+export function fromDeezer(tracks: DeezerTrack[]): {
+  songs: CatalogueSong[];
+  albums: CatalogueAlbum[];
+  artists: CatalogueArtist[];
+} {
+  const songs: CatalogueSong[] = [];
+  const seenSongs = new Set<string>();
+  const albums = new Map<number, CatalogueAlbum>();
+  const artists = new Map<number, CatalogueArtist>();
+  for (const track of tracks) {
+    const key = `${normalize(track.title)}|${normalize(track.artist.name)}`;
+    if (!seenSongs.has(key)) {
+      seenSongs.add(key);
+      songs.push(songFromDeezer(track));
+    }
+    if (!albums.has(track.album.id)) {
+      const album: CatalogueAlbum = {
+        id: `dz:album:${track.album.id}`,
+        title: track.album.title,
+        artist: track.artist.name,
+      };
+      const cover = track.album.cover_medium ?? track.album.cover_big;
+      if (cover) album.art = cover;
+      albums.set(track.album.id, album);
+    }
+    if (!artists.has(track.artist.id)) {
+      const artist: CatalogueArtist = {
+        id: `dz:artist:${track.artist.id}`,
+        name: track.artist.name,
+      };
+      if (track.artist.picture_medium) artist.art = track.artist.picture_medium;
+      artists.set(track.artist.id, artist);
+    }
+  }
+  return {
+    songs: songs.slice(0, 8),
+    albums: [...albums.values()].slice(0, 4),
+    artists: [...artists.values()].slice(0, 3),
+  };
+}
 
 export const coverArt = (releaseGroupId: string): string =>
   `https://coverartarchive.org/release-group/${releaseGroupId}/front-250`;
@@ -172,41 +244,72 @@ export function catalogueService(options: {
   cache: CacheStore;
 }) {
   const { musicBrainz, deezer, cache } = options;
+  /** The same words typed on two phones at once cost one search. */
+  const inFlight = new Map<string, Promise<CatalogueSearch>>();
+
+  async function fetchSearch(
+    query: string,
+    key: string,
+    who: SearchOptions,
+  ): Promise<CatalogueSearch> {
+    const batch = normalize(query);
+    const limits = who.owner ? { owner: who.owner, batch } : {};
+    const [recordings, groups, deezerTracks] = await Promise.all([
+      musicBrainz.searchRecordings(query, 10, limits),
+      musicBrainz.searchReleaseGroups(query, 6, limits),
+      deezer.search(query),
+    ]);
+    const songs: CatalogueSong[] = [];
+    const seenSongs = new Set<string>();
+    for (const rec of recordings) {
+      if (rec.video) continue;
+      const song = songFromRecording(rec, deezerTracks);
+      if (!song) continue;
+      const dedupe = `${normalize(song.title)}|${normalize(song.artist)}`;
+      if (seenSongs.has(dedupe)) continue;
+      seenSongs.add(dedupe);
+      songs.push(song);
+    }
+    const albums = groups
+      .map((g) => albumFromReleaseGroup(g, deezerTracks))
+      .filter((a): a is CatalogueAlbum => !!a);
+    const result: CatalogueSearch = {
+      query,
+      songs: songs.slice(0, 8),
+      artists: artistsFromCredits(recordings, groups, deezerTracks),
+      albums,
+      cached: false,
+    };
+    cache.set(key, result, SEARCH_TTL_MS);
+    return result;
+  }
+
+  async function fastSearch(query: string): Promise<CatalogueSearch> {
+    const key = `catalogue:fast:${normalize(query)}`;
+    const cached = cache.get<CatalogueSearch>(key);
+    if (cached) return { ...cached, cached: true };
+    const result: CatalogueSearch = {
+      query,
+      ...fromDeezer(await deezer.search(query)),
+      cached: false,
+      partial: true,
+    };
+    cache.set(key, result, FAST_TTL_MS);
+    return result;
+  }
 
   return {
-    async search(q: string): Promise<CatalogueSearch> {
+    async search(q: string, who: SearchOptions = {}): Promise<CatalogueSearch> {
       const query = q.trim().replace(/\s+/g, ' ');
       const key = `catalogue:search:${normalize(query)}`;
       const cached = cache.get<CatalogueSearch>(key);
       if (cached) return { ...cached, cached: true };
-      const [recordings, groups, deezerTracks] = await Promise.all([
-        musicBrainz.searchRecordings(query, 10),
-        musicBrainz.searchReleaseGroups(query, 6),
-        deezer.search(query),
-      ]);
-      const songs: CatalogueSong[] = [];
-      const seenSongs = new Set<string>();
-      for (const rec of recordings) {
-        if (rec.video) continue;
-        const song = songFromRecording(rec, deezerTracks);
-        if (!song) continue;
-        const dedupe = `${normalize(song.title)}|${normalize(song.artist)}`;
-        if (seenSongs.has(dedupe)) continue;
-        seenSongs.add(dedupe);
-        songs.push(song);
-      }
-      const albums = groups
-        .map((g) => albumFromReleaseGroup(g, deezerTracks))
-        .filter((a): a is CatalogueAlbum => !!a);
-      const result: CatalogueSearch = {
-        query,
-        songs: songs.slice(0, 8),
-        artists: artistsFromCredits(recordings, groups, deezerTracks),
-        albums,
-        cached: false,
-      };
-      cache.set(key, result, SEARCH_TTL_MS);
-      return result;
+      const running = inFlight.get(key);
+      if (running) return running;
+      if (who.fast) return fastSearch(query);
+      const promise = fetchSearch(query, key, who).finally(() => inFlight.delete(key));
+      inFlight.set(key, promise);
+      return promise;
     },
 
     /** The best recording for a title and artist, for requests that arrive without ids. */

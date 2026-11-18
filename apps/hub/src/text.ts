@@ -2,13 +2,16 @@
 
 /** Lower case, no accents, no punctuation, single spaces: the key two titles are compared by. */
 export function normalize(text: string): string {
-  return text
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/['’`]/g, '')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+  return (
+    text
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/['’`]/g, '')
+      // Marks stay: Gujarati vowel signs are combining marks, and "વગાડો" must survive intact.
+      .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
+      .trim()
+  );
 }
 
 export function tokens(text: string): string[] {

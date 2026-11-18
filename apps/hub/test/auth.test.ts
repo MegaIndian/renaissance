@@ -10,14 +10,14 @@ import {
 import { requireAdmin, requireProfile, tokenFrom } from '../src/auth/plugin.js';
 import { fakeFetch, memoryStores, sahil } from './helpers.js';
 
-const user = { Id: 'u-sahil', Name: 'Sahil', Policy: { IsAdministrator: true } };
+const user = { Id: 'u-sahil', Name: 'Sahil', IsAdministrator: true };
 
 describe('isAdmin', () => {
   it('uses the list when given, else Jellyfin administrators', () => {
     expect(isAdmin(user, [])).toBe(true);
-    expect(isAdmin({ ...user, Policy: { IsAdministrator: false } }, [])).toBe(false);
-    expect(isAdmin({ ...user, Policy: { IsAdministrator: false } }, ['sahil'])).toBe(true);
-    expect(isAdmin({ ...user, Policy: { IsAdministrator: false } }, ['U-SAHIL'])).toBe(true);
+    expect(isAdmin({ ...user, IsAdministrator: false }, [])).toBe(false);
+    expect(isAdmin({ ...user, IsAdministrator: false }, ['sahil'])).toBe(true);
+    expect(isAdmin({ ...user, IsAdministrator: false }, ['U-SAHIL'])).toBe(true);
     expect(isAdmin(user, ['kevin'])).toBe(false);
   });
 });
@@ -28,7 +28,7 @@ describe('jellyfinAuthenticator', () => {
     const { fetch, calls } = fakeFetch({
       '/Users/Me': (_u, init) =>
         (init.headers as Record<string, string>)['x-emby-token'] === 'good'
-          ? user
+          ? { Id: user.Id, Name: user.Name, Policy: { IsAdministrator: true } }
           : { __status: 401 },
     });
     const auth = jellyfinAuthenticator({
@@ -144,5 +144,45 @@ describe('tokenFrom and guards', () => {
       (await app.inject({ url: '/admin', headers: { authorization: 'Bearer good' } })).statusCode,
     ).toBe(200);
     await app.close();
+  });
+});
+
+describe('token cache shape and peek', () => {
+  it('keeps id, name and the admin flag only, and peeks without calling Jellyfin', async () => {
+    const stores = memoryStores();
+    const { fetch, calls } = fakeFetch({
+      '/Users/Me': () => ({
+        ...user,
+        Policy: { IsAdministrator: true, EnableAllFolders: true },
+        Configuration: { AudioLanguagePreference: 'en' },
+      }),
+    });
+    const auth = jellyfinAuthenticator({
+      url: 'http://jf.test',
+      admins: [],
+      profiles: stores.profiles,
+      cache: stores.cache,
+      fetch,
+    });
+    expect(auth.peek('good')).toBeNull();
+    expect(calls).toHaveLength(0);
+    await auth.authenticate('good');
+    expect(auth.peek('good')).toMatchObject({ id: 'u-sahil', role: 'admin' });
+    expect(calls).toHaveLength(1);
+    const rows = stores.db.prepare('SELECT value FROM cache').all() as unknown as {
+      value: string;
+    }[];
+    expect(JSON.parse(rows[0]!.value)).toEqual({
+      Id: 'u-sahil',
+      Name: 'Sahil',
+      IsAdministrator: true,
+    });
+    const off = jellyfinAuthenticator({
+      url: undefined,
+      admins: [],
+      profiles: stores.profiles,
+      cache: stores.cache,
+    });
+    expect(off.peek('good')).toBeNull();
   });
 });

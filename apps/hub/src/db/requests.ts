@@ -1,7 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-import type { MusicRequest, NewRequest, RequestStatus, RequestStep } from '@renaissance/core';
+import type {
+  MusicRequest,
+  NewRequest,
+  RequestProgress,
+  RequestStatus,
+  RequestStep,
+} from '@renaissance/core';
+
+/**
+ * How many steps a request keeps: the first (requested) and the most recent ones. Progress writes
+ * never add a step, so a request that polls for days stays a few kilobytes.
+ */
+export const MAX_STEPS = 50;
+
+export function capSteps(steps: RequestStep[]): RequestStep[] {
+  if (steps.length <= MAX_STEPS) return steps;
+  return [steps[0]!, ...steps.slice(steps.length - (MAX_STEPS - 1))];
+}
 
 interface Row {
   id: string;
@@ -21,6 +38,8 @@ interface Row {
   detail: string | null;
   progress_done: number | null;
   progress_total: number | null;
+  progress_unit: 'songs' | 'percent' | null;
+  progress_eta: number | null;
   source_file: string | null;
   steps: string;
   created_at: string;
@@ -53,7 +72,12 @@ function toRequest(r: Row): MusicRequest {
   if (r.detail !== null) out.detail = r.detail;
   if (r.source_file !== null) out.sourceFile = r.source_file;
   if (r.progress_done !== null && r.progress_total !== null) {
-    out.progress = { done: r.progress_done, total: r.progress_total };
+    out.progress = {
+      unit: r.progress_unit ?? 'percent',
+      done: r.progress_done,
+      total: r.progress_total,
+    };
+    if (r.progress_eta !== null) out.progress.etaSeconds = r.progress_eta;
   }
   return out;
 }
@@ -62,7 +86,7 @@ export interface RequestUpdate {
   status: RequestStatus;
   reason?: string;
   detail?: string;
-  progress?: { done: number; total: number };
+  progress?: RequestProgress;
   /** Catalogue ids learnt while finding, and the downloaded file once there is one. */
   ids?: Partial<
     Pick<
@@ -83,11 +107,16 @@ export function requestStore(db: DatabaseSync) {
   const house = db.prepare(`${SELECT} ORDER BY r.seq DESC LIMIT ?`);
   const byStatus = db.prepare(`${SELECT} WHERE r.status = ? ORDER BY r.seq ASC`);
   const update = db.prepare(`
-    UPDATE requests SET status = ?, reason = ?, detail = ?, progress_done = ?, progress_total = ?, steps = ?,
+    UPDATE requests SET status = ?, reason = ?, detail = ?, progress_done = ?, progress_total = ?,
+      progress_unit = ?, progress_eta = ?, steps = ?,
       recording_id = COALESCE(?, recording_id), release_group_id = COALESCE(?, release_group_id),
       release_id = COALESCE(?, release_id), artist_id = COALESCE(?, artist_id),
       duration = COALESCE(?, duration), album = COALESCE(?, album), source_file = COALESCE(?, source_file),
       updated_at = ?
+    WHERE id = ?
+  `);
+  const setProgress = db.prepare(`
+    UPDATE requests SET progress_done = ?, progress_total = ?, progress_unit = ?, progress_eta = ?, updated_at = ?
     WHERE id = ?
   `);
   const remove = db.prepare('DELETE FROM requests WHERE id = ? RETURNING id');
@@ -128,7 +157,10 @@ export function requestStore(db: DatabaseSync) {
     listByStatus(status: RequestStatus): MusicRequest[] {
       return (byStatus.all(status) as unknown as Row[]).map(toRequest);
     },
-    /** Appends a step and sets the status; returns the new row or undefined when the id is gone. */
+    /**
+     * Appends a step (capped at MAX_STEPS, first and last kept) and sets the status; returns the
+     * new row or undefined when the id is gone.
+     */
     update(id: string, patch: RequestUpdate, now = new Date()): MusicRequest | undefined {
       const current = byId.get(id) as unknown as Row | undefined;
       if (!current) return undefined;
@@ -145,7 +177,9 @@ export function requestStore(db: DatabaseSync) {
         patch.detail ?? null,
         patch.progress?.done ?? null,
         patch.progress?.total ?? null,
-        JSON.stringify(steps),
+        patch.progress?.unit ?? null,
+        patch.progress?.etaSeconds ?? null,
+        JSON.stringify(capSteps(steps)),
         ids.recordingId ?? null,
         ids.releaseGroupId ?? null,
         ids.releaseId ?? null,
@@ -154,6 +188,20 @@ export function requestStore(db: DatabaseSync) {
         ids.album ?? null,
         ids.sourceFile ?? null,
         iso,
+        id,
+      );
+      return toRequest(byId.get(id) as unknown as Row);
+    },
+    /** Progress only: no step, no status change. Undefined when the id is gone. */
+    progress(id: string, value: RequestProgress, now = new Date()): MusicRequest | undefined {
+      const current = byId.get(id) as unknown as Row | undefined;
+      if (!current) return undefined;
+      setProgress.run(
+        value.done,
+        value.total,
+        value.unit,
+        value.etaSeconds ?? null,
+        now.toISOString(),
         id,
       );
       return toRequest(byId.get(id) as unknown as Row);

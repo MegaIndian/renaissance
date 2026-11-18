@@ -128,6 +128,24 @@ export function slskdClient(options: {
         { query: text, state, responses: responses.body.length },
         'slskd search finished',
       );
+      // The search list in slskd would otherwise grow by every query ever tried; best effort.
+      try {
+        await httpJson(
+          'slskd',
+          `${api}/searches/${id}`,
+          {
+            method: 'DELETE',
+            headers,
+            okStatuses: [404],
+          },
+          doFetch,
+        );
+      } catch (error) {
+        options.log.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'slskd search not deleted',
+        );
+      }
       return responses.body;
     },
 

@@ -122,10 +122,10 @@ describe('requests', () => {
       status: 'failed',
       reason: 'no_results',
       detail: 'nothing',
-      progress: { done: 1, total: 2 },
+      progress: { unit: 'percent', done: 1, total: 2 },
     })!;
     expect(failed.reason).toBe('no_results');
-    expect(failed.progress).toEqual({ done: 1, total: 2 });
+    expect(failed.progress).toEqual({ unit: 'percent', done: 1, total: 2 });
     expect(failed.recordingId).toBe('22222222-2222-4222-8222-222222222222');
     expect(s.requests.listMine(sahil.id).map((r) => r.id)).toEqual([r1.id]);
     expect(s.requests.listHouse().map((r) => r.id)).toEqual([r2.id, r1.id]);
@@ -177,5 +177,67 @@ describe('rules, usage, cache', () => {
     s.cache.set('k3', 3, 1000, 0);
     s.cache.delete('k3');
     expect(s.cache.get('k3', 0)).toBeUndefined();
+  });
+});
+
+describe('requests: steps and progress', () => {
+  it('caps the step log at MAX_STEPS keeping the first and the latest, and progress adds no step', async () => {
+    const { MAX_STEPS } = await import('../src/db/requests.js');
+    const s = memoryStores();
+    const r = s.requests.create({ kind: 'album', title: 'Red', artist: 'Taylor Swift' }, sahil.id);
+    for (let i = 0; i < 120; i++) {
+      s.requests.update(r.id, { status: 'finding', detail: `poll ${i}` });
+    }
+    const row = s.requests.get(r.id)!;
+    expect(row.steps).toHaveLength(MAX_STEPS);
+    expect(row.steps[0]).toMatchObject({ status: 'requested' });
+    expect(row.steps[row.steps.length - 1]).toMatchObject({ detail: 'poll 119' });
+    expect(row.steps[1]).toMatchObject({ detail: `poll ${120 - (MAX_STEPS - 1)}` });
+    const before = JSON.stringify(row.steps).length;
+    for (let i = 0; i < 1000; i++) {
+      s.requests.progress(r.id, { unit: 'songs', done: i, total: 1000 });
+    }
+    const polled = s.requests.get(r.id)!;
+    expect(polled.steps).toHaveLength(MAX_STEPS);
+    expect(JSON.stringify(polled.steps).length).toBe(before);
+    expect(polled.progress).toEqual({ unit: 'songs', done: 999, total: 1000 });
+    expect(polled.status).toBe('finding');
+    s.requests.progress(r.id, { unit: 'percent', done: 40, total: 100, etaSeconds: 90 });
+    expect(s.requests.get(r.id)?.progress).toEqual({
+      unit: 'percent',
+      done: 40,
+      total: 100,
+      etaSeconds: 90,
+    });
+    expect(s.requests.progress('missing', { unit: 'songs', done: 0, total: 0 })).toBeUndefined();
+  });
+
+  it('migration 3 turns old failed/cancelled rows into the cancelled status', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(':memory:');
+    db.exec(migrations[0]!);
+    db.exec(migrations[1]!);
+    db.exec(
+      'CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (2)',
+    );
+    db.exec(`INSERT INTO profiles VALUES ('p', 'P', 'member', 'simple', 'en', 'now', 'now')`);
+    db.exec(
+      `INSERT INTO requests (id, seq, kind, title, artist, requested_by, status, reason, steps, created_at, updated_at)
+       VALUES ('r1', 1, 'track', 'A', 'B', 'p', 'failed', 'cancelled', '[]', 'now', 'now'),
+              ('r2', 2, 'track', 'A', 'B', 'p', 'failed', 'no_results', '[]', 'now', 'now')`,
+    );
+    expect(migrate(db)).toBe(migrations.length - 2);
+    const rows = db
+      .prepare('SELECT id, status, reason FROM requests ORDER BY seq')
+      .all() as unknown as {
+      id: string;
+      status: string;
+      reason: string | null;
+    }[];
+    expect(rows).toEqual([
+      { id: 'r1', status: 'cancelled', reason: null },
+      { id: 'r2', status: 'failed', reason: 'no_results' },
+    ]);
+    db.close();
   });
 });
