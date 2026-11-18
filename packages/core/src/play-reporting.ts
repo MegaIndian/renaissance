@@ -8,6 +8,16 @@ import type { PlaybackReport, PlayMethod } from './server-adapter';
 
 export const PROGRESS_INTERVAL_MS = 10_000;
 
+let counter = 0;
+
+/** A play session id: the platform's UUID where there is one, else time plus a counter. */
+function defaultId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  counter += 1;
+  return `${Date.now().toString(36)}-${counter.toString(36)}`;
+}
+
 export interface ReporterDeps {
   send: (report: PlaybackReport) => Promise<void>;
   now?: () => number;
@@ -25,9 +35,7 @@ export class PlaybackReporter {
     this.deps = {
       send: deps.send,
       now: deps.now ?? (() => Date.now()),
-      newId:
-        deps.newId ??
-        (() => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`),
+      newId: deps.newId ?? defaultId,
       onError: deps.onError ?? (() => undefined),
     };
   }

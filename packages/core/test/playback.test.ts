@@ -341,6 +341,6 @@ describe('PlaybackReporter', () => {
     await Promise.resolve();
     expect(onError).toHaveBeenCalledOnce();
     const defaults = new PlaybackReporter({ send: () => Promise.resolve() });
-    expect(defaults.started(track('c'), 'direct')).toMatch(/\w+-\w+/);
+    expect(defaults.started(track('c'), 'direct')).toMatch(/^[\w-]{8,}$/);
   });
 });
