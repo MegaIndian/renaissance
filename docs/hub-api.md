@@ -55,6 +55,9 @@ curl -s http://localhost:8787/health
 # {"status":"ok","service":"renaissance-hub","version":"0.0.1","database":"ok"}
 # 503 {"status":"degraded",...,"database":"error"} when the hub's own database refused its last write
 # (a read-only volume, a full disk): the container health check fails and the problem is seen.
+# When the database cannot be used at start (read-only, bad path), the process stays up in the same
+# shape: /health answers 503 with database "error" and the SQLite message in "error", every other
+# route answers 503 storage_error, nothing else runs; fix the volume and restart.
 curl -s http://localhost:8787/health -H "Authorization: Bearer $TOKEN"
 # ...,"integrations":{"environment":"development","jellyfin":true,"anthropic":false,"lidarr":true,
 #   "slskd":true,"navidrome":false,"intentModel":"claude-opus-5-5","budgetUsdPerMonth":10,...}
@@ -73,22 +76,48 @@ curl -s -X POST http://localhost:8787/me -H "Authorization: Bearer $TOKEN" \
 ## `GET /catalogue/search?q=` (F61)
 
 Typeahead for the one search box: songs, artists and albums for the words typed. Two speeds. The
-typeahead never waits for MusicBrainz (one request a second for the whole house): it answers from
-the cache when the words were looked up before, else from Deezer alone (tracks plus an album
-search; art, previews, durations; no MusicBrainz ids, `partial: true`, ten-minute cache). A full
-search (Enter, the model's context) asks MusicBrainz (recordings and release groups, with a
-`User-Agent` naming the app and `RENAISSANCE_CONTACT`), merges Deezer's art and previews, falls back
-to a Cover Art Archive URL, and is cached for a day. Not an LLM.
+typeahead does not wait its turn at MusicBrainz (one request a second for the whole house): it
+answers from the cache when the words were looked up before, else from Deezer alone (tracks plus an
+album search; art, previews, durations; no MusicBrainz ids, `partial: true`, ten-minute cache),
+with one exception below. A full search (Enter, the model's context) asks MusicBrainz (recordings
+and release groups, with a `User-Agent` naming the app and `RENAISSANCE_CONTACT`), merges Deezer's
+art and previews, falls back to a Cover Art Archive URL, and is cached for a day. Not an LLM.
 
-Every list is ranked and pruned before it is answered: a row must cover the words typed (command
-words and filler such as "play", "get me", "for", "something" do not count; a prefix and one typo
-do match), the exact title and artist come first, and when the words read as a sentence (a command
-verb, or four or more words with filler among them) only a row that is the title itself survives.
-So "fireman lil wayne" puts Lil Wayne's Fireman first and drops the mixtapes named after him, and
-"play something calm for cooking" or "રસોઈ માટે શાંત ગીત વગાડ" show no rows at all; a long title
-("Kabhi Kabhie Mere Dil Mein") is not a sentence and keeps its exact row. Songs already on the
-server carry `libraryId` and come first; the rows' artists are looked up in Jellyfin too, so an
-artist query marks the songs the server has. `q` is 2 to 200 characters.
+The full search asks MusicBrainz for the words as typed OR every way they split into a title and an
+artist as a boosted fielded clause (`recording:"fireman" AND artist:"lil wayne"`, both orders, up to
+six words; a sentence is sent as it is), the way the pipeline's own lookup finds a song, because the
+plain search lists songs that merely contain the words ("Lil Wayne Fireman" by DJ Symphony, ten
+mixtapes titled "Lil Wayne") ahead of the song by the artist. Twenty-five recordings are read, and
+every Deezer track the recordings did not match becomes a row of its own (no ids yet, like a
+typeahead row), so the song is in the answer when MusicBrainz's list missed it.
+
+Every list is ranked and pruned before it is cut to size (never after, or the right row could be cut
+away unseen): a row must cover the words typed (command words and filler such as "play", "get me",
+"for", "something" do not count; a prefix and one typo do match), the exact title and artist come
+first, a title or artist carrying a version word the words did not ask for (live, remix, karaoke,
+cover, tribute, stripped, instrumental, acoustic, "radio edit", "originally performed", "made
+famous", "in the style of") ranks under every plain row, and when the words read as a sentence (a
+command verb, or four or more words with a request word among them: "something", "songs", "hits",
+"please"; articles and pronouns do not count, so "Rolling in the Deep Adele" and "Someone Like You
+Adele" are a title and an artist) only a row that is the title itself survives. When no row is the
+exact title and artist, both speeds ask Deezer once more with the words split by what the rows say
+(an artist the rows name whose every word was typed, else the words left over from an exact title:
+`artist:"Adele" track:"Rolling in the Deep"`) and merge before ranking. The exception to "never
+waits": when the rows named a title and an artist and still none is the song by that artist (Deezer's
+catalogue from the hub's address has no Adele at all and no plain "Halo"), the typeahead starts the
+full search and waits up to two seconds for MusicBrainz; its answer, when it comes in time, is the
+one shown, and either way it lands in the cache for the next letters or the Enter that follows.
+So "fireman lil wayne" puts Lil Wayne's Fireman first and drops the mixtapes named after him,
+"Rolling in the Deep Adele" shows Adele above the tribute acts, "Halo Beyonce" puts Halo above
+"Halo (Live)", and "play something calm for cooking" or "રસોઈ માટે શાંત ગીત વગાડ" show no rows at
+all; a long title ("Kabhi Kabhie Mere Dil Mein") is not a sentence and keeps its exact row. Songs
+already on the server carry `libraryId` and come first; the rows' artists are looked up in Jellyfin
+too, so an artist query marks the songs the server has. `q` is 2 to 200 characters.
+
+The two speeds are cached apart (`catalogue:fast:` and `catalogue:search:`). The typeahead reads
+the full answer when it has the song typed (it carries MusicBrainz ids) or when neither answer
+does; a full answer without the exact row never replaces a fast answer that had it, so an Enter can
+never take the right song away from the letters typed afterwards.
 
 ```sh
 curl -s "http://localhost:8787/catalogue/search?q=lil%20wayne%20fireman" -H "Authorization: Bearer $TOKEN"
@@ -140,12 +169,14 @@ Deezer allows about 50 requests per 5 seconds per address, so its calls go throu
 their own (one every 100 ms): identical in-flight queries share one call (each caller with its own
 promise, so one typist moving on never fails another), a profile's older prefix still waiting is
 dropped when its newer letters arrive, and the queue is capped. Past the cap, or for a prefix that
-was replaced, the route answers `503 { "error": "busy" | "superseded" }` with `retry-after: 1`;
-the apps keep the rows they have and ask again for the current letters. A Deezer failure or quota
-error is answered as no rows but never cached, so the next keystroke asks again. MusicBrainz has
-the same limiter rules at one request a second, with one more: the pipeline's lookups for a request
-somebody made are never refused as busy and take the next slot ahead of the typing, and when the
-queue is full `/ask` answers with the Deezer rows instead of none.
+was replaced, the typeahead route answers `503 { "error": "busy" | "superseded" }` with
+`retry-after: 1` (the Deezer client lets the limiter's refusal through; only Deezer's own failures
+and quota errors become "no answer"); the apps keep the rows they have and ask again for the
+current letters. A Deezer failure or quota error is answered as no rows but never cached, so the
+next keystroke asks again; in the full search it means no Deezer rows and a briefly cached answer.
+MusicBrainz has the same limiter rules at one request a second, with one more: the pipeline's
+lookups for a request somebody made are never refused as busy and take the next slot ahead of the
+typing, and when the queue is full `/ask` answers with the Deezer rows instead of none.
 
 ## Requests (F61, F62, F63, F87)
 
@@ -162,19 +193,34 @@ pipeline (`apps/hub/src/fetch/pipeline.ts`) runs one request at a time:
 | `failed`      | `reason` says why: `catalogue_miss`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error` |
 | `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                        |
 
-Album requests stay `finding` with `progress: { unit: "songs", done, total }` while Lidarr looks, and
-fail with `not_found_in_time` after `RENAISSANCE_ALBUM_DEADLINE_DAYS` (default 7), counted from the
-last time the request was made (a retry starts the clock again); the album is then unmonitored in
-Lidarr. Every ten minutes the poll also lists Lidarr's import candidates in the download folder
-(`RENAISSANCE_LIDARR_DOWNLOADS_DIR`, and `RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR` when soularr parks
-refused files elsewhere): files soularr fetched that Lidarr's automatic import refused ("Has missing
-tracks" against another edition) are mapped to the monitored release's tracks and filed with the
-same explicit `ManualImport` the single path uses; files that arrived but match no track fail the
-request with `import_failed` within the hour, not after seven days.
+Album requests stay `finding` with `progress: { unit: "songs", done, total }` while Lidarr looks
+(the total from Lidarr's statistics, read back after the album is monitored, else the monitored
+release's track count: never "0 of 0"), and fail with `not_found_in_time` after
+`RENAISSANCE_ALBUM_DEADLINE_DAYS` (default 7), counted from `requestedAt`, the last time the request
+was made (a retry sets it again; it is a column of its own, so the step cap cannot lose it); the
+album is then unmonitored in Lidarr. Every ten minutes the poll also files what soularr fetched but
+Lidarr's automatic import refused ("Has missing tracks" against another edition): one `manualimport`
+listing of the failed-imports folder per tick (`RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR`, default
+`failed_imports` under `RENAISSANCE_LIDARR_DOWNLOADS_DIR`), shared by every waiting album and taken
+only when an incomplete album is due. A folder counts as an album's only when it is named
+`<Artist> - <Title>` (a year may follow; "Tha Carter II" never claims "Lil Wayne - Tha Carter III
+(2008)") and at least one of its files maps to a track by its own title; inside such a folder
+Lidarr's own track attribution is trusted for the rest. The files are mapped to the monitored
+release's tracks and filed with the same explicit `ManualImport` the single path uses. A track that
+already has a file is never replaced (the stray `.m4a` beside a FLAC is left alone), a file already
+handed to Lidarr is not handed over again (when Lidarr completes the command without moving it, the
+next tick says so once, with Lidarr's `rejections`, in a step), and nothing here fails the request:
+files that map to no track have not arrived (soularr leaves wrong matches behind in folders of the
+right name, Marina Kaye's under "Taylor Swift - Fearless (2008)"), the hub logs it and keeps
+waiting, and the deadline decides.
 
-A request records `matched: { title, artist }` when the catalogue resolved the words typed to a
-song with another spelling or credit (a Deezer row with no MusicBrainz ids yet); the apps show it
-("Will arrive as Fireman by Lil Wayne") and the pipeline searches for and maps that song. A
+A request records `matched: { title, artist, album? }` when the catalogue resolved the words typed
+to a song with another spelling or credit (a Deezer row with no MusicBrainz ids yet), or to a
+release other than the album named on the row; the request's own `album` stays what was asked for,
+the apps show the match on its own line ("Will arrive as Why This Kolaveri Di?: The Soup of Love by
+Dhanush, on The Bollywood Remix Project") and the pipeline searches for and maps that song. The
+release named on the row is preferred when the recording is on it. Credits keep their join phrases
+("Lil Wayne feat. Static Major"). A
 caller's `duration` is kept as given and picks the version meant; the lookup itself never settles
 for a live take, a remix or a demo of a plain title (MusicBrainz's own note on the recording, or
 every release being a live album, rules it out unless the words asked for it), and a title that is
@@ -268,15 +314,17 @@ effort, and the detail says so. The write is conditional (`UPDATE … WHERE stat
 'finding')`): a poll or a step that finished while Lidarr was being told loses nothing. Answers:
 `200` with the row (also for a request already cancelled: pressing Undo twice is fine);
 `409 {"error":"too_late"}` once the download has started; `409 {"error":"not_active"}` for a
-request that already finished (`ready` or `failed`); `404` for someone else's. An album cancelled
-while the pipeline was still adding it to Lidarr is unmonitored by the pipeline itself once the
-add lands, so soularr never fetches it.
+request that already finished (`ready` or `failed`); `404` for someone else's, a watcher's
+included (the apps show no Cancel on a watched card and say who asked). An album cancelled while
+the pipeline was still adding it to Lidarr is unmonitored by the pipeline itself once the add
+lands, so soularr never fetches it.
 
 ### `POST /requests/:id/retry`
 
-Run a failed request again (`202`). A request whose file was already downloaded (`sourceFile`)
-resumes at the import; `409 {"error":"not_failed"}` for anything not `failed` (a cancelled request
-is not retried: ask again instead).
+Run a failed request again (`202`); the asker's and every watcher's event stream sees the
+`requested` row. A request whose file was already downloaded (`sourceFile`) resumes at the import;
+`409 {"error":"not_failed"}` for anything not `failed` (a cancelled request is not retried: ask
+again instead).
 
 ```sh
 curl -s -X DELETE http://localhost:8787/requests/<id> -H "Authorization: Bearer $TOKEN"
@@ -472,13 +520,24 @@ open "http://localhost:5173/requests?hubToken=$TOKEN"
 The Requests tab lists the caller's requests live over `GET /events`, with cancel and retry and an
 admin "Whole house" switch; Library's "Mine" is `GET /collection`; the Ask bar calls
 `GET /catalogue/search` as the user types (250 ms after the last letter, the previous call aborted)
-and shows the rows with Add (the first one primary) and Play, then sends Enter to `POST /ask?stream=1`
+and shows the rows with Add (the first one primary) and Play (the hub strips every command phrase,
+"get me", "find me", "please", before the catalogue sees the words), then sends Enter to `POST /ask?stream=1`
 and shows the action cards with undo and the one-line why first, the library hits and the catalogue
 rows under them; the typeahead's rows are cleared by every answer. Add says what happened on its own
 line under the title ("Requested. Progress is in Requests", "Already on its way, asked by Mom"), and
 an undo that does not take says so truthfully ("Couldn't undo that. The request is still in
-Requests"; "Too late, it is already downloading. It stays in Requests"). The pipeline's `detail`
-lines are shown in advanced mode only, and stay in English; the Gujarati panel says so.
+Requests"; "Too late, it is already downloading. It stays in Requests"), and says "Undoing…" while
+the hub is asked. Enter aborts the typeahead still waiting for the same letters, so its rows never
+land under the answer. The art placeholder sits under every picture until it has loaded. A request
+card keeps the album that was asked for in its subtitle; what will actually arrive is its own
+line, wrapping to two lines on a phone. A card for a request someone else made (the viewer is a
+watcher) says who asked in every scope and offers no Cancel or Retry; an admin may cancel anyone's
+from the "Whole house" view. The pipeline's `detail` lines are shown in advanced mode only, and
+stay in English; the Gujarati panel says so.
+
+Phase 1 seam: the "Play Carefree" card and the "Carefree · In your library" row under it both
+carry the ghost Play with the same reason today. When phase 1 wires `perform`, the row's Play goes
+where the card already offers it.
 
 `apps/web/e2e/hub.spec.ts` drives a real page against the real hub (`apps/hub/scripts/e2e-hub.mjs`:
 the server in dry-run mode in front of stand-ins for every outside service), adding a song, undoing
@@ -504,28 +563,28 @@ Environment variables only (`apps/hub/.env.example` lists every one; `docker/hub
 the TrueNAS layout). Nothing is read from a file except `.env` through Node's own
 `--env-file-if-exists` and the SQLite database.
 
-| Variable                                | Default               | Meaning                                                                                                  |
-| --------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
-| `RENAISSANCE_HUB_HOST`, `_PORT`         | `0.0.0.0`, `8787`     | Where to listen                                                                                          |
-| `RENAISSANCE_HUB_CORS_ORIGINS`          | dev: `localhost:5173` | Browser origins, comma separated; empty in production: same origin                                       |
-| `RENAISSANCE_HUB_TRUST_PROXY`           | `false`               | Trust `x-forwarded-for` behind a reverse proxy                                                           |
-| `RENAISSANCE_HUB_RATE_LIMIT`            | `120`                 | Requests a minute per client address; 0 off                                                              |
-| `RENAISSANCE_HUB_DB`                    | `./data/hub.sqlite`   | The household database; `:memory:` keeps nothing                                                         |
-| `RENAISSANCE_HUB_ADMINS`                | empty                 | Jellyfin user names or ids who see the whole house; empty: Jellyfin administrators                       |
-| `RENAISSANCE_BUDGET_USD_MONTH`          | `10`                  | Household model spend a month; the model turns off when reached; 0 off                                   |
-| `RENAISSANCE_HUB_DRY_RUN`               | `false`               | Log writes to slskd, Lidarr, Navidrome, Jellyfin instead of sending                                      |
-| `RENAISSANCE_ALBUM_DEADLINE_DAYS`       | `7`                   | Days an album request waits on Lidarr before `not_found_in_time`                                         |
-| `RENAISSANCE_LIDARR_DOWNLOADS_DIR`      | `/downloads/complete` | slskd's completed folder as Lidarr's container sees it (soularr's `failed_imports` under it is read too) |
-| `RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR` | empty                 | Where soularr parks refused files when it is not under the folder above, as Lidarr sees it               |
-| `RENAISSANCE_CONTACT`                   | repo URL              | MusicBrainz `User-Agent` contact                                                                         |
-| `JELLYFIN_URL`, `JELLYFIN_API_KEY`      |                       | Token checks (`/Users/Me`), library lookups, `Library/Refresh`                                           |
-| `ANTHROPIC_API_KEY`                     |                       | Optional; without it `/ask` is `model: "off"`                                                            |
-| `ANTHROPIC_INTENT_MODEL`                | `claude-opus-5-5`     | The intent engine's model                                                                                |
-| `ANTHROPIC_ENRICHMENT_MODEL`            | `claude-haiku-5-5`    | Phase 4 enrichment batches                                                                               |
-| `LIDARR_URL`, `LIDARR_API_KEY`          |                       | Artists, albums, `ManualImport`, `RefreshArtist`                                                         |
-| `LIDARR_ROOT_FOLDER`                    | Lidarr's first        | Root folder for new artists                                                                              |
-| `SLSKD_URL`, `SLSKD_API_KEY`            |                       | Soulseek search and downloads                                                                            |
-| `NAVIDROME_URL`, `_USER`, `_PASSWORD`   |                       | Optional `startScan` after an import                                                                     |
+| Variable                                | Default                      | Meaning                                                                                               |
+| --------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `RENAISSANCE_HUB_HOST`, `_PORT`         | `0.0.0.0`, `8787`            | Where to listen                                                                                       |
+| `RENAISSANCE_HUB_CORS_ORIGINS`          | dev: `localhost:5173`        | Browser origins, comma separated; empty in production: same origin                                    |
+| `RENAISSANCE_HUB_TRUST_PROXY`           | `false`                      | Trust `x-forwarded-for` behind a reverse proxy                                                        |
+| `RENAISSANCE_HUB_RATE_LIMIT`            | `120`                        | Requests a minute per client address; 0 off                                                           |
+| `RENAISSANCE_HUB_DB`                    | `./data/hub.sqlite`          | The household database; `:memory:` keeps nothing                                                      |
+| `RENAISSANCE_HUB_ADMINS`                | empty                        | Jellyfin user names or ids who see the whole house; empty: Jellyfin administrators                    |
+| `RENAISSANCE_BUDGET_USD_MONTH`          | `10`                         | Household model spend a month; the model turns off when reached; 0 off                                |
+| `RENAISSANCE_HUB_DRY_RUN`               | `false`                      | Log writes to slskd, Lidarr, Navidrome, Jellyfin instead of sending                                   |
+| `RENAISSANCE_ALBUM_DEADLINE_DAYS`       | `7`                          | Days an album request waits on Lidarr before `not_found_in_time`                                      |
+| `RENAISSANCE_LIDARR_DOWNLOADS_DIR`      | `/downloads/complete`        | slskd's completed folder as Lidarr's container sees it                                                |
+| `RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR` | `<downloads>/failed_imports` | Where soularr parks refused files, as Lidarr sees it; the album poll lists this folder, once per tick |
+| `RENAISSANCE_CONTACT`                   | repo URL                     | MusicBrainz `User-Agent` contact                                                                      |
+| `JELLYFIN_URL`, `JELLYFIN_API_KEY`      |                              | Token checks (`/Users/Me`), library lookups, `Library/Refresh`                                        |
+| `ANTHROPIC_API_KEY`                     |                              | Optional; without it `/ask` is `model: "off"`                                                         |
+| `ANTHROPIC_INTENT_MODEL`                | `claude-opus-5-5`            | The intent engine's model                                                                             |
+| `ANTHROPIC_ENRICHMENT_MODEL`            | `claude-haiku-5-5`           | Phase 4 enrichment batches                                                                            |
+| `LIDARR_URL`, `LIDARR_API_KEY`          |                              | Artists, albums, `ManualImport`, `RefreshArtist`                                                      |
+| `LIDARR_ROOT_FOLDER`                    | Lidarr's first               | Root folder for new artists                                                                           |
+| `SLSKD_URL`, `SLSKD_API_KEY`            |                              | Soulseek search and downloads                                                                         |
+| `NAVIDROME_URL`, `_USER`, `_PASSWORD`   |                              | Optional `startScan` after an import                                                                  |
 
 Secrets (`*_API_KEY`, `NAVIDROME_PASSWORD`) are typed as secrets: `describe()` reports presence
 only, request logging is off, error messages carry a path but never a query string or header. The

@@ -33,3 +33,21 @@ are never cached and Deezer calls are spaced; the pipeline's lookups are never r
 line under the title with truthful undo-failure wording; one primary Add per panel; broken cover art
 falls back to the placeholder; "What happened" is advanced mode only and says its lines are
 English in Gujarati; six Gujarati sentences reworded as a speaker would say them.
+
+Round 3 rework: an Enter on "fireman lil wayne" shows Lil Wayne's Fireman first and leaves the
+typeahead as it was (the full search asks MusicBrainz fielded for every title-and-artist split,
+keeps the Deezer rows MusicBrainz missed, prunes before it cuts the list, and the two caches are
+kept apart); tribute acts, karaoke, live takes and remixes rank under the plain song unless asked
+for, and a second fielded Deezer call finds the original when the first list had only versions
+("Rolling in the Deep Adele", "Halo Beyonce"); the album poll never fails a request from soularr's
+parked folders (a sibling album's folder, a wrong match in a folder of the right name, or files
+that match no track keep the request waiting for the deadline), never replaces a track that already
+has a file, hands a file to Lidarr once and says what Lidarr kept, lists the failed-imports folder
+once per tick for every waiting album, keeps numeric song titles ("22", "1999"), and shows the true
+total from the first minute; the album deadline runs from a stored retry time; credits keep their
+join phrases ("Lil Wayne feat. Static Major"); the request card keeps the album asked for and says
+on its own wrapped line which release the file will land on; a watched request says who asked in
+every scope and offers no Cancel or Retry; retries reach watchers' streams; "Undoing…" while an undo
+is in flight; the art placeholder stays under a picture until it loads; Enter aborts the pending
+typeahead; the typeahead answers 503 busy when the Deezer limiter refuses; a hub whose database
+cannot be used at start stays up answering 503 with the reason on `/health`.
