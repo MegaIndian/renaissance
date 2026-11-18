@@ -39,44 +39,45 @@ function AddToPlaylist({ tracks }: { tracks: Track[] }) {
   if (creating) return <NewPlaylist tracks={tracks} />;
   return (
     <Dialog title={t('playlist.addTo')} onClose={closeDialog}>
-      <div className="flex max-h-80 flex-col gap-1 overflow-y-auto" role="list">
-        <button
-          type="button"
-          role="listitem"
-          onClick={() => setCreating(true)}
-          className={`flex min-h-6 items-center gap-3 rounded-sm px-2 py-2 text-left text-body hover:bg-muted ${focusRing}`}
-        >
-          <span className="grid size-9 place-items-center rounded-sm bg-muted text-muted-foreground">
-            <Icon name="plus" className="size-4" />
-          </span>
-          {t('playlist.new')}
-        </button>
-        {playlists.map((playlist) => (
+      <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
+        <li>
           <button
-            key={playlist.id}
             type="button"
-            role="listitem"
-            onClick={() => {
-              closeDialog();
-              void addToPlaylist(playlist, tracks, t, queryClient);
-            }}
-            className={`flex min-h-6 items-center gap-3 rounded-sm px-2 py-2 text-left text-body hover:bg-muted ${focusRing}`}
+            onClick={() => setCreating(true)}
+            className={`flex min-h-6 w-full items-center gap-3 rounded-sm px-2 py-2 text-left text-body hover:bg-muted ${focusRing}`}
           >
-            <Artwork
-              imageId={playlist.imageId}
-              label={playlist.name}
-              index={colorIndex(playlist.id)}
-              size="xs"
-            />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate">{playlist.name}</span>
-              <span className="text-caption text-muted-foreground">
-                {t('library.tracksCount', { count: playlist.trackCount })}
-              </span>
+            <span className="grid size-9 place-items-center rounded-sm bg-muted text-muted-foreground">
+              <Icon name="plus" className="size-4" />
             </span>
+            {t('playlist.new')}
           </button>
+        </li>
+        {playlists.map((playlist) => (
+          <li key={playlist.id}>
+            <button
+              type="button"
+              onClick={() => {
+                closeDialog();
+                void addToPlaylist(playlist, tracks, t, queryClient);
+              }}
+              className={`flex min-h-6 w-full items-center gap-3 rounded-sm px-2 py-2 text-left text-body hover:bg-muted ${focusRing}`}
+            >
+              <Artwork
+                imageId={playlist.imageId}
+                label={playlist.name}
+                index={colorIndex(playlist.id)}
+                size="xs"
+              />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{playlist.name}</span>
+                <span className="text-caption text-muted-foreground">
+                  {t('library.tracksCount', { count: playlist.trackCount })}
+                </span>
+              </span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     </Dialog>
   );
 }

@@ -201,18 +201,24 @@ export function getPlayer(): Player {
 }
 
 function attachPersistence(p: Player): void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let positionTimer: ReturnType<typeof setTimeout> | undefined;
   let lastQueue: QueueState | null = null;
   p.subscribe((snapshot) => {
     const userId = sessionStore.get().session?.userId;
     if (!userId) return;
-    const queueChanged = snapshot.queue !== lastQueue;
-    lastQueue = snapshot.queue;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(
-      () => saveQueue(userId, snapshot.queue, Math.floor(snapshot.position)),
-      queueChanged ? 0 : 5000,
-    );
+    if (snapshot.queue !== lastQueue) {
+      // A queue change is saved at once; a reload a moment later must find it.
+      lastQueue = snapshot.queue;
+      saveQueue(userId, snapshot.queue, Math.floor(snapshot.position));
+      return;
+    }
+    // The position is saved at most every five seconds, without postponing itself.
+    if (positionTimer) return;
+    positionTimer = setTimeout(() => {
+      positionTimer = undefined;
+      const current = p.snapshot;
+      saveQueue(userId, current.queue, Math.floor(current.position));
+    }, 5000);
   });
 }
 

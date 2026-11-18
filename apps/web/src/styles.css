@@ -82,3 +82,9 @@ body {
   line-height: var(--line-height-body);
   -webkit-font-smoothing: antialiased;
 }
+
+/* The Ask bar draws its own clear button; the browser's search decoration would be a second one. */
+input[type='search']::-webkit-search-cancel-button,
+input[type='search']::-webkit-search-decoration {
+  appearance: none;
+}

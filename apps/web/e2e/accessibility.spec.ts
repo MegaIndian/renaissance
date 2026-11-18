@@ -81,7 +81,7 @@ for (const theme of ['dark', 'light'] as const) {
       page.getByRole('link', { name: 'Sign in' }).first(), // the primary LinkButton on the home card
       page.getByRole('complementary').getByRole('link', { name: 'Library' }),
       page.getByRole('radio', { name: 'English' }),
-      page.getByRole('searchbox'),
+      page.getByRole('combobox'),
     ];
     for (const control of controls) {
       const outline = await focusOutline(page, control);
@@ -119,7 +119,7 @@ test('a mouse click does not draw the outline, keyboard focus does', async ({ pa
   expect(clicked).not.toBe('solid');
   await page.goto('/sign-in');
   // The Ask bar takes focus on load (desktop); Tab moves to the first sign-in field.
-  await expect(page.getByRole('searchbox')).toBeFocused();
+  await expect(page.getByRole('combobox')).toBeFocused();
   await page.keyboard.press('Tab');
   const server = page.getByRole('textbox', { name: 'Server address' });
   await expect(server).toBeFocused();

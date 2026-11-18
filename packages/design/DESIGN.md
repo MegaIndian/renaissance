@@ -61,30 +61,30 @@ nothing in an app defines its own colour, radius or font size.
 
 ## Simple mode (the default for every profile)
 
-The home screen for Mom and Dad, and the default for everyone until they switch to advanced (in
-Settings from phase 1; `?mode=advanced` on the web today).
+The home screen for Mom and Dad, and the default for everyone until they switch to advanced in
+Settings (reached from the avatar: the gear at the top right on phones, the Settings row in the
+sidebar on desktop; `?mode=advanced` in the URL overrides for one visit, used by screenshots and e2e).
 
 ```
 ┌────────────────────────────────────────┐
 │ Good evening, Sahil                    │  display, 1.25×; morning, afternoon or evening by the clock
 │                                        │
-│ My songs                               │  heading
+│ My songs                               │  heading: this user's favourites (F12, F86)
 │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐   │  square art, 1.25× titles, horizontal scroll
 │ └──────┘ └──────┘ └──────┘ └──────┘   │
 │                                        │
-│ Recently played                        │
+│ Recently played                        │  the server's ranking, so plays from other clients count
 │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐   │
 │ └──────┘ └──────┘ └──────┘ └──────┘   │
 │                                        │
 │ Made for you                           │
-│ ┌──────┐ ┌──────┐ ┌──────┐            │  mixes, each named in words
-│ └──────┘ └──────┘ └──────┘            │
-│                                        │
-│ ┌────────────────────────────────────┐ │
-│ │ ○  Ask for anything…            🎤 │ │  Ask bar, solid focus outline, voice button (shell, every screen)
+│ ┌────────────────────────────────────┐ │  one quiet sentence until phase 4; no phase number here
 │ └────────────────────────────────────┘ │
 │ ┌────────────────────────────────────┐ │
-│ │ ▣ Drowning · A Boogie         (▶) │ │  now-playing bar, one primary button
+│ │ ○  Ask for anything…               │ │  Ask bar, solid focus outline (shell, every screen)
+│ └────────────────────────────────────┘ │
+│ ┌────────────────────────────────────┐ │
+│ │ ▣ Drowning · A Boogie      (▶) (⏭) │ │  now-playing bar, one primary button; 3 px progress hairline
 │ └────────────────────────────────────┘ │
 │  Home        Library       Requests    │  three tabs, no Search tab (the Ask bar is the search)
 └────────────────────────────────────────┘
@@ -92,34 +92,43 @@ Settings from phase 1; `?mode=advanced` on the web today).
 
 Three rows, nothing else: no genres, no sort menus, no settings on the home screen. Signed out, each row
 is one `EmptyState` card with a full sentence, and the one primary on the screen is **Sign in**; the
-sign-in card's art is the person glyph, not a placeholder square (rule 3).
-The avatar (the person glyph at the top right on phones, in the sidebar on desktop) opens sign-in today;
-from phase 1 it opens Settings.
+sign-in card's art is the person glyph, not a placeholder square (rule 3). An empty row signed in is
+one sentence that says what fills it ("Tap the heart on any song and it joins this row").
 
 ### Simple versus advanced
 
-The switch is `Account.mode` in `packages/core/src/models.ts` (`'simple' | 'advanced'`, default
-`'simple'`). **What exists today (phase 0):** the web reads `?mode=advanced` from the URL and sets
-`data-mode` on the root element (`apps/web/src/lib/document.ts`), which is the only switch; mobile
-always uses `simpleModeScale` in `useTheme`. **Phase 1** adds the Settings screen, reached from the
-avatar, with a `SegmentedControl` labelled `settings.mode` (`Simple | Advanced`, keys
-`settings.modeSimple` and `settings.modeAdvanced`, already in both catalogs) that stores the choice on
-the account on both platforms. The advanced-only rows below ship with the features they name.
+The switch is `Settings.mode` in `packages/core/src/settings.ts` (`'simple' | 'advanced'`, default
+`'simple'`), stored per browser by `apps/web/src/lib/settings.ts` and applied as `data-mode` on the
+root element, which tokens.css turns into the 1.25× root. The Settings screen shows it as a
+`SegmentedControl` labelled `settings.mode` with a sentence under it saying what changes. Mobile reads
+the same schema in phase 3. Phase numbers appear in the interface only in advanced mode (the mixes
+row, the lyrics and cast buttons, the download menu item, diagnostics).
 
-|            | Simple (default)                                                 | Advanced                                                                   |
-| ---------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Type       | 1.25× every size and spacing step (built)                        | 1× (built, `?mode=advanced` on web)                                        |
-| Home       | Greeting and three rows: My songs, Recently played, Made for you | The same rows plus Recently added, genres and the full queue (phases 1, 4) |
-| Navigation | Home, Library, Requests (phone tabs or desktop sidebar)          | Adds Search as a tab, grid and list views, sort and filter (phase 1)       |
-| Ask bar    | Yes, every screen                                                | Yes, every screen                                                          |
-| Settings   | From the avatar (phase 1)                                        | From the avatar, plus diagnostics (phases 1, 9)                            |
+|             | Simple (default)                                                             | Advanced                                                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type        | 1.25× every size and spacing step                                            | 1×                                                                                                                                                   |
+| Home        | Greeting and three rows: My songs, Recently played, Made for you             | The same rows plus Recently added and Most played; the mixes row names phase 4                                                                       |
+| Navigation  | Home, Library, Requests (phone tabs or desktop sidebar)                      | Adds Search as a tab and sidebar item (the full results page behind the Ask bar's instant list)                                                      |
+| Library     | Artists, Albums, Songs, Playlists; default sort (name); one layout per kind  | Adds Album artists, Genres, Years; grid or list; sort by name, date added, year, play count, last played, random; favourites, genre and year filters |
+| Now playing | Art, title, artist, scrubber, transport, heart, queue; lyrics and cast muted | The same plus direct or transcoded, codec, bitrate and sample rate; the muted buttons say which phase brings them                                    |
+| Ask bar     | Yes, every screen                                                            | Yes, every screen                                                                                                                                    |
+| Settings    | From the avatar: mode, theme, language, quality, account, library, about     | The same plus the diagnostics line (phase 9)                                                                                                         |
 
-## Components, mirrored on web and mobile
+### Playback and lists (phase 1)
 
-Same names on both platforms so a contributor who built one knows what to build on the other:
-`AskBar`, `TrackRow`, `AlbumCard`, `MixCard`, `NowPlayingBar`, `NowPlayingScreen`, `SegmentedControl`,
-`RequestCard`, `Sidebar` (web, desktop), `TabBar` (web under 768 px, and mobile), `EmptyState`,
-`PlaceholderArt`.
+- **The queue** (F22) is a screen (`/queue`, the queue glyph in the bar and on now playing): Now
+  playing, Up next with a drag handle per row and Move up, Move down and Remove in the row's menu for
+  the keyboard, Clear with undo, and Played earlier. Every change is a toast with an undo (rule 10).
+- **Menus** (`Menu`) are popovers with `role="menu"`: arrows move, Home and End jump, Escape closes
+  and returns focus. A disabled item that belongs to a later phase carries a one-line hint, shown only
+  in advanced mode.
+- **Dialogs** (`Dialog`, `Dialogs`) are one card, `aria-modal`, focus trapped, Escape closes; used for
+  add to playlist, new playlist, rename and delete.
+- **Lists** over the cache are virtualised (`VirtualList`); rows are 56 px (`TrackRow`), grids use
+  144 px cards (`AlbumCard`, `ArtistCard`, `PlaylistCard`, `LabelCard`).
+- **The Ask bar's results** are a `listbox` under the box: up to four per kind, keyboard through
+  them, Enter plays a song or opens the full results page; recent searches when empty. Without a hub
+  the bar is the search box and says nothing about asking in words (`ask.hintSearchOnly`).
 
 ## Tokens
 
