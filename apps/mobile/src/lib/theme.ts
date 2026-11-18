@@ -2,6 +2,11 @@ import { colors, motion, radius, simpleModeScale, space, type } from '@renaissan
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo, useColorScheme } from 'react-native';
 
+/** `space` at the simple-mode scale; mobile is always in simple mode (DESIGN.md, Simple versus advanced). */
+const scaledSpace = Object.fromEntries(
+  Object.entries(space).map(([step, px]) => [step, px * simpleModeScale]),
+) as { [K in keyof typeof space]: number };
+
 /** True when the system asks for reduced motion (DESIGN.md rule 12). */
 export function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -33,7 +38,9 @@ export function useTheme() {
     colors: colors[scheme],
     radius,
     type,
-    space,
+    // Spacing scales with the mode like type does (DESIGN.md rule 5), so paddings, gaps and glyph
+    // squares in simple mode are the simple sizes, as the web gets them from the root font size.
+    space: scaledSpace,
     scale: simpleModeScale,
     scheme,
     motion: durations,

@@ -5,7 +5,7 @@ Read this whole file before changing anything. `CLAUDE.md` points here.
 ## Commands
 
 ```sh
-pnpm install                     # once; Node 22+, pnpm 12 (corepack enable)
+pnpm install                     # once; Node 22.18+, pnpm 12 (npm i -g pnpm@12)
 pnpm dev                         # web (5173) and hub (8787) together
 pnpm --filter web dev            # one app
 pnpm --filter mobile start       # Expo

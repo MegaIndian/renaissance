@@ -13,7 +13,7 @@ export function Icon({
   color,
 }: {
   name: IconName;
-  /** In points; defaults to the 16 px grid step. */
+  /** In points; defaults to the 16 px grid step at the mode scale (`space[4]`, 20 pt in simple mode). */
   size?: number;
   /** Defaults to the muted foreground; pass the active colour for the selected tab. */
   color?: string;

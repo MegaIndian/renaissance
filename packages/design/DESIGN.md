@@ -93,8 +93,8 @@ Settings from phase 1; `?mode=advanced` on the web today).
 Three rows, nothing else: no genres, no sort menus, no settings on the home screen. Signed out, each row
 is one `EmptyState` card with a full sentence, and the one primary on the screen is **Sign in**; the
 sign-in card's art is the person glyph, not a placeholder square (rule 3).
-Settings is reached from the avatar (the person glyph at the top right on phones, in the sidebar on
-desktop).
+The avatar (the person glyph at the top right on phones, in the sidebar on desktop) opens sign-in today;
+from phase 1 it opens Settings.
 
 ### Simple versus advanced
 

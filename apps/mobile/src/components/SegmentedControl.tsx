@@ -41,8 +41,8 @@ export function SegmentedControl<T extends string>({
                 borderRadius: radius.sm,
                 paddingHorizontal: space[2],
                 paddingVertical: space[1] + space[1] / 2,
-                minHeight: space[6] * scale,
-                minWidth: space[6] * scale,
+                minHeight: space[6],
+                minWidth: space[6],
               },
               active ? [styles.active, { backgroundColor: colors.card }] : null,
             ]}
