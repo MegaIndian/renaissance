@@ -8,8 +8,11 @@
  * from Deezer alone (tracks, albums and artists; art, previews, durations; no MusicBrainz ids),
  * marked `partial`. A full search (Enter, the model's context) asks MusicBrainz and waits its turn.
  * The pipeline's lookups (`vital`) are never refused and go ahead of the typing. Every list is
- * ranked and pruned by `relevance.ts`, so a row answers the words typed or is not shown, and a
- * Deezer failure is never cached as "nothing found".
+ * ranked and pruned by `relevance.ts` before it is cut to size, so a row answers the words typed
+ * or is not shown, and a Deezer failure is never cached as "nothing found". When no row is the
+ * title and artist typed, both speeds ask once more with the words split into a title and an
+ * artist (the artist the rows name, or the words left over from an exact title) before ranking,
+ * so a tribute act or a live take never stands first for a song the plain search listed others for.
  */
 import type {
   CatalogueAlbum,
@@ -20,7 +23,8 @@ import type {
 
 import type { CacheStore } from '../db/cache.js';
 import { cleanTitle } from '../fetch/clean.js';
-import { normalize, tokenOverlap, tokens } from '../text.js';
+import { sleep as realSleep } from '../http.js';
+import { contentTokens, looksLikeSentence, normalize, tokenOverlap, tokens } from '../text.js';
 import type { DeezerAlbum, DeezerArtist, DeezerClient, DeezerTrack } from './deezer.js';
 import type {
   MbArtistCredit,
@@ -29,14 +33,25 @@ import type {
   MbReleaseGroup,
   MusicBrainzClient,
 } from './musicbrainz.js';
-import { recordingQuery, releaseGroupQuery } from './musicbrainz.js';
-import { relevantRows } from './relevance.js';
+import { fullSearchQuery, recordingQuery, releaseGroupQuery } from './musicbrainz.js';
+import { LimiterBusyError } from './rate-limiter.js';
+import { hasExactRow, relevantRows, scoreRow } from './relevance.js';
 
 export const SEARCH_TTL_MS = 24 * 60 * 60_000;
 export const LOOKUP_TTL_MS = 7 * 24 * 60 * 60_000;
 export const FAST_TTL_MS = 10 * 60_000;
 /** How many recordings a title-and-artist lookup reads before choosing: live and mixtape versions come first as often as not. */
 export const LOOKUP_LIMIT = 40;
+/** How many recordings the full search reads before pruning: the song by the artist can sit past the first dozen. */
+export const SEARCH_LIMIT = 25;
+/** How many rows of each kind an answer carries, after pruning. */
+export const ROW_LIMITS = { songs: 8, albums: 4, artists: 3 } as const;
+/**
+ * How long the typeahead waits for MusicBrainz when Deezer has no row that is the title and artist
+ * typed (Deezer's catalogue lacks some originals altogether: Adele, Beyoncé's plain "Halo"). The
+ * full search runs on regardless and lands in the cache for the next letters.
+ */
+export const FAST_WAIT_MS = 2_000;
 
 export interface SearchOptions {
   /** The profile typing; a newer search from the same profile drops this one while it waits. */
@@ -48,6 +63,8 @@ export interface SearchOptions {
 export interface LookupOptions {
   /** The caller's own duration in seconds: the version within a few seconds of it is the one meant. */
   duration?: number;
+  /** The album the caller named: the recording's release of that name is preferred as the import target. */
+  album?: string;
 }
 
 /** A Deezer track as a catalogue song: no MusicBrainz ids yet, everything the row needs. */
@@ -127,22 +144,65 @@ export function fromDeezer(
     }
     addArtist(track.artist);
   }
+  return { songs, albums: [...albums.values()], artists: [...artists.values()] };
+}
+
+/** The rows cut to size, after pruning: never before, or the right row could be cut away unseen. */
+export function limitRows<T extends Pick<CatalogueSearch, 'songs' | 'albums' | 'artists'>>(
+  result: T,
+): T {
   return {
-    songs: songs.slice(0, 8),
-    albums: [...albums.values()].slice(0, 4),
-    artists: [...artists.values()].slice(0, 3),
+    ...result,
+    songs: result.songs.slice(0, ROW_LIMITS.songs),
+    albums: result.albums.slice(0, ROW_LIMITS.albums),
+    artists: result.artists.slice(0, ROW_LIMITS.artists),
   };
+}
+
+/**
+ * Where the words split into a title and an artist, read from the rows already found: an artist
+ * the rows name whose every word was typed ("Beyoncé" in "halo beyonce"), else the words left
+ * over from a row that is the exact title ("adele" after "Rolling in the Deep"). Undefined when
+ * the rows give no hint; the caller then shows what it has.
+ */
+export function guessSplit(
+  query: string,
+  songs: readonly Pick<CatalogueSong, 'title' | 'artist'>[],
+): { title: string; artist: string } | undefined {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const content = contentTokens(query);
+  if (words.length < 2) return undefined;
+  const without = (drop: ReadonlySet<string>): string =>
+    words.filter((w) => !drop.has(normalize(w))).join(' ');
+  for (const song of songs) {
+    const artistTokens = tokens(song.artist);
+    if (artistTokens.length === 0 || artistTokens.length >= words.length) continue;
+    if (!artistTokens.every((t) => content.includes(t))) continue;
+    const title = without(new Set(artistTokens));
+    if (title) return { title, artist: song.artist };
+  }
+  for (const song of songs) {
+    const scored = scoreRow(song, content, { title: song.title, artist: song.artist });
+    if (scored.score < 20) continue;
+    const titleTokens = new Set(tokens(song.title));
+    const artist = without(titleTokens);
+    if (artist && artist !== words.join(' ')) return { title: song.title, artist };
+  }
+  return undefined;
 }
 
 export const coverArt = (releaseGroupId: string): string =>
   `https://coverartarchive.org/release-group/${releaseGroupId}/front-250`;
 
+/** "Lil Wayne feat. Static Major": the credits with their join phrases, as MusicBrainz writes them. */
 export function creditName(credit: MbArtistCredit[] | undefined): string {
   if (!credit || credit.length === 0) return '';
+  const last = credit.length - 1;
   return (
     credit
-      .map((c, i) => (i === 0 ? c.name : ` ${c.name}`))
+      .map((c, i) => `${c.name}${i < last ? (c.joinphrase ?? ' ') : ''}`)
       .join('')
+      .replace(/\s+/g, ' ')
       .trim() || credit[0]!.artist.name
   );
 }
@@ -168,9 +228,15 @@ export function releaseScore(r: NonNullable<MbRecording['releases']>[number]): n
   return s;
 }
 
-/** Prefer an official release that is an album or single over compilations, live albums and bootlegs. */
-export function pickRelease(rec: MbRecording) {
-  return [...(rec.releases ?? [])].sort((a, b) => releaseScore(b) - releaseScore(a))[0];
+/**
+ * Prefer an official release that is an album or single over compilations, live albums and
+ * bootlegs; the release named by the caller (the album on the row they tapped) beats them all.
+ */
+export function pickRelease(rec: MbRecording, preferAlbum?: string) {
+  const wanted = preferAlbum ? normalize(cleanTitle(preferAlbum)) : '';
+  const scoreOf = (r: NonNullable<MbRecording['releases']>[number]): number =>
+    releaseScore(r) + (wanted && normalize(cleanTitle(r.title)) === wanted ? 100 : 0);
+  return [...(rec.releases ?? [])].sort((a, b) => scoreOf(b) - scoreOf(a))[0];
 }
 
 /**
@@ -207,10 +273,11 @@ export function recordingScore(
 export function songFromRecording(
   rec: MbRecording,
   deezer: DeezerTrack[],
+  preferAlbum?: string,
 ): CatalogueSong | undefined {
   const artist = creditName(rec['artist-credit']);
   if (!rec.title || !artist) return undefined;
-  const release = pickRelease(rec);
+  const release = pickRelease(rec, preferAlbum);
   const song: CatalogueSong = {
     id: `mb:recording:${rec.id}`,
     recordingId: rec.id,
@@ -314,11 +381,48 @@ export function catalogueService(options: {
   musicBrainz: MusicBrainzClient;
   deezer: DeezerClient;
   cache: CacheStore;
+  sleep?: (ms: number) => Promise<void>;
+  fastWaitMs?: number;
 }) {
   const { musicBrainz, deezer, cache } = options;
+  const sleep = options.sleep ?? realSleep;
+  const fastWaitMs = options.fastWaitMs ?? FAST_WAIT_MS;
   /** The same words typed on two phones at once cost one search. */
   const inFlight = new Map<string, Promise<CatalogueSearch>>();
 
+  /** A Deezer call on the typist's lane; a refusal by the limiter is "no answer" for the full search. */
+  const deezerOrNothing = (call: Promise<DeezerTrack[] | undefined>) =>
+    call.catch((error: unknown) => {
+      if (error instanceof LimiterBusyError) return undefined;
+      throw error;
+    });
+
+  /**
+   * Both speeds: when no row is the title and artist typed, the words are split by what the rows
+   * say and Deezer is asked once more for that artist's song; the new tracks join the old ones.
+   */
+  async function withFielded(
+    query: string,
+    tracks: DeezerTrack[],
+    songs: readonly Pick<CatalogueSong, 'title' | 'artist'>[],
+    limits: { owner?: string; batch?: string },
+    swallowBusy: boolean,
+  ): Promise<{ tracks: DeezerTrack[]; split?: { title: string; artist: string } }> {
+    if (hasExactRow(query, { songs })) return { tracks };
+    const split = guessSplit(query, songs);
+    if (!split) return { tracks };
+    const call = deezer.searchTrack(split.artist, split.title, 5, limits);
+    const more = (await (swallowBusy ? deezerOrNothing(call) : call)) ?? [];
+    const seen = new Set(tracks.map((t) => t.id));
+    return { tracks: [...tracks, ...more.filter((t) => !seen.has(t.id))], split };
+  }
+
+  /**
+   * The full search: MusicBrainz with the words and every title-and-artist split of them, every
+   * recording and every Deezer track pruned by the words typed before the list is cut, the Deezer
+   * rows the recordings did not match kept as rows of their own (they carry the song when
+   * MusicBrainz lists others first), and a fielded second Deezer call when no row is exact.
+   */
   async function fetchSearch(
     query: string,
     key: string,
@@ -327,58 +431,129 @@ export function catalogueService(options: {
     const batch = normalize(query);
     const limits = who.owner ? { owner: who.owner, batch } : {};
     const [recordings, groups, deezerAnswer] = await Promise.all([
-      musicBrainz.searchRecordings(query, 12, limits),
-      musicBrainz.searchReleaseGroups(query, 6, limits),
-      deezer.search(query, 15, limits),
+      musicBrainz.searchRecordings(fullSearchQuery(query), SEARCH_LIMIT, limits),
+      // The albums wait a second behind the recordings on MusicBrainz's lane; when the typist's
+      // next letters drop that call, the songs already found still make the answer.
+      musicBrainz.searchReleaseGroups(query, 6, limits).catch((error: unknown) => {
+        if (error instanceof LimiterBusyError) return [];
+        throw error;
+      }),
+      deezerOrNothing(deezer.search(query, 15, limits)),
     ]);
-    const deezerTracks = deezerAnswer ?? [];
-    const songs: CatalogueSong[] = [];
-    const seenSongs = new Set<string>();
-    for (const rec of recordings) {
-      if (rec.video) continue;
-      const song = songFromRecording(rec, deezerTracks);
-      if (!song) continue;
-      const dedupe = `${normalize(song.title)}|${normalize(song.artist)}`;
-      if (seenSongs.has(dedupe)) continue;
-      seenSongs.add(dedupe);
-      songs.push(song);
+    const fromMusicBrainz = (tracks: DeezerTrack[]): CatalogueSong[] => {
+      const songs: CatalogueSong[] = [];
+      const seen = new Set<string>();
+      for (const rec of recordings) {
+        if (rec.video) continue;
+        const song = songFromRecording(rec, tracks);
+        if (!song) continue;
+        const dedupe = `${normalize(song.title)}|${normalize(song.artist)}`;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        songs.push(song);
+      }
+      for (const track of tracks) {
+        const dedupe = `${normalize(track.title)}|${normalize(track.artist.name)}`;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        songs.push(songFromDeezer(track));
+      }
+      return songs;
+    };
+    let deezerTracks = deezerAnswer ?? [];
+    if (deezerAnswer) {
+      ({ tracks: deezerTracks } = await withFielded(
+        query,
+        deezerTracks,
+        fromMusicBrainz(deezerTracks),
+        limits,
+        true,
+      ));
     }
+    const songs = fromMusicBrainz(deezerTracks);
     const albums = groups
       .map((g) => albumFromReleaseGroup(g, deezerTracks))
       .filter((a): a is CatalogueAlbum => !!a);
-    const result: CatalogueSearch = relevantRows(query, {
-      query,
-      songs: songs.slice(0, 8),
-      artists: artistsFromCredits(recordings, groups, deezerTracks),
-      albums,
-      cached: false,
-    });
+    const result: CatalogueSearch = limitRows(
+      relevantRows(query, {
+        query,
+        songs,
+        artists: artistsFromCredits(recordings, groups, deezerTracks),
+        albums,
+        cached: false,
+      }),
+    );
     // Without Deezer the rows lack art and previews: keep that answer only briefly.
     cache.set(key, result, deezerAnswer ? SEARCH_TTL_MS : FAST_TTL_MS);
     return result;
   }
 
   async function fastSearch(query: string, who: SearchOptions): Promise<CatalogueSearch> {
-    const key = `catalogue:fast:${normalize(query)}`;
-    const cached = cache.get<CatalogueSearch>(key);
-    if (cached) return { ...cached, cached: true };
+    const key = fastKey(query);
     const limits = who.owner ? { owner: who.owner, batch: normalize(query) } : {};
     // Two Deezer calls: the tracks (whose albums and artists make the other rows) and the album
     // search, so an album named as such is found; a third call for artists would cost another
-    // 100 ms slot for rows the tracks already give.
-    const [tracks, albums] = await Promise.all([
+    // 100 ms slot for rows the tracks already give. A limiter refusal is thrown to the route (503).
+    const [plain, albums] = await Promise.all([
       deezer.search(query, 15, limits),
       deezer.searchAlbums(query, 4, limits),
     ]);
-    const result: CatalogueSearch = relevantRows(query, {
-      query,
-      ...fromDeezer(tracks ?? [], albums ?? []),
-      cached: false,
-      partial: true,
-    });
+    let tracks = plain ?? [];
+    let split: { title: string; artist: string } | undefined;
+    if (plain) {
+      ({ tracks, split } = await withFielded(
+        query,
+        tracks,
+        fromDeezer(tracks).songs,
+        limits,
+        false,
+      ));
+    }
+    const result: CatalogueSearch = limitRows(
+      relevantRows(query, {
+        query,
+        ...fromDeezer(tracks, albums ?? []),
+        cached: false,
+        partial: true,
+      }),
+    );
     // A quota hit or an outage is not "nothing found": only an answer Deezer gave is remembered.
-    if (tracks !== undefined) cache.set(key, result, FAST_TTL_MS);
+    if (plain !== undefined) cache.set(key, result, FAST_TTL_MS);
+    // The rows named a title and an artist but none is the song by that artist (Deezer's catalogue
+    // lacks some originals altogether): ask MusicBrainz (the full search, shared with any Enter
+    // that follows) and wait briefly for it. Its answer, when it comes in time, is the one shown;
+    // either way it lands in the cache for the next letters.
+    if (split && !hasExactRow(query, result) && !looksLikeSentence(query)) {
+      const full = startFull(query, who).catch(() => undefined);
+      const winner = await Promise.race([full, sleep(fastWaitMs).then(() => undefined)]);
+      if (winner) return winner;
+    }
     return result;
+  }
+
+  /** The full search for these words, one at a time per key: a second caller joins the first. */
+  function startFull(query: string, who: SearchOptions): Promise<CatalogueSearch> {
+    const key = fullKey(query);
+    const running = inFlight.get(key);
+    if (running) return running;
+    const promise = fetchSearch(query, key, who).finally(() => inFlight.delete(key));
+    inFlight.set(key, promise);
+    return promise;
+  }
+
+  const fullKey = (query: string) => `catalogue:search:${normalize(query)}`;
+  const fastKey = (query: string) => `catalogue:fast:${normalize(query)}`;
+
+  /**
+   * What the typeahead answers from the cache: the full answer (it carries MusicBrainz ids) when
+   * it has the song typed or the fast one does not either; never a full answer without the exact
+   * row over a fast answer that had it, so an Enter can never take the right song away.
+   */
+  function cachedForFast(query: string): CatalogueSearch | undefined {
+    const full = cache.get<CatalogueSearch>(fullKey(query));
+    const fast = cache.get<CatalogueSearch>(fastKey(query));
+    if (full && (!fast || hasExactRow(query, full) || !hasExactRow(query, fast))) return full;
+    return fast;
   }
 
   /** The recording for a title and artist, none when nothing is close enough (`catalogue_miss`). */
@@ -421,15 +596,12 @@ export function catalogueService(options: {
   return {
     async search(q: string, who: SearchOptions = {}): Promise<CatalogueSearch> {
       const query = q.trim().replace(/\s+/g, ' ');
-      const key = `catalogue:search:${normalize(query)}`;
-      const cached = cache.get<CatalogueSearch>(key);
+      const key = fullKey(query);
+      const cached = who.fast ? cachedForFast(query) : cache.get<CatalogueSearch>(key);
       if (cached) return { ...cached, cached: true };
       const running = inFlight.get(key);
       if (running) return running;
-      if (who.fast) return fastSearch(query, who);
-      const promise = fetchSearch(query, key, who).finally(() => inFlight.delete(key));
-      inFlight.set(key, promise);
-      return promise;
+      return who.fast ? fastSearch(query, who) : startFull(query, who);
     },
 
     /**
@@ -441,7 +613,7 @@ export function catalogueService(options: {
       artist: string,
       want: LookupOptions = {},
     ): Promise<CatalogueSong | undefined> {
-      const key = `catalogue:song:${normalize(title)}|${normalize(artist)}|${want.duration ?? ''}`;
+      const key = `catalogue:song:${normalize(title)}|${normalize(artist)}|${want.duration ?? ''}|${normalize(want.album ?? '')}`;
       const cached = cache.get<CatalogueSong | null>(key);
       if (cached !== undefined) return cached ?? undefined;
       const recordings = await musicBrainz.searchRecordings(
@@ -450,7 +622,7 @@ export function catalogueService(options: {
         { vital: true },
       );
       const chosen = chooseRecording(recordings, title, artist, want);
-      const song = chosen ? songFromRecording(chosen, []) : undefined;
+      const song = chosen ? songFromRecording(chosen, [], want.album) : undefined;
       cache.set(key, song ?? null, LOOKUP_TTL_MS);
       return song;
     },

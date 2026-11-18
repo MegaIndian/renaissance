@@ -111,7 +111,9 @@ export function createRequestService(deps: {
         status: 'requested',
         detail: `Retried by ${profile.name}`,
       })!;
-      bus.publish(next.requestedBy, { type: 'request', request: next });
+      // The watchers' streams see the retry too, not only the asker's.
+      for (const who of [next.requestedBy, ...(next.watchers ?? [])])
+        bus.publish(who, { type: 'request', request: next });
       deps.enqueue(next.id);
       return next;
     },

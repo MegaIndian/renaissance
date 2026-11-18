@@ -43,6 +43,8 @@ interface Row {
   source_file: string | null;
   matched_title: string | null;
   matched_artist: string | null;
+  matched_album: string | null;
+  requested_at: string | null;
   /** Watcher profile ids joined with a newline; empty when nobody else asked. */
   watchers: string;
   steps: string;
@@ -55,13 +57,9 @@ const SELECT = `
     COALESCE((SELECT GROUP_CONCAT(w.profile, char(10)) FROM request_watchers w WHERE w.request_id = r.id), '') AS watchers
   FROM requests r JOIN profiles p ON p.id = r.requested_by`;
 
-/** The moment the request last entered `requested`: creation, or the latest retry. */
+/** The moment the request last entered `requested`: creation, or the latest retry (its own column, not a step the cap could drop). */
 export function lastRequestedAt(request: MusicRequest): number {
-  for (let i = request.steps.length - 1; i >= 0; i--) {
-    const step = request.steps[i]!;
-    if (step.status === 'requested') return Date.parse(step.at);
-  }
-  return Date.parse(request.createdAt);
+  return Date.parse(request.requestedAt ?? request.createdAt);
 }
 
 function toRequest(r: Row): MusicRequest {
@@ -86,8 +84,11 @@ function toRequest(r: Row): MusicRequest {
   if (r.reason !== null) out.reason = r.reason;
   if (r.detail !== null) out.detail = r.detail;
   if (r.source_file !== null) out.sourceFile = r.source_file;
-  if (r.matched_title !== null && r.matched_artist !== null)
+  if (r.matched_title !== null && r.matched_artist !== null) {
     out.matched = { title: r.matched_title, artist: r.matched_artist };
+    if (r.matched_album !== null) out.matched.album = r.matched_album;
+  }
+  if (r.requested_at !== null) out.requestedAt = r.requested_at;
   if (r.watchers) out.watchers = r.watchers.split('\n');
   if (r.progress_done !== null && r.progress_total !== null) {
     out.progress = {
@@ -111,7 +112,7 @@ export interface RequestUpdate {
       NewRequest,
       'recordingId' | 'releaseGroupId' | 'releaseId' | 'artistId' | 'duration' | 'album'
     >
-  > & { sourceFile?: string; matched?: { title: string; artist: string } };
+  > & { sourceFile?: string; matched?: { title: string; artist: string; album?: string } };
 }
 
 export function requestStore(db: DatabaseSync) {
@@ -133,6 +134,7 @@ export function requestStore(db: DatabaseSync) {
       release_id = COALESCE(?, release_id), artist_id = COALESCE(?, artist_id),
       duration = COALESCE(?, duration), album = COALESCE(?, album), source_file = COALESCE(?, source_file),
       matched_title = COALESCE(?, matched_title), matched_artist = COALESCE(?, matched_artist),
+      matched_album = COALESCE(?, matched_album), requested_at = COALESCE(?, requested_at),
       updated_at = ?
     WHERE id = ?
   `);
@@ -218,6 +220,9 @@ export function requestStore(db: DatabaseSync) {
         ids.sourceFile ?? null,
         ids.matched?.title ?? null,
         ids.matched?.artist ?? null,
+        ids.matched?.album ?? null,
+        // A retry: the deadline runs from now, whatever the step cap keeps.
+        patch.status === 'requested' ? iso : null,
         iso,
         id,
       );

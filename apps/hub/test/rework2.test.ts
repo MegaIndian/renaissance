@@ -635,19 +635,15 @@ describe("albums: a late cancel, the deadline after a retry, soularr's failed im
       status: 'failed',
       reason: 'not_found_in_time',
     });
-    // A week later Mom retries: the retry step is the new start, so the next poll keeps waiting.
+    // A week later Mom retries: the retry is the new start (its own column), so the next poll
+    // keeps waiting.
     clock += 7 * 24 * 60 * 60_000;
     const retried = t.service.retry(mom, req.id);
     expect(retried).toMatchObject({ status: 'requested' });
+    expect(retried).toHaveProperty('requestedAt');
     t.stores.db
-      .prepare('UPDATE requests SET steps = ? WHERE id = ?')
-      .run(
-        JSON.stringify([
-          ...t.stores.requests.get(req.id)!.steps.slice(0, -1),
-          { at: new Date(clock).toISOString(), status: 'requested', detail: 'Retried by Mom' },
-        ]),
-        req.id,
-      );
+      .prepare('UPDATE requests SET requested_at = ? WHERE id = ?')
+      .run(new Date(clock).toISOString(), req.id);
     expect((await t.pipeline.run(req.id))?.status).toBe('finding');
     expect(t.lidarr.albums[0]?.monitored).toBe(true);
     clock += 60_000;
@@ -718,7 +714,7 @@ describe("albums: a late cancel, the deadline after a retry, soularr's failed im
     expect(t.stores.requests.get(req.id)?.status).toBe('ready');
   });
 
-  it('says "arrived but could not be filed" within the hour when nothing matches a track, and unmonitors', async () => {
+  it('keeps waiting when a folder of the right name holds files that match no track, and when Lidarr cannot list the folder', async () => {
     const t = pipelineSetup();
     const req = t.stores.requests.create({ kind: 'album', ...carterAlbum }, mom.id);
     expect((await t.pipeline.run(req.id))?.status).toBe('finding');
@@ -731,10 +727,13 @@ describe("albums: a late cancel, the deadline after a retry, soularr's failed im
     ];
     await t.pipeline.pollAlbums();
     const row = t.stores.requests.get(req.id)!;
-    expect(row).toMatchObject({ status: 'failed', reason: 'import_failed' });
-    expect(row.detail).toContain('Bonus Freestyle.flac');
-    expect(row.detail).toContain('no longer monitors');
-    expect(t.lidarr.albums[0]?.monitored).toBe(false);
+    // What did not map has not arrived: no failure, nothing unmonitored, the deadline decides.
+    expect(row.status).toBe('finding');
+    expect(t.lidarr.albums[0]?.monitored).toBe(true);
+    expect(t.lidarr.writes.some((w) => (w.body as { name?: string }).name === 'ManualImport')).toBe(
+      false,
+    );
+    expect(t.log.lines.some((l) => l.includes('parked files match no track'))).toBe(true);
     // A folder Lidarr cannot read is an empty folder, not a crash.
     const r2 = t.stores.requests.create({ kind: 'album', ...carterAlbum }, sahil.id);
     expect((await t.pipeline.run(r2.id))?.status).toBe('finding');

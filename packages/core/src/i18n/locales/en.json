@@ -19,6 +19,7 @@
     "budgetOff": "This month's smart-answer allowance is used up until the 1st. Names still work",
     "undo": "Undo",
     "undone": "Undone",
+    "undoing": "Undoing…",
     "undoFailed": "Couldn't undo that",
     "rejected_other": "{{count}} suggestions were left out because they aren't in your library or the catalogue",
     "kind": {
@@ -160,6 +161,7 @@
     "whatHappened": "What happened",
     "code": "Code: {{reason}}",
     "matched": "Will arrive as {{title}} by {{artist}}",
+    "matchedOn": "Will arrive as {{title}} by {{artist}}, on {{album}}",
     "detailEnglish": "These details are in English",
     "cancelFailed": "{{title}} could not be cancelled. It may have finished already"
   },

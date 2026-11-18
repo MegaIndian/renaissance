@@ -157,7 +157,16 @@ export const MusicRequest = NewRequest.extend({
    * What the catalogue matched when it differs from what was typed (a Deezer row resolved to a
    * MusicBrainz recording with another spelling or credit): the song that will actually arrive.
    */
-  matched: z.object({ title: z.string().min(1), artist: z.string().min(1) }).optional(),
+  matched: z
+    .object({
+      title: z.string().min(1),
+      artist: z.string().min(1),
+      /** The release the file will be filed under, when it is not the album that was asked for. */
+      album: z.string().min(1).optional(),
+    })
+    .optional(),
+  /** When the request last entered `requested`: a retry sets it again, and the album deadline runs from it. */
+  requestedAt: z.iso.datetime().optional(),
   /** Profiles who asked for the same thing while it was on its way; they get Ready and the item too. */
   watchers: z.array(z.string().min(1)).optional(),
   steps: z.array(RequestStep),

@@ -250,7 +250,7 @@ describe('mapping', () => {
         { name: 'Lil Wayne feat. ', artist: { id: 'a', name: 'Lil Wayne' } },
         { name: 'X', artist: { id: 'b', name: 'X' } },
       ]),
-    ).toBe('Lil Wayne feat.  X');
+    ).toBe('Lil Wayne feat. X');
     expect(creditName(undefined)).toBe('');
   });
 });

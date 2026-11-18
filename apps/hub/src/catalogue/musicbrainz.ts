@@ -4,7 +4,7 @@
  */
 import { HttpError, httpJson, sleep } from '../http.js';
 import type { Fetch } from '../http.js';
-import { luceneEscape } from '../text.js';
+import { contentTokens, looksLikeSentence, luceneEscape } from '../text.js';
 import { createRateLimiter } from './rate-limiter.js';
 import type { RateLimiter, ScheduleOptions } from './rate-limiter.js';
 
@@ -12,6 +12,8 @@ export const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2';
 
 export interface MbArtistCredit {
   name: string;
+  /** " feat. ", " & ": what joins this credit to the next one. */
+  joinphrase?: string;
   artist: { id: string; name: string };
 }
 export interface MbReleaseGroupRef {
@@ -170,6 +172,41 @@ export function recordingQuery(title: string, artist?: string): string {
   const t = luceneEscape(title.trim());
   if (!artist) return t;
   return `recording:"${t}" AND artist:"${luceneEscape(artist.trim())}"`;
+}
+
+/** Fielded clauses carry this weight over the plain words, so the song by the artist typed comes first. */
+export const FIELDED_BOOST = 3;
+/** Splits are tried for two to six words; more is a sentence, not a title and an artist. */
+export const FIELDED_MAX_WORDS = 6;
+
+/**
+ * The full search's recording query: the words as typed, OR every way they split into a title and
+ * an artist as a fielded clause (`recording:"fireman" AND artist:"lil wayne"`, boosted), both
+ * orders. MusicBrainz's plain search lists songs that merely contain the words ("Lil Wayne
+ * Fireman" by DJ Symphony, ten mixtapes titled "Lil Wayne") ahead of the song by the artist, and
+ * the fielded clause is how the pipeline's own lookup finds it; here nobody knows where the words
+ * split, so every split is asked at once in one request. A sentence is sent as it is.
+ */
+export function fullSearchQuery(query: string): string {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const plain = luceneEscape(words.join(' '));
+  if (words.length < 2 || words.length > FIELDED_MAX_WORDS || looksLikeSentence(query))
+    return plain;
+  const clauses = new Set<string>();
+  const splits = (list: readonly string[]): void => {
+    for (let i = 1; i < list.length; i++) {
+      const head = list.slice(0, i).join(' ');
+      const tail = list.slice(i).join(' ');
+      clauses.add(`(${recordingQuery(head, tail)})^${FIELDED_BOOST}`);
+      clauses.add(`(${recordingQuery(tail, head)})^${FIELDED_BOOST}`);
+    }
+  };
+  splits(words);
+  // Without the connectors as well ("fireman by lil wayne"): a title keeps its own articles in
+  // the first set, and the artist is found past a "by" in the second.
+  const content = contentTokens(query);
+  if (content.length >= 2 && content.length < words.length) splits(content);
+  return `(${plain}) OR ${[...clauses].join(' OR ')}`;
 }
 
 export function releaseGroupQuery(title: string, artist?: string): string {

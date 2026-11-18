@@ -58,6 +58,22 @@ export const STOP_WORDS = new Set([
   ),
 ]);
 
+/**
+ * Stop words that make the words a request rather than a name: what is asked for ("something",
+ * "songs", "hits") and the asking itself ("please", "want", "give"). Pronouns, articles and the
+ * small verbs stay out: titles carry them as often as sentences do ("Someone Like You", "Stand by
+ * Me", "Can You Feel the Love Tonight").
+ */
+const SENTENCE_WORDS = new Set([
+  ...'some something please song songs music track tracks album albums hits best new old want give find get put start queue'.split(
+    ' ',
+  ),
+  ...'vagad vagado chalu chalavo gaan gaano geet geeto gana gaana lavo lavi aapo apo mane mate kaik'.split(
+    ' ',
+  ),
+  ...'વગાડ વગાડો ચાલુ ચલાવો ગીત ગીતો ગાન લાવો લાવ આપો મને માટે કંઈક કોઈ'.split(' '),
+]);
+
 /** The words of a query that could be part of a title or an artist's name. */
 export function contentTokens(text: string): string[] {
   const all = tokens(text);
@@ -67,19 +83,22 @@ export function contentTokens(text: string): string[] {
 }
 
 /** Verbs and phrasings that make the words a request rather than a title. */
-const COMMAND =
+export const COMMAND =
   /^(play|put on|start|queue|get me|get|give me|find me|find|i want|i would like|can you|could you|please)\b/;
-const COMMAND_END =
-  /\b(vagad|vagado|chalu kar|chalavo|lavo|lavi aapo|aapo|વગાડ|વગાડો|ચાલુ કર|ચલાવો|લાવો|લાવ|આપો|આપ)$/u;
+/** `\b` knows ASCII letters only, so the Gujarati verbs are bounded by a space or the start. */
+export const COMMAND_END =
+  /(?:^|\s)(vagad|vagado|chalu kar|chalavo|lavo|lavi aapo|aapo|વગાડ|વગાડો|ચાલુ કર|ચલાવો|લાવો|લાવ|આપો|આપ)$/u;
 
 /**
  * True when the words read as a sentence rather than a name: a command verb, or four or more words
- * with at least one stop word among them ("play something calm for cooking", "રસોઈ માટે શાંત ગીત
- * વગાડ"). A five-word title with no filler ("Kabhi Kabhie Mere Dil Mein") is not a sentence.
+ * with a request word among them ("something calm for cooking", "કિશોર કુમાર ના ગીતો"). A five-word
+ * title with no such word ("Kabhi Kabhie Mere Dil Mein") is not a sentence, and neither is a title
+ * with its articles or pronouns and an artist after it ("Rolling in the Deep Adele", "Someone Like
+ * You Adele").
  */
 export function looksLikeSentence(text: string): boolean {
   const n = normalize(text);
   if (COMMAND.test(n) || COMMAND_END.test(n)) return true;
   const all = tokens(n);
-  return all.length >= 4 && all.some((t) => STOP_WORDS.has(t));
+  return all.length >= 4 && all.some((t) => SENTENCE_WORDS.has(t));
 }

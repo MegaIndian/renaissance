@@ -7,7 +7,9 @@
  * exact title and artist first; rows below a threshold are dropped, and the threshold is stricter
  * when the words read as a sentence, so a sentence shows rows only when one of them is the title
  * itself. Words match on a prefix (the typeahead sends "firem") and within one typo ("firman").
- * None of this is a model: it is token overlap.
+ * A row whose title or artist carries a version word (live, remix, karaoke, tribute, "made
+ * famous") the query did not ask for is another song than the one typed and ranks under every
+ * plain row (design AA). None of this is a model: it is token overlap.
  */
 import type {
   CatalogueAlbum,
@@ -67,6 +69,43 @@ export interface ScoredRow<T> {
   coverage: number;
   /** Exact title and artist both in the query, title in the query, then overlap sums. */
   score: number;
+  /** The title and the artist are both the words typed, and no version word was added to them. */
+  exact: boolean;
+}
+
+/**
+ * Words that mark another version of a song than the plain one: in a title ("Halo (Live)",
+ * "Fireman (Remix)") or an artist ("Adele Tribute Band", "Karaoke Hits"). Single words and the
+ * phrases tribute acts use.
+ */
+export const VERSION_WORDS = new Set(
+  'live remix remixes rmx mix karaoke cover covers tribute stripped instrumental acoustic unplugged demo edit nightcore sped slowed reverb'.split(
+    ' ',
+  ),
+);
+export const VERSION_PHRASES = [
+  'originally performed',
+  'made famous',
+  'in the style of',
+  'radio edit',
+  'club mix',
+  'extended mix',
+  'backing track',
+  'sing along',
+];
+/** How far a version word pushes a row: under every plain row that covers the words at all. */
+export const VERSION_PENALTY = 60;
+
+/** The version words in a title or artist that the query did not ask for. */
+export function versionWords(text: string, query: readonly string[]): string[] {
+  const asked = new Set(query);
+  const found = tokens(text).filter((t) => VERSION_WORDS.has(t) && !asked.has(t));
+  const norm = normalize(text);
+  const queryText = query.join(' ');
+  for (const phrase of VERSION_PHRASES) {
+    if (norm.includes(phrase) && !queryText.includes(phrase)) found.push(phrase);
+  }
+  return found;
 }
 
 /** Score one row: `names` are its title and artist (or an artist's name), `extra` its album. */
@@ -79,8 +118,11 @@ export function scoreRow<T>(
   const artistTokens = names.artist ? tokens(names.artist) : [];
   const rowTokens = [...titleTokens, ...artistTokens, ...tokens(names.extra ?? '')];
   const coverage = covered(query, rowTokens);
-  const titleIn = covered(titleTokens, query);
+  // The query lost its filler ("in", "the"), so a title is compared by its content words too:
+  // "Rolling in the Deep" is the exact title for "rolling deep adele".
+  const titleIn = covered(contentTokens(names.title), query);
   const artistIn = artistTokens.length > 0 ? covered(artistTokens, query) : 0;
+  const versions = versionWords(`${names.title} ${names.artist ?? ''}`, query);
   const exactTitle = titleIn === 1;
   const exactArtist = artistTokens.length > 0 && artistIn === 1;
   const score =
@@ -88,8 +130,19 @@ export function scoreRow<T>(
     (exactTitle ? 20 : 0) +
     coverage * 10 +
     titleIn * 5 +
-    artistIn * 5;
-  return { row, coverage, score };
+    artistIn * 5 -
+    (versions.length > 0 ? VERSION_PENALTY : 0);
+  return { row, coverage, score, exact: exactTitle && exactArtist && versions.length === 0 };
+}
+
+/** True when a song row is the title and the artist typed, with no version word added. */
+export function hasExactRow(
+  query: string,
+  result: { songs: readonly Pick<CatalogueSong, 'title' | 'artist'>[] },
+): boolean {
+  const words = contentTokens(query);
+  if (words.length === 0) return false;
+  return result.songs.some((s) => scoreRow(s, words, { title: s.title, artist: s.artist }).exact);
 }
 
 function order<T>(scored: ScoredRow<T>[], keep: (s: ScoredRow<T>) => boolean): T[] {

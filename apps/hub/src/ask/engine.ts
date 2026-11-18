@@ -26,7 +26,7 @@ import type { Stores } from '../db/index.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
 import type { Logger } from '../log.js';
 import type { RequestService } from '../requests/service.js';
-import { hasGujarati, looksLikeSentence, normalize } from '../text.js';
+import { COMMAND, COMMAND_END, hasGujarati, looksLikeSentence, normalize } from '../text.js';
 import type { BudgetMeter } from './budget.js';
 import { SYSTEM_PROMPT, userMessage } from './prompt.js';
 import type { GroundingContext } from './prompt.js';
@@ -74,9 +74,14 @@ export function detectLanguage(
 
 /** "play X" / "X vagad" → "x": the title the words ask for, without the command around it. */
 export function stripCommand(text: string): string {
-  return normalize(text)
-    .replace(/^(play|put on|start|queue)\s+/, '')
-    .replace(/\s+(vagad|vagado|chalu kar|chalavo|વગાડ|વગાડો)$/u, '')
+  let words = normalize(text);
+  // "can you please get me …": every leading command phrase goes, one after another.
+  for (let m = COMMAND.exec(words); m && m[0].length < words.length; m = COMMAND.exec(words)) {
+    words = words.slice(m[0].length).trim();
+  }
+  return words
+    .replace(COMMAND_END, '')
+    .replace(/\s+please$/, '')
     .trim();
 }
 

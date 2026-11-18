@@ -263,3 +263,37 @@ declare module 'fastify' {
     };
   }
 }
+
+/**
+ * The hub when its database cannot be used at start (a read-only volume, a bad path): instead of
+ * exiting and restarting in a loop that nothing reports, the process stays up and answers `503`
+ * everywhere, `/health` saying `database: error` and why, so the container check fails visibly
+ * and the message is one `curl` away. Nothing else runs: no runner, no routes, no keys in use.
+ */
+export async function buildDegradedApp(options: {
+  config: HubConfig;
+  error: Error;
+  logger?: boolean;
+}): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: options.logger ?? false,
+    trustProxy: options.config.trustProxy,
+    logController: new LogController({ disableRequestLogging: true }),
+  });
+  app.log.error({ error: options.error.message }, 'database unusable; serving degraded');
+  app.get('/health', async (_request, reply) => {
+    reply.code(503);
+    return {
+      status: 'degraded',
+      service: 'renaissance-hub',
+      version,
+      database: 'error',
+      error: options.error.message,
+    };
+  });
+  app.setNotFoundHandler(async (_request, reply) => {
+    reply.code(503);
+    return { error: 'storage_error', message: 'The hub cannot use its database; see /health' };
+  });
+  return app;
+}

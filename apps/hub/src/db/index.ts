@@ -33,7 +33,7 @@ export function createStores(path: string): Stores {
   };
 }
 
-export { migrations, migrate, openDatabase } from './database.js';
+export { DatabaseUnavailableError, migrations, migrate, openDatabase } from './database.js';
 export type { NewCollectionItem } from './collection.js';
 export { lastRequestedAt } from './requests.js';
 export type { RequestUpdate } from './requests.js';

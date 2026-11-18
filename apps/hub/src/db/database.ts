@@ -93,14 +93,35 @@ export const migrations: readonly string[] = [
      PRIMARY KEY (request_id, profile)
    );
    CREATE INDEX request_watchers_by_profile ON request_watchers (profile);`,
+  // 5: the release the file lands on when it is not the album asked for, and when the request
+  // last entered `requested` (a retry sets it; the album deadline runs from it, not from a step
+  // the cap could drop).
+  `ALTER TABLE requests ADD COLUMN matched_album TEXT;
+   ALTER TABLE requests ADD COLUMN requested_at TEXT;`,
 ];
 
+/** The database file cannot be opened, written or migrated: a read-only volume, a full disk, a bad path. */
+export class DatabaseUnavailableError extends Error {
+  readonly path: string;
+  constructor(path: string, cause: unknown) {
+    super(
+      `The hub's database at ${path} cannot be used: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'DatabaseUnavailableError';
+    this.path = path;
+  }
+}
+
 export function openDatabase(path: string): DatabaseSync {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  migrate(db);
-  return db;
+  try {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    const db = new DatabaseSync(path);
+    db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    migrate(db);
+    return db;
+  } catch (error) {
+    throw new DatabaseUnavailableError(path, error);
+  }
 }
 
 /** Applies every migration past the stored version; returns how many ran. */

@@ -616,7 +616,8 @@ describe('pipeline: an album', () => {
       true,
     );
     expect(t.slskd.searches).toEqual([]);
-    expect(result?.progress).toEqual({ unit: 'songs', done: 0, total: 0 });
+    // No statistics yet: the total is the monitored release's track count, never "0 of 0".
+    expect(result?.progress).toEqual({ unit: 'songs', done: 0, total: 22 });
     t.lidarr.setAlbumStats({ trackCount: 22, trackFileCount: 10 });
     await t.pipeline.pollAlbums();
     await t.pipeline.pollAlbums();
