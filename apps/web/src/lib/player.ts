@@ -20,7 +20,9 @@ export class DomAudioPort implements AudioPort {
   constructor(create: () => HTMLAudioElement = () => new Audio()) {
     this.slots = [create(), create()];
     for (const el of this.slots) {
-      el.preload = 'auto';
+      // Nothing is fetched until a stream is loaded or preloaded on purpose (a restored queue
+      // must not start a transcode on the server).
+      el.preload = 'none';
       el.crossOrigin = null;
     }
     this.attach(this.slots[0]);
@@ -69,6 +71,7 @@ export class DomAudioPort implements AudioPort {
 
   load(url: string, position = 0): void {
     this.pendingSeek = position > 0 ? position : null;
+    this.el.preload = 'auto';
     this.el.src = url;
     this.el.load();
   }
@@ -94,11 +97,13 @@ export class DomAudioPort implements AudioPort {
     this.preloadedUrl = url;
     if (url) {
       if (this.spare.src !== url) {
+        this.spare.preload = 'auto';
         this.spare.src = url;
         this.spare.load();
       }
     } else {
       this.spare.removeAttribute('src');
+      this.spare.preload = 'none';
     }
   }
 
@@ -156,6 +161,15 @@ export function saveQueue(userId: string, queue: QueueState, position: number): 
     localStorage.setItem(queueKey(userId), JSON.stringify(saved));
   } catch {
     /* storage full or unavailable: the queue lasts the session */
+  }
+}
+
+/** Remove a user's saved queue from this browser (sign-out, F86). */
+export function forgetQueue(userId: string): void {
+  try {
+    localStorage.removeItem(queueKey(userId));
+  } catch {
+    /* nothing to forget */
   }
 }
 

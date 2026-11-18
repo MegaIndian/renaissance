@@ -65,11 +65,7 @@ export function TrackCard({ track, onPlay }: { track: Track; onPlay: () => void 
       aria-label={t('actions.play', { title: track.title })}
       className={card}
     >
-      <Artwork
-        imageId={track.imageId}
-        label={track.title}
-        index={colorIndex(track.albumId ?? track.id)}
-      />
+      <Artwork imageId={track.imageId} label={track.title} index={colorIndex(track.id)} />
       <span className="flex min-w-0 flex-col">
         <span className="truncate text-body font-medium text-foreground">{track.title}</span>
         <span className="truncate text-caption text-muted-foreground">{track.artistName}</span>
@@ -96,7 +92,7 @@ export function LabelCard({
         className="flex aspect-video items-end rounded-sm p-3"
         style={{ background: `var(--chart-${(index % 6) + 1})` }}
       >
-        <span className="truncate text-title font-semibold text-background">{title}</span>
+        <span className="truncate text-title font-semibold text-chart-ink">{title}</span>
       </span>
       <span className="truncate text-caption text-muted-foreground">{subtitle}</span>
     </Link>

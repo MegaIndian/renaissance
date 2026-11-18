@@ -14,9 +14,28 @@ describe('SignIn', () => {
       .spyOn(sessionModule, 'signIn')
       .mockImplementation(async (server, credentials) => {
         const session = { server, userId: 'u1', userName: credentials.userName, token: 't' };
-        sessionStore.set({ status: 'signedIn', session, adapter: null, vault: 'encrypted' });
+        sessionStore.set({
+          status: 'signedIn',
+          session,
+          adapter: null,
+          vault: 'encrypted',
+          reason: null,
+        });
         return session;
       });
+    // Only plain http answers at this address.
+    const pinged: string[] = [];
+    vi.spyOn(sessionModule, 'createAdapter').mockImplementation(
+      (server) =>
+        ({
+          ping: () => {
+            pinged.push(server.url);
+            return server.url.startsWith('https:')
+              ? Promise.reject(new TypeError('fetch failed'))
+              : Promise.resolve({ version: '10.10.7' });
+          },
+        }) as never,
+    );
     renderApp('/sign-in');
     const user = userEvent.setup();
     const address = await screen.findByRole('textbox', { name: 'Server address' });
@@ -24,17 +43,72 @@ describe('SignIn', () => {
     await user.type(screen.getByRole('textbox', { name: 'User name' }), 'mom');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(screen.getByRole('alert')).toHaveTextContent('That is not a web address');
+    await user.clear(address);
+    await user.type(address, 'nodot');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('That is not a web address');
     expect(signIn).not.toHaveBeenCalled();
+    expect(pinged).toEqual([]);
+    // A scheme-less address: https is tried first; when only http answers, the field is rewritten
+    // and the notice shows before any password is sent.
     await user.clear(address);
     await user.type(address, '192.168.1.5:8096');
     await user.type(screen.getByLabelText('Password'), 'pw');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(address).toHaveValue('http://192.168.1.5:8096'));
+    expect(pinged).toEqual(['https://192.168.1.5:8096', 'http://192.168.1.5:8096']);
+    expect(screen.getByText(/travel over the network unencrypted/)).toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(signIn).toHaveBeenCalledOnce());
     expect(signIn.mock.calls[0]?.[0]?.url).toBe('http://192.168.1.5:8096');
     expect(signIn.mock.calls[0]?.[1]).toEqual({ userName: 'mom', password: 'pw' });
     expect(localStorage.getItem('renaissance.lastServer')).toBe('http://192.168.1.5:8096');
     expect(await screen.findByText('Good morning, mom', { exact: false })).toBeInTheDocument();
-    signIn.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it('a scheme-less address that answers on https signs in there, with no notice', async () => {
+    setLanguage('en');
+    const signIn = vi.spyOn(sessionModule, 'signIn').mockImplementation(async (server, c) => {
+      const session = { server, userId: 'u1', userName: c.userName, token: 't' };
+      sessionStore.set({ status: 'signedIn', session, adapter: null, vault: 'none', reason: null });
+      return session;
+    });
+    vi.spyOn(sessionModule, 'createAdapter').mockReturnValue({
+      ping: () => Promise.resolve({ version: '10.10.7' }),
+    } as never);
+    renderApp('/sign-in');
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Server address' }),
+      'music.example.com',
+    );
+    await user.type(screen.getByRole('textbox', { name: 'User name' }), 'mom');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(signIn).toHaveBeenCalledOnce());
+    expect(signIn.mock.calls[0]?.[0]?.url).toBe('https://music.example.com');
+    expect(screen.queryByText(/unencrypted/)).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  it('an explicit http address shows the notice at once; a revoked token lands here with a sentence', async () => {
+    setLanguage('en');
+    sessionStore.set({
+      status: 'signedOut',
+      session: null,
+      adapter: null,
+      vault: null,
+      reason: 'expired',
+    });
+    renderApp('/sign-in');
+    const user = userEvent.setup();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your sign-in expired');
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Server address' }),
+      'http://192.168.1.5:8096',
+    );
+    expect(screen.getByText(/http, not https/)).toBeInTheDocument();
   });
 
   it('explains wrong credentials and an unreachable server in full sentences', async () => {
@@ -68,6 +142,7 @@ describe('SignIn', () => {
     setLanguage('en');
     let polls = 0;
     const adapter = {
+      ping: () => Promise.resolve({ version: '10.10.7' }),
       quickConnect: {
         enabled: () => Promise.resolve(true),
         initiate: () => Promise.resolve({ code: '424242', secret: 's' }),
@@ -79,7 +154,13 @@ describe('SignIn', () => {
       .spyOn(sessionModule, 'signInWithQuickConnect')
       .mockImplementation(async (server) => {
         const session = { server, userId: 'u1', userName: 'kevin', token: 't' };
-        sessionStore.set({ status: 'signedIn', session, adapter: null, vault: 'encrypted' });
+        sessionStore.set({
+          status: 'signedIn',
+          session,
+          adapter: null,
+          vault: 'encrypted',
+          reason: null,
+        });
         return session;
       });
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -92,7 +173,7 @@ describe('SignIn', () => {
     await vi.advanceTimersByTimeAsync(2500);
     await waitFor(() =>
       expect(quick).toHaveBeenCalledWith(
-        expect.objectContaining({ url: 'http://demo.local' }),
+        expect.objectContaining({ url: 'https://demo.local' }),
         's',
       ),
     );

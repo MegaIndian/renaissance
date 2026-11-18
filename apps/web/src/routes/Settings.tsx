@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router';
 import { setLanguage } from '../lib/i18n';
 import { refreshLibrary } from '../lib/library';
 import { useSettings } from '../lib/mode';
-import { detectNetwork } from '../lib/network';
+import { networkFor } from '../lib/network';
 import { useLibrary, useSession } from '../lib/queries';
 import { signOut } from '../lib/session';
 import { updateSettings } from '../lib/settings';
@@ -38,7 +38,8 @@ export function Settings() {
     { value: 'medium', label: t('settings.qualityMedium') },
     { value: 'low', label: t('settings.qualityLow') },
   ];
-  const network = detectNetwork();
+  // The class playback uses right now, the override included.
+  const network = networkFor(settings);
   const networkName =
     network === 'wifi'
       ? t('settings.networkWifiName')
@@ -58,7 +59,7 @@ export function Settings() {
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`min-h-6 rounded-sm border border-input-border bg-background px-2 py-1.5 text-body font-normal text-foreground ${focusRing}`}
+        className={`min-h-6 min-w-0 max-w-full rounded-sm border border-input-border bg-background px-2 py-1.5 text-body font-normal text-foreground ${focusRing}`}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -138,13 +139,15 @@ export function Settings() {
           {t('settings.networkNow', { kind: networkName })}
         </p>
         <label className="flex items-start gap-3 text-body" htmlFor="album-aware">
-          <input
-            id="album-aware"
-            type="checkbox"
-            checked={settings.albumAwareShuffle}
-            onChange={(e) => updateSettings({ albumAwareShuffle: e.target.checked })}
-            className={`mt-1 size-4 accent-primary ${focusRing}`}
-          />
+          <span className="grid size-6 shrink-0 place-items-center">
+            <input
+              id="album-aware"
+              type="checkbox"
+              checked={settings.albumAwareShuffle}
+              onChange={(e) => updateSettings({ albumAwareShuffle: e.target.checked })}
+              className={`size-4 accent-primary ${focusRing}`}
+            />
+          </span>
           <span className="flex flex-col">
             <span className="font-medium">{t('settings.albumAwareShuffle')}</span>
             <span className="text-caption text-muted-foreground">
@@ -165,8 +168,13 @@ export function Settings() {
             </p>
             <p className="text-caption text-muted-foreground">
               {t('signIn.tokenStorage')}:{' '}
-              {session.vault === 'plain' ? t('signIn.tokenPlain') : t('signIn.tokenEncrypted')}
+              {session.vault === 'plain'
+                ? t('signIn.tokenPlain')
+                : session.vault === 'none'
+                  ? t('signIn.tokenNone')
+                  : t('signIn.tokenEncrypted')}
             </p>
+            <p className="text-caption text-muted-foreground">{t('signIn.signOutClears')}</p>
             <p className="text-caption text-muted-foreground">{t('signIn.perPerson')}</p>
             <div className="flex flex-wrap gap-2">
               <Button

@@ -94,6 +94,26 @@ body {
   }
 }
 
+/* The playing row: a primary hairline on its left edge (DESIGN.md rule 8); not a shadow, a mark. */
+.row-playing {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/*
+ * Now playing: the art never pushes the controls below the fold. On a phone it is capped at about a third of
+ * the viewport height so the scrubber, transport and the lyrics, queue and cast row all fit at
+ * 390 x 844 in simple mode; on a desktop it sits beside the text, capped near 40 vh.
+ */
+.now-playing-art {
+  width: min(100%, 32vh);
+  margin-inline: auto;
+}
+@media (min-width: 1024px) {
+  .now-playing-art {
+    width: min(100%, 40vh);
+  }
+}
+
 /* The Ask bar draws its own clear button; the browser's search decoration would be a second one. */
 input[type='search']::-webkit-search-cancel-button,
 input[type='search']::-webkit-search-decoration {

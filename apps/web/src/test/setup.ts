@@ -10,7 +10,13 @@ afterEach(() => cleanup());
 /** Tests start signed out unless they sign in; the app itself starts `loading` until the vault is read. */
 beforeEach(() => {
   localStorage.clear();
-  sessionStore.set({ status: 'signedOut', session: null, adapter: null, vault: null });
+  sessionStore.set({
+    status: 'signedOut',
+    session: null,
+    adapter: null,
+    vault: null,
+    reason: null,
+  });
   setViewport(1280);
 });
 

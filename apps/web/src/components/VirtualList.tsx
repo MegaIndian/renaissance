@@ -50,6 +50,8 @@ export function VirtualList<T>({
     return () => observer.disconnect();
   }, [container]);
 
+  // TanStack Virtual's hook returns a mutable instance; the React Compiler must leave it alone.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => container?.current ?? null,

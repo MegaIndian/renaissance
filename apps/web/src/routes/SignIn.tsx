@@ -4,12 +4,15 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
 import {
+  addressHasScheme,
   classifySignInError,
   createAdapter,
+  isPlainHttp,
   serverFromAddress,
   signIn,
   signInWithQuickConnect,
   useLastServer,
+  withHttp,
 } from '../lib/signin';
 import { useSession } from '../lib/queries';
 import { Button } from '../components/Button';
@@ -17,7 +20,10 @@ import { focusRing } from '../components/focus';
 
 /**
  * Sign in (F1) and Quick Connect (F2). Each household member signs in as their own Jellyfin user
- * (F86). Errors are full sentences that say what to do; the one primary is Sign in.
+ * (F86). Errors are full sentences that say what to do; the one primary is Sign in. An address
+ * without a scheme is tried on https first; when only http answers, the address is rewritten to
+ * `http://` and a notice says the password would travel in clear text, before anything is sent.
+ * A revoked token lands here with a sentence saying so.
  */
 export function SignIn() {
   const { t } = useTranslation();
@@ -29,6 +35,10 @@ export function SignIn() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const expired = session.status === 'signedOut' && session.reason === 'expired';
+  const typed = serverFromAddress(address);
+  const plainHttp = !!typed && addressHasScheme(address) && isPlainHttp(typed);
   const [quick, setQuick] = useState<{ server: Server; code: string; secret: string } | null>(null);
   const [quickError, setQuickError] = useState<string | null>(null);
   const alive = useRef(true);
@@ -72,13 +82,39 @@ export function SignIn() {
     return server;
   };
 
+  /**
+   * An address typed without a scheme: is https answering? When it is not and plain http is, the
+   * field is rewritten to `http://` and the notice shows; nothing is sent until the next press.
+   * Returns the server to use now, or null when the user should read the notice first.
+   */
+  const resolveScheme = async (server: Server): Promise<Server | null> => {
+    if (addressHasScheme(address)) return server;
+    try {
+      await createAdapter(server).ping();
+      return server;
+    } catch {
+      const http = withHttp(server);
+      try {
+        await createAdapter(http).ping();
+      } catch {
+        return server;
+      }
+      setAddress(http.url);
+      setNotice(t('signIn.httpNotice'));
+      return null;
+    }
+  };
+
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     setError(null);
-    const server = parseServer();
-    if (!server) return;
+    setNotice(null);
+    const typedServer = parseServer();
+    if (!typedServer) return;
     setBusy(true);
     try {
+      const server = await resolveScheme(typedServer);
+      if (!server) return;
       await signIn(server, { userName: userName.trim(), password });
       rememberServer(server.url);
       void navigate('/');
@@ -92,10 +128,13 @@ export function SignIn() {
   const startQuickConnect = async (): Promise<void> => {
     setError(null);
     setQuickError(null);
-    const server = parseServer();
-    if (!server) return;
+    setNotice(null);
+    const typedServer = parseServer();
+    if (!typedServer) return;
     setBusy(true);
     try {
+      const server = await resolveScheme(typedServer);
+      if (!server) return;
       const adapter = createAdapter(server);
       if (!(await adapter.quickConnect.enabled())) {
         setQuickError(t('signIn.quickConnectUnavailable'));
@@ -150,6 +189,11 @@ export function SignIn() {
           {t('signIn.signedInAs', { name: session.session.userName })}
         </p>
       ) : null}
+      {expired ? (
+        <p className="text-body text-danger" role="alert">
+          {t('signIn.expired')}
+        </p>
+      ) : null}
       <form
         className="flex flex-col gap-3 rounded-md border border-border bg-card p-4"
         onSubmit={(e) => void submit(e)}
@@ -180,6 +224,11 @@ export function SignIn() {
           onChange={setPassword}
           autoComplete="current-password"
         />
+        {notice || plainHttp ? (
+          <p className="text-caption text-muted-foreground" role="status">
+            {notice ?? t('signIn.httpNotice')}
+          </p>
+        ) : null}
         {error ? (
           <p className="text-body text-danger" role="alert">
             {error}

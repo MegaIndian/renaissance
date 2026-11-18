@@ -207,7 +207,7 @@ export function fakeAdapter(fail: { favorites?: boolean } = {}) {
 /** Sign a fake user in with the fixture library and a fresh Player on a FakeAudio. */
 export function signInFake(options: { fail?: { favorites?: boolean } } = {}) {
   const { adapter, calls } = fakeAdapter(options.fail ?? {});
-  sessionStore.set({ status: 'signedIn', session, adapter, vault: 'encrypted' });
+  sessionStore.set({ status: 'signedIn', session, adapter, vault: 'encrypted', reason: null });
   const snapshot = buildSnapshot(tracks, albums, artists, playlists, {
     syncedAt: '2026-11-17T21:00:00.000Z',
     albumArtistIds: ['a1'],

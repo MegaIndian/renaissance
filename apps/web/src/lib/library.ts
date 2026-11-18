@@ -70,6 +70,10 @@ export class IndexedDbLibraryStore implements LibraryStore {
     await Promise.all([...items.map((item) => tx.store.put(item as never)), tx.done]);
   }
 
+  async count(kind: CacheKind): Promise<number> {
+    return (await this.db).count(kind);
+  }
+
   async readMeta(): Promise<LibraryMeta | null> {
     return (await (await this.db).get('meta', 'meta')) ?? null;
   }
@@ -92,6 +96,17 @@ export class IndexedDbLibraryStore implements LibraryStore {
   async close(): Promise<void> {
     (await this.db).close();
   }
+}
+
+/** Remove a user's database from this browser (sign-out, F86). Safe when it does not exist. */
+export function deleteLibrary(session: Session): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase(dbName(session));
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    request.onblocked = () => resolve();
+  });
 }
 
 export interface SyncState {
@@ -117,6 +132,10 @@ export const libraryStore = createStore<LibraryState>({
 });
 
 const REFRESH_INTERVAL_MS = 15 * 60_000;
+/** After a failed refresh: 30 s, then doubling to five minutes, until one succeeds. */
+const RETRY_FIRST_MS = 30_000;
+const RETRY_MAX_MS = 5 * 60_000;
+const CHANNEL = 'renaissance-library';
 
 let active: {
   key: string;
@@ -124,8 +143,12 @@ let active: {
   adapter: ServerAdapter;
   session: Session;
   stop: () => void;
+  /** Ask the other tabs of this browser to refresh too (a heart in one tab shows in the other). */
+  broadcast: () => void;
+  retry: (ms: number) => void;
 } | null = null;
 let syncing: Promise<void> | null = null;
+let retryDelay = RETRY_FIRST_MS;
 
 function setSnapshot(snapshot: LibrarySnapshot): void {
   libraryStore.set((s) => ({
@@ -156,6 +179,7 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
   })
     .then((result) => {
       if (active !== current) return;
+      retryDelay = RETRY_FIRST_MS;
       setSnapshot(result.snapshot);
       patchSync({ status: 'idle', progress: null, mode: result.mode });
     })
@@ -167,6 +191,9 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
         error: error instanceof Error ? error.message : String(error),
       });
       libraryStore.set((s) => ({ ...s, ready: true }));
+      // An outage does not wait for the fifteen-minute timer: try again soon, backing off.
+      current.retry(retryDelay);
+      retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
     })
     .finally(() => {
       syncing = null;
@@ -181,28 +208,44 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
   stopLibrary();
   const store = new IndexedDbLibraryStore(key);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = (): void => {
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (delay = 2000): void => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void refreshLibrary(), 2000);
+    timer = setTimeout(() => void refreshLibrary(), delay);
   };
   const unsubscribe = adapter.subscribe(session, {
-    onLibraryChanged: schedule,
-    onUserDataChanged: schedule,
+    onLibraryChanged: () => schedule(),
+    onUserDataChanged: () => schedule(),
   });
   const interval = setInterval(() => void refreshLibrary(), REFRESH_INTERVAL_MS);
   const onOnline = (): void => void refreshLibrary();
   window.addEventListener('online', onOnline);
+  // Other tabs of this browser signed in as the same user: a change there is a refresh here.
+  const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL);
+  if (channel) {
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (event.data === key) schedule(500);
+    };
+  }
   active = {
     key,
     store,
     adapter,
     session,
+    broadcast: () => channel?.postMessage(key),
+    retry: (ms) => {
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => void refreshLibrary(), ms);
+    },
     stop: () => {
       unsubscribe();
       clearInterval(interval);
       if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
       window.removeEventListener('online', onOnline);
-      void store.close();
+      channel?.close();
+      // A store whose open failed rejects here too; sign-out must not surface that.
+      void store.close().catch(() => undefined);
     },
   };
   patchSync({ status: 'loading', progress: null, error: null });
@@ -259,6 +302,7 @@ export function patchItems<K extends CacheKind>(
   if (active) {
     if (changed.length) void active.store.write(kind, changed).catch(() => undefined);
     if (removed.length) void active.store.remove(kind, removed).catch(() => undefined);
+    active.broadcast();
   }
 }
 
@@ -277,5 +321,8 @@ export function addItems(kind: CacheKind, items: CacheItem[]): void {
     ...state.snapshot,
     [listKey]: [...(state.snapshot[listKey] as CacheItem[]), ...fresh],
   } as LibrarySnapshot);
-  if (active) void active.store.write(kind, fresh).catch(() => undefined);
+  if (active) {
+    void active.store.write(kind, fresh).catch(() => undefined);
+    active.broadcast();
+  }
 }

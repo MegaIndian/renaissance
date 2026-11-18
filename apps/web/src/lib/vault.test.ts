@@ -36,3 +36,24 @@ describe('vault', () => {
     expect(await loadSession()).toBeNull();
   });
 });
+
+describe('when the browser refuses storage', () => {
+  it('the session is adopted with the none mode and nothing is stored', async () => {
+    const { sessionStore, signIn, resetSessionForTests } = await import('./session');
+    const { vi } = await import('vitest');
+    const spy = vi.spyOn(indexedDB, 'open').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ AccessToken: 'tok', User: { Id: 'u1', Name: 'demo' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await signIn(session.server, { userName: 'demo', password: 'pw' });
+    expect(sessionStore.get()).toMatchObject({ status: 'signedIn', vault: 'none' });
+    spy.mockRestore();
+    fetchSpy.mockRestore();
+    resetSessionForTests();
+  });
+});

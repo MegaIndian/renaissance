@@ -2,16 +2,14 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 
 import { signInFake, tracks } from '../test/fakes';
+import { addToQueue, playNext, toggleFavorite } from './actions';
 import {
   addToPlaylist,
-  addToQueue,
   createPlaylist,
   deletePlaylist,
-  playNext,
   removeFromPlaylist,
   renamePlaylist,
-  toggleFavorite,
-} from './actions';
+} from './playlist-actions';
 import { i18n } from './i18n';
 import { libraryStore } from './library';
 import { toastStore } from './toast';
@@ -97,5 +95,62 @@ describe('playlists', () => {
       'remove p-Gym e1',
       'delete p-Gym',
     ]);
+  });
+});
+
+describe('playlist reorder', () => {
+  it('shows the server order after the read-back, toasts with an undo that moves back, and an error toast when the order differs', async () => {
+    const { adapter, calls } = signInFake();
+    await i18n.changeLanguage('en');
+    const queryClient = new QueryClient();
+    const { movePlaylistEntry } = await import('./playlist-actions');
+    const { queryKeys } = await import('./queries');
+    const playlist = { id: 'p1', name: 'Drive', trackCount: 3, isFavorite: false, playCount: 0 };
+    const entries = [tracks[0]!, tracks[1]!, tracks[2]!].map((x, i) => ({
+      ...x,
+      entryId: `e${i}`,
+    }));
+    queryClient.setQueryData(queryKeys.playlistTracks('p1'), entries);
+    let order = [...entries];
+    const playlists = adapter.playlists as unknown as {
+      move: (...args: unknown[]) => Promise<unknown>;
+    };
+    playlists.move = (_s, _p, entryId, toIndex) => {
+      calls.playlists.push(`move ${String(entryId)} ${String(toIndex)}`);
+      const from = order.findIndex((e) => e.entryId === entryId);
+      const [moved] = order.splice(from, 1);
+      order.splice(Number(toIndex), 0, moved!);
+      order = [...order];
+      return Promise.resolve({ entries: order, ok: true, calls: 3 });
+    };
+    expect(await movePlaylistEntry(playlist, 'e2', 0, 'Fluffing a Duck', t, queryClient)).toBe(
+      true,
+    );
+    expect(
+      queryClient
+        .getQueryData<{ entryId: string }[]>(queryKeys.playlistTracks('p1'))
+        ?.map((e) => e.entryId),
+    ).toEqual(['e2', 'e0', 'e1']);
+    expect(toastStore.get()?.message).toBe('Moved Fluffing a Duck to position 1');
+    expect(toastStore.get()?.tone).toBe('info');
+    toastStore.get()?.undo?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.playlists.at(-1)).toBe('move e2 2');
+    expect(order.map((e) => e.entryId)).toEqual(['e0', 'e1', 'e2']);
+
+    // The server put it somewhere else: the list shows the server's order and the toast is an error.
+    playlists.move = () =>
+      Promise.resolve({ entries: [entries[1], entries[0], entries[2]], ok: false, calls: 3 });
+    expect(entries.map((e) => e.entryId)).toEqual(['e0', 'e1', 'e2']);
+    expect(await movePlaylistEntry(playlist, 'e2', 0, 'Fluffing a Duck', t, queryClient)).toBe(
+      false,
+    );
+    expect(toastStore.get()?.tone).toBe('danger');
+    expect(toastStore.get()?.message).toContain('somewhere else');
+    expect(
+      queryClient
+        .getQueryData<{ entryId: string }[]>(queryKeys.playlistTracks('p1'))
+        ?.map((e) => e.entryId),
+    ).toEqual(['e1', 'e0', 'e2']);
   });
 });

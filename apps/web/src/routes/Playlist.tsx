@@ -4,13 +4,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 
-import {
-  addToQueue,
-  movePlaylistEntry,
-  playNext,
-  playNow,
-  removeFromPlaylist,
-} from '../lib/actions';
+import { addToQueue, playNext, playNow } from '../lib/actions';
+import { movePlaylistEntry, removeFromPlaylist } from '../lib/playlist-actions';
 import { openDialog } from '../lib/dialogs';
 import { usePlaylistTracks, useSnapshot } from '../lib/queries';
 import { usePlayer } from '../lib/usePlayer';
@@ -122,6 +117,7 @@ export function PlaylistPage() {
                     openDialog({
                       kind: 'deletePlaylist',
                       playlist,
+                      entries: tracks,
                       onDeleted: () => void navigate('/library?section=playlists'),
                     }),
                 },
@@ -207,6 +203,7 @@ export function PlaylistPage() {
                         entry.title,
                         t,
                         queryClient,
+                        { tracks: [entry] },
                       ),
                   },
                 ]}

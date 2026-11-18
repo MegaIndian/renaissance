@@ -90,12 +90,18 @@ export function TransportControls({
   );
 }
 
-/** The scrubber (F24): a range input, so arrow keys, Home and End seek as well as the pointer. */
+/**
+ * The scrubber (F24): a range input, so arrow keys, Home and End seek as well as the pointer. The
+ * times can be kept for wide screens only (`timesFrom`), where the bar has room for them.
+ */
 export function Scrubber({
   withTimes = true,
+  timesFrom,
   className = '',
 }: {
   withTimes?: boolean;
+  /** Show the times from this breakpoint up; below it the track alone is the scrubber. */
+  timesFrom?: 'lg';
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -103,13 +109,10 @@ export function Scrubber({
   const player = getPlayer();
   const max = Math.max(1, Math.round(duration || queue.items[queue.index]?.duration || 0));
   const value = Math.min(max, Math.round(position));
+  const time = `${timesFrom ? 'hidden lg:inline' : ''} w-10 shrink-0 font-mono text-caption text-muted-foreground`;
   return (
     <div className={`flex w-full items-center gap-2 ${className}`}>
-      {withTimes ? (
-        <span className="w-10 shrink-0 text-right font-mono text-caption text-muted-foreground">
-          {formatDuration(value)}
-        </span>
-      ) : null}
+      {withTimes ? <span className={`${time} text-right`}>{formatDuration(value)}</span> : null}
       <input
         type="range"
         min={0}
@@ -122,11 +125,7 @@ export function Scrubber({
         onChange={(event) => player.seek(Number(event.target.value))}
         className={`h-6 min-w-0 flex-1 accent-primary ${focusRing}`}
       />
-      {withTimes ? (
-        <span className="w-10 shrink-0 font-mono text-caption text-muted-foreground">
-          -{formatDuration(Math.max(0, max - value))}
-        </span>
-      ) : null}
+      {withTimes ? <span className={time}>-{formatDuration(Math.max(0, max - value))}</span> : null}
     </div>
   );
 }
@@ -152,17 +151,27 @@ export function VolumeControl() {
   );
 }
 
-/** Direct or transcoded, codec and bitrate: advanced mode only. */
+/**
+ * Direct or transcoded, codec and bitrate: advanced mode only. A transcoded stream is MP3 at the cap
+ * the player asked for (or the source bitrate when the cap is above it), not the file's own figures.
+ */
 export function PlaybackDetails() {
   const { t } = useTranslation();
   const mode = useMode();
-  const { method, queue } = usePlayer();
+  const { method, quality, queue } = usePlayer();
   const track = queue.items[queue.index];
   if (mode !== 'advanced' || !track || !method) return null;
+  const transcoded = method === 'transcode';
+  const cap = quality && quality !== 'original' ? quality.maxBitrate : undefined;
+  const bitrate = transcoded
+    ? cap && track.bitrate
+      ? Math.min(cap, track.bitrate)
+      : (cap ?? track.bitrate)
+    : track.bitrate;
   const parts = [
-    method === 'direct' ? t('player.direct') : t('player.transcode'),
-    track.codec?.toUpperCase(),
-    track.bitrate ? `${Math.round(track.bitrate / 1000)} kbps` : undefined,
+    transcoded ? t('player.transcode') : t('player.direct'),
+    transcoded ? 'MP3' : track.codec?.toUpperCase(),
+    bitrate ? `${Math.round(bitrate / 1000)} kbps` : undefined,
     track.sampleRate ? `${(track.sampleRate / 1000).toFixed(1)} kHz` : undefined,
   ].filter(Boolean);
   return <p className="text-caption text-muted-foreground">{parts.join(' · ')}</p>;

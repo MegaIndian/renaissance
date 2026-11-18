@@ -32,7 +32,7 @@ export function Row({
         {to && count > 0 ? (
           <Link
             to={to}
-            className={`rounded-sm text-caption text-muted-foreground hover:text-foreground ${focusRing}`}
+            className={`inline-flex min-h-6 items-center rounded-sm px-2 text-caption text-muted-foreground hover:text-foreground ${focusRing}`}
           >
             {toLabel}
           </Link>

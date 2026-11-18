@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 import { sessionStore } from '../lib/session';
 import { useStoreValue } from '../lib/useStore';
-import { PlaceholderArt } from './PlaceholderArt';
+import { ART_SIZES, PlaceholderArt } from './PlaceholderArt';
+import type { ArtSize } from './PlaceholderArt';
 
 /**
  * Cover art from the server at the width it is shown, with the six-colour placeholder when an item
@@ -21,31 +22,26 @@ export function Artwork({
   label: string;
   /** Picks the placeholder colour; a stable number per item (its position or a hash). */
   index: number;
-  size?: 'xs' | 'sm' | 'md' | 'lg';
+  size?: ArtSize;
   className?: string;
   rounded?: string;
 }) {
   const { adapter, session } = useStoreValue(sessionStore);
   const [failed, setFailed] = useState(false);
-  const sizes = {
-    xs: 'size-9',
-    sm: 'size-12',
-    md: 'aspect-square w-full',
-    lg: 'aspect-square w-full',
-  };
   const widths = { xs: 72, sm: 96, md: 300, lg: 600 };
-  const cls = `${sizes[size]} ${rounded} shrink-0 overflow-hidden ${className}`;
+  const cls = `${ART_SIZES[size]} ${rounded} shrink-0 overflow-hidden ${className}`;
   const src =
     imageId && adapter && session && !failed
       ? adapter.imageUrl(session, imageId, widths[size])
       : null;
   if (!src) {
+    // The same size class as the image: one box, whether the cover exists or not.
     return (
       <PlaceholderArt
         index={index}
         label={size === 'xs' ? undefined : label}
-        size={size === 'xs' || size === 'sm' ? 'sm' : 'md'}
-        className={`${size === 'xs' ? 'size-9' : ''} ${rounded} ${className}`}
+        size={size}
+        className={`${rounded} ${className}`}
       />
     );
   }
@@ -68,5 +64,5 @@ const decorativeAlt = '';
 export function colorIndex(id: string): number {
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return hash % 6;
+  return hash % 30;
 }

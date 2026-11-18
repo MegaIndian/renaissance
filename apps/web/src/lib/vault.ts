@@ -16,7 +16,8 @@ const DB_NAME = 'renaissance-vault';
 const KEY_ID = 'session-key';
 const SESSION_ID = 'session';
 
-export type VaultMode = 'encrypted' | 'plain';
+/** `none`: the browser refused storage (a private window, blocked site data); the session lasts the page. */
+export type VaultMode = 'encrypted' | 'plain' | 'none';
 
 const StoredSession = z.object({
   server: Server,

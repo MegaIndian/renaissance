@@ -45,6 +45,23 @@ describe('DomAudioPort', () => {
     expect(events).toHaveLength(2);
   });
 
+  it('fetches nothing until a stream is loaded or preloaded on purpose (a restored queue starts no transcode)', () => {
+    const a = fakeElement();
+    const b = fakeElement();
+    const slots = [a, b];
+    const port = new DomAudioPort(() => slots.shift() as HTMLAudioElement);
+    expect(a.preload).toBe('none');
+    expect(b.preload).toBe('none');
+    port.load('http://x/Audio/1/universal', 0);
+    expect(a.preload).toBe('auto');
+    expect(b.preload).toBe('none');
+    port.preload('http://x/Audio/2/universal');
+    expect(b.preload).toBe('auto');
+    port.preload(null);
+    expect(b.preload).toBe('none');
+    expect(b.hasAttribute('src')).toBe(false);
+  });
+
   it('forwards time, pause, waiting and error events from the current element', () => {
     const a = fakeElement();
     const port = new DomAudioPort(() => (a.isConnected ? fakeElement() : a));

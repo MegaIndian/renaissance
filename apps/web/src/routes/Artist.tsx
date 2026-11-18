@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
 import { playNow } from '../lib/actions';
-import { useArtist, useSimilarArtists, useSnapshot } from '../lib/queries';
+import { useArtist, useArtistItems, useSimilarArtists, useSnapshot } from '../lib/queries';
 import { useMode } from '../lib/mode';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { Button } from '../components/Button';
@@ -19,35 +19,25 @@ import { TrackList } from './Library';
 /**
  * Artist page (F10): art, name, biography, albums (full length) and singles/EPs, songs the artist
  * appears on, similar artists from the server. All lists come from the cache except the biography
- * and similar artists.
+ * and similar artists. The route id may be any id the server uses for this artist (the `/Artists`
+ * one or the one tracks carry); songs and albums are matched by every id known for the name, and by
+ * the name itself, so a server with two entities for one artist shows one full page (and works with
+ * the server down, since nothing here needs it).
  */
 export function ArtistPage() {
   const { t } = useTranslation();
   const { id } = useParams();
   const mode = useMode();
   const { artist, isLoading } = useArtist(id);
-  const similar = useSimilarArtists(id);
+  const similar = useSimilarArtists(artist?.id ?? id);
   const snapshot = useSnapshot();
+  const items = useArtistItems(artist);
   const [bioOpen, setBioOpen] = useState(false);
 
-  const albums = useMemo(
-    () =>
-      sortItems(
-        snapshot.albums.filter((a) => id && a.artistIds.includes(id)),
-        'year',
-      ),
-    [snapshot.albums, id],
-  );
+  const albums = useMemo(() => sortItems(items.albums, 'year'), [items.albums]);
   const full = albums.filter((a) => (a.trackCount ?? 0) > 6);
   const singles = albums.filter((a) => (a.trackCount ?? 0) <= 6);
-  const tracks = useMemo(
-    () =>
-      sortItems(
-        snapshot.tracks.filter((x) => id && x.artistIds.includes(id)),
-        'playCount',
-      ),
-    [snapshot.tracks, id],
-  );
+  const tracks = useMemo(() => sortItems(items.tracks, 'playCount'), [items.tracks]);
   const albumIds = new Set(albums.map((a) => a.id));
   const appearsOn = useMemo(
     () =>

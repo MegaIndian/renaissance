@@ -1,11 +1,14 @@
 import { useCallback, useState } from 'react';
 
 export {
+  addressHasScheme,
   classifySignInError,
   createAdapter,
+  isPlainHttp,
   serverFromAddress,
   signIn,
   signInWithQuickConnect,
+  withHttp,
 } from './session';
 
 const LAST_SERVER_KEY = 'renaissance.lastServer';

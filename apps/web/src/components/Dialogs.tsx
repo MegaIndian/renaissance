@@ -1,9 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { Playlist, Track } from '@renaissance/core';
+import type { Playlist, PlaylistEntry, Track } from '@renaissance/core';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { addToPlaylist, createPlaylist, deletePlaylist, renamePlaylist } from '../lib/actions';
+import {
+  addToPlaylist,
+  createPlaylist,
+  deletePlaylist,
+  renamePlaylist,
+} from '../lib/playlist-actions';
 import { closeDialog, dialogStore } from '../lib/dialogs';
 import { useSnapshot } from '../lib/queries';
 import { useStoreValue } from '../lib/useStore';
@@ -27,7 +32,13 @@ export function Dialogs() {
     case 'renamePlaylist':
       return <RenamePlaylist playlist={dialog.playlist} />;
     case 'deletePlaylist':
-      return <DeletePlaylist playlist={dialog.playlist} onDeleted={dialog.onDeleted} />;
+      return (
+        <DeletePlaylist
+          playlist={dialog.playlist}
+          entries={dialog.entries}
+          onDeleted={dialog.onDeleted}
+        />
+      );
   }
 }
 
@@ -168,9 +179,11 @@ function RenamePlaylist({ playlist }: { playlist: Playlist }) {
 
 function DeletePlaylist({
   playlist,
+  entries,
   onDeleted,
 }: {
   playlist: Playlist;
+  entries?: PlaylistEntry[] | undefined;
   onDeleted?: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
@@ -185,10 +198,10 @@ function DeletePlaylist({
           {t('playlist.cancel')}
         </Button>
         <Button
-          tone="primary"
+          tone="danger"
           onClick={() => {
             closeDialog();
-            void deletePlaylist(playlist, t).then((ok) => {
+            void deletePlaylist(playlist, t, entries ? { entries } : {}).then((ok) => {
               if (ok) onDeleted?.();
             });
           }}

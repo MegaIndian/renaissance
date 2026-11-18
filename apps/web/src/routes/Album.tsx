@@ -1,4 +1,4 @@
-import { formatDuration, groupByDisc, sortItems } from '@renaissance/core';
+import { groupByDisc, sortItems } from '@renaissance/core';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 
@@ -147,11 +147,7 @@ export function AlbumPage() {
                       showNumber
                       showArt={false}
                       hideAlbumLink
-                      subtitle={
-                        track.artistName !== album.artistName
-                          ? track.artistName
-                          : formatDuration(track.duration)
-                      }
+                      subtitle={track.artistName !== album.artistName ? track.artistName : ''}
                       playing={track.id === currentId}
                       paused={paused}
                       onPlay={() => playNow(tracks, index)}

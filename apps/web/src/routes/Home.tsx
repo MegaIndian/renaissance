@@ -104,7 +104,7 @@ export function Home({ now = new Date() }: { now?: Date }) {
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-display font-semibold tracking-tight">{greeting}</h1>
-        <SyncStatus />
+        {mode === 'advanced' ? <SyncStatus /> : null}
       </div>
       <Row
         title={t('home.mySongs')}

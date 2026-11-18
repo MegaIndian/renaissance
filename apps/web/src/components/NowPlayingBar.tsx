@@ -12,8 +12,11 @@ import { focusRing } from './focus';
 
 /**
  * Bottom player, on every screen (F24 bar form). Nothing queued: the Play button is muted, never a
- * second blue. Desktop adds the scrubber, shuffle, repeat and volume; the phone keeps art, title, play
- * and next, and tapping the title opens the now-playing screen. Hidden on the now-playing route itself.
+ * second blue. From the tablet breakpoint the bar adds the transport and the scrubber (its times and
+ * the volume from the desktop breakpoint, where there is room); the title block has no fixed basis
+ * below that, so an 820 px bar keeps the scrubber visible and the heart and queue on one line. The
+ * phone keeps art, title, play and next, and tapping the title opens the now-playing screen. Hidden
+ * on the now-playing route on phones; shown there on wider screens, where it owns the transport.
  */
 export function NowPlayingBar() {
   const { t } = useTranslation();
@@ -56,7 +59,7 @@ export function NowPlayingBar() {
         <Link
           to="/now-playing"
           aria-label={t('player.openNowPlaying')}
-          className={`flex min-w-0 flex-1 items-center gap-3 rounded-sm md:max-w-xs md:flex-none md:basis-72 ${focusRing}`}
+          className={`flex min-w-0 flex-1 items-center gap-3 rounded-sm md:w-44 md:flex-none lg:w-72 ${focusRing}`}
         >
           <Artwork
             imageId={track.imageId}
@@ -74,10 +77,10 @@ export function NowPlayingBar() {
         {desktop ? (
           <div className="flex min-w-0 flex-1 flex-col items-center gap-1">
             <TransportControls size="sm" withModes />
-            <Scrubber className="max-w-xl" />
+            <Scrubber className="max-w-xl" timesFrom="lg" />
           </div>
         ) : null}
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 flex-nowrap items-center gap-1">
           {desktop ? <FavoriteButton kind="track" item={track} /> : null}
           {desktop ? <VolumeControl /> : null}
           {desktop ? (

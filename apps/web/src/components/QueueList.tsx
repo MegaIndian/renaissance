@@ -28,16 +28,25 @@ export function QueueList() {
     return <EmptyState title={t('queue.empty')} description={t('queue.emptyBody')} />;
   }
 
+  /** Every reorder, by drag or from the menu, says what it did and can be undone (rule 10). */
+  const moveWithUndo = (from: number, to: number): void => {
+    if (from === to) return;
+    player.move(from, to);
+    toast(
+      t('playlist.reorderedTo', {
+        title: queue.items[from]?.title ?? '',
+        position: to - queue.index,
+      }),
+      { undo: () => player.move(to, from) },
+    );
+  };
+
   const drop = (toQueueIndex: number): void => {
     if (dragging === null) return;
     const from = dragging;
     setDragging(null);
     setOver(null);
-    if (from === toQueueIndex) return;
-    player.move(from, toQueueIndex);
-    toast(t('playlist.reordered', { title: queue.items[from]?.title ?? '' }), {
-      undo: () => player.move(toQueueIndex, from),
-    });
+    moveWithUndo(from, toQueueIndex);
   };
 
   return (
@@ -114,14 +123,14 @@ export function QueueList() {
                         label: t('queue.moveUp'),
                         icon: 'arrowUp',
                         disabled: i === 0,
-                        onSelect: () => player.move(queueIndex, queueIndex - 1),
+                        onSelect: () => moveWithUndo(queueIndex, queueIndex - 1),
                       },
                       {
                         key: 'down',
                         label: t('queue.moveDown'),
                         icon: 'arrowDown',
                         disabled: i === next.length - 1,
-                        onSelect: () => player.move(queueIndex, queueIndex + 1),
+                        onSelect: () => moveWithUndo(queueIndex, queueIndex + 1),
                       },
                       {
                         key: 'remove',

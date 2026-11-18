@@ -6,7 +6,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { sortAlbumTracks } from '@renaissance/core';
+import { creditsArtist, findArtist, sortAlbumTracks } from '@renaissance/core';
 import type { Album, Artist, PlaylistEntry, Track } from '@renaissance/core';
 
 import { libraryStore } from './library';
@@ -71,20 +71,39 @@ export function useAlbum(albumId: string | undefined) {
   return { ...query, album: cached ?? query.data };
 }
 
+/**
+ * The artist behind a route id (F10). The snapshot's artists are merged by name, so the id may be
+ * the server's `/Artists` id or the one tracks carry; both resolve. A route id the cache does not
+ * know (a link from elsewhere) is fetched from the server and matched by name, so the page still
+ * shows the cached songs; the server's record adds the biography.
+ */
 export function useArtist(artistId: string | undefined) {
-  const cached = useStoreSlice(libraryStore, (s) =>
-    s.snapshot.artists.find((a) => a.id === artistId),
-  );
+  const artists = useStoreSlice(libraryStore, (s) => s.snapshot.artists);
+  const byId = useMemo(() => findArtist(artists, artistId), [artists, artistId]);
   const query = useQuery<Artist>({
     queryKey: queryKeys.artist(artistId ?? ''),
     queryFn: () => library().artist(artistId ?? ''),
     enabled: !!artistId && sessionStore.get().status === 'signedIn',
   });
-  const merged =
+  const cached = byId ?? (query.data ? findArtist(artists, undefined, query.data.name) : undefined);
+  const artist =
     cached && query.data
-      ? { ...cached, ...query.data, isFavorite: cached.isFavorite }
-      : (query.data ?? cached);
-  return { ...query, artist: merged };
+      ? { ...cached, ...query.data, id: cached.id, ids: cached.ids, isFavorite: cached.isFavorite }
+      : (cached ?? query.data);
+  return { ...query, artist };
+}
+
+/** The cached albums and songs credited to an artist under any of its ids or by name. */
+export function useArtistItems(artist: Artist | undefined) {
+  const tracks = useStoreSlice(libraryStore, (s) => s.snapshot.tracks);
+  const albums = useStoreSlice(libraryStore, (s) => s.snapshot.albums);
+  return useMemo(
+    () => ({
+      tracks: artist ? tracks.filter((t) => creditsArtist(t, artist)) : [],
+      albums: artist ? albums.filter((a) => creditsArtist(a, artist)) : [],
+    }),
+    [artist, tracks, albums],
+  );
 }
 
 export function useSimilarArtists(artistId: string | undefined) {

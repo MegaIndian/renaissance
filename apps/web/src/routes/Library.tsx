@@ -1,5 +1,5 @@
 import { filterAlbums, filterTracks, sortItems } from '@renaissance/core';
-import type { Album, Artist, SortKey, SortOrder, Track } from '@renaissance/core';
+import type { Album, Artist, SortKey, SortOrder } from '@renaissance/core';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
@@ -8,7 +8,6 @@ import { playNow } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
 import { useLibrary, useSession } from '../lib/queries';
-import { usePlayer } from '../lib/usePlayer';
 import { Button, LinkButton } from '../components/Button';
 import { AlbumCard, ArtistCard, LabelCard, PlaylistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
@@ -17,8 +16,10 @@ import { SegmentedControl } from '../components/SegmentedControl';
 import { SortBar } from '../components/SortBar';
 import type { View } from '../components/SortBar';
 import { SyncStatus } from '../components/SyncStatus';
-import { TRACK_ROW_HEIGHT, TrackRow } from '../components/TrackRow';
+import { TrackList, useTrackRowHeight } from '../components/TrackList';
 import { VirtualList, useColumns } from '../components/VirtualList';
+
+export { TrackList };
 
 type Section = 'artists' | 'albumArtists' | 'albums' | 'tracks' | 'genres' | 'years' | 'playlists';
 const simpleSections: Section[] = ['artists', 'albums', 'tracks', 'playlists'];
@@ -129,6 +130,16 @@ export function Library() {
     () => sortItems(snapshot.playlists, sort, order, seed),
     [snapshot.playlists, sort, order, seed],
   );
+  // One pass over the tracks for the genre and year cards, not one filter per card per render.
+  const counts = useMemo(() => {
+    const genres = new Map<string, number>();
+    const years = new Map<number, number>();
+    for (const x of snapshot.tracks) {
+      for (const g of x.genres) genres.set(g, (genres.get(g) ?? 0) + 1);
+      if (x.year) years.set(x.year, (years.get(x.year) ?? 0) + 1);
+    }
+    return { genres, years };
+  }, [snapshot.tracks]);
 
   if (session.status === 'signedOut') {
     return (
@@ -272,9 +283,7 @@ export function Library() {
                 <LabelCard
                   to={`/library?section=tracks&genre=${encodeURIComponent(g)}`}
                   title={g}
-                  subtitle={t('library.tracksCount', {
-                    count: snapshot.tracks.filter((x) => x.genres.includes(g)).length,
-                  })}
+                  subtitle={t('library.tracksCount', { count: counts.genres.get(g) ?? 0 })}
                   index={i}
                 />
               )}
@@ -290,9 +299,7 @@ export function Library() {
                 <LabelCard
                   to={`/library?section=tracks&year=${y}`}
                   title={String(y)}
-                  subtitle={t('library.tracksCount', {
-                    count: snapshot.tracks.filter((x) => x.year === y).length,
-                  })}
+                  subtitle={t('library.tracksCount', { count: counts.years.get(y) ?? 0 })}
                   index={i}
                 />
               )}
@@ -332,40 +339,6 @@ export function Library() {
   );
 }
 
-/** Songs: a virtualised list that reads the player so the current row is marked. */
-export function TrackList({
-  tracks,
-  showNumber = false,
-  hideAlbumLink = false,
-}: {
-  tracks: Track[];
-  showNumber?: boolean;
-  hideAlbumLink?: boolean;
-}) {
-  const player = usePlayer();
-  const currentId = player.queue.items[player.queue.index]?.id;
-  const paused = player.status !== 'playing' && player.status !== 'loading';
-  return (
-    <VirtualList
-      items={tracks}
-      rowHeight={TRACK_ROW_HEIGHT}
-      keyOf={(track) => track.id}
-      renderItem={(track, i) => (
-        <TrackRow
-          track={track}
-          index={i}
-          showNumber={showNumber}
-          showArt={!showNumber}
-          hideAlbumLink={hideAlbumLink}
-          playing={track.id === currentId}
-          paused={paused}
-          onPlay={() => playNow(tracks, i)}
-        />
-      )}
-    />
-  );
-}
-
 function CardGrid<T>({
   items,
   keyOf,
@@ -393,11 +366,12 @@ function CardGrid<T>({
 
 function AlbumGrid({ albums, view }: { albums: Album[]; view: View }) {
   const { t } = useTranslation();
+  const rowHeight = useTrackRowHeight();
   if (view === 'list') {
     return (
       <VirtualList
         items={albums}
-        rowHeight={TRACK_ROW_HEIGHT}
+        rowHeight={rowHeight}
         keyOf={(a) => a.id}
         renderItem={(album) => (
           <Link
@@ -427,11 +401,12 @@ function AlbumGrid({ albums, view }: { albums: Album[]; view: View }) {
 }
 
 function ArtistGrid({ artists, view }: { artists: Artist[]; view: View }) {
+  const rowHeight = useTrackRowHeight();
   if (view === 'list') {
     return (
       <VirtualList
         items={artists}
-        rowHeight={TRACK_ROW_HEIGHT}
+        rowHeight={rowHeight}
         keyOf={(a) => a.id}
         renderItem={(artist) => (
           <Link
