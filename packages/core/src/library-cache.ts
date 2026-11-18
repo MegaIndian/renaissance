@@ -7,11 +7,15 @@
  * - first run: every track, album, artist and playlist, in pages, with progress callbacks;
  * - later runs ("delta"): new tracks and albums by paging `dateAdded` descending until the last sync
  *   time; recently edited items by one page of `lastSaved`; favourite and play-count changes through
- *   `userDataChangedSince`; artists and playlists refetched whole (they are small); deletions found
- *   by comparing the server's total with the cache and reconciling ids when they differ.
+ *   `userDataChangedSince`; artists and playlists refetched whole (they are small); deletions and
+ *   misses found by comparing the server's total with the cache's count and reconciling ids when
+ *   they differ: ids the server no longer has are dropped, ids the cache lacks are fetched.
+ * - the sync time is the server's clock (its `Date` header), not the client's, so an item whose
+ *   `DateCreated` sits between the two clocks is never skipped.
  */
 import { z } from 'zod';
 
+import { mergeArtists } from './artists';
 import type { Album, Artist, Playlist, Track } from './models';
 import {
   Album as AlbumSchema,
@@ -39,6 +43,8 @@ export interface LibraryStore {
   remove(kind: CacheKind, ids: readonly string[]): Promise<void>;
   /** Replace a whole kind (used on a full sync and when the server's id list says the cache drifted). */
   replace(kind: CacheKind, items: readonly CacheItem[]): Promise<void>;
+  /** How many items of a kind are stored, without reading them. */
+  count(kind: CacheKind): Promise<number>;
   readMeta(): Promise<LibraryMeta | null>;
   writeMeta(meta: LibraryMeta): Promise<void>;
   clear(): Promise<void>;
@@ -66,14 +72,18 @@ export const emptySnapshot: LibrarySnapshot = {
   syncedAt: null,
 };
 
-/** Derived lists (genres, years, album artists) come from the cached items, so they need no extra call. */
+/**
+ * Derived lists (genres, years, album artists) come from the cached items, so they need no extra
+ * call. Artists are the server's list merged with the ids the tracks and albums carry (`artists.ts`).
+ */
 export function buildSnapshot(
   tracks: Track[],
   albums: Album[],
-  artists: Artist[],
+  serverArtists: Artist[],
   playlists: Playlist[],
   meta: LibraryMeta | null,
 ): LibrarySnapshot {
+  const artists = mergeArtists(serverArtists, tracks, albums);
   const genres = new Set<string>();
   const years = new Set<number>();
   for (const t of tracks) {
@@ -91,7 +101,7 @@ export function buildSnapshot(
     tracks,
     albums,
     artists,
-    albumArtists: artists.filter((a) => albumArtistIds.has(a.id)),
+    albumArtists: artists.filter((a) => (a.ids ?? [a.id]).some((id) => albumArtistIds.has(id))),
     playlists,
     genres: [...genres].sort((a, b) => collator.compare(a, b)),
     years: [...years].sort((a, b) => b - a),
@@ -134,6 +144,7 @@ export interface SyncOptions {
   /** Items per request. */
   pageSize?: number;
   onProgress?: (progress: SyncProgress) => void;
+  /** The fallback clock when the server does not say the time. */
   now?: () => Date;
   /** Force the first-run path even when a sync time exists. */
   full?: boolean;
@@ -143,6 +154,19 @@ export interface SyncResult {
   mode: 'full' | 'delta';
   snapshot: LibrarySnapshot;
   counts: Record<CacheKind, number>;
+  /** Tracks and albums the delta had missed and that were fetched by id. */
+  healed: number;
+}
+
+/** The server's clock when it gives one, else the local clock. */
+async function syncStart(library: Library, now: () => Date): Promise<string> {
+  try {
+    const time = await library.serverTime();
+    if (time) return time;
+  } catch {
+    /* no clock from the server: the local one will do */
+  }
+  return now().toISOString();
 }
 
 async function allPages<T>(
@@ -186,7 +210,7 @@ export async function syncLibrary(
 ): Promise<SyncResult> {
   const pageSize = options.pageSize ?? 1000;
   const now = options.now ?? (() => new Date());
-  const startedAt = now().toISOString();
+  const startedAt = await syncStart(library, now);
   const meta = options.full ? null : await store.readMeta();
   const progress = (kind: CacheKind) => (total: number, done: number) =>
     options.onProgress?.({ kind, done, total });
@@ -231,6 +255,7 @@ export async function syncLibrary(
         artist: artists.length,
         playlist: playlists.length,
       },
+      healed: 0,
     };
   }
 
@@ -261,23 +286,44 @@ export async function syncLibrary(
   await store.replace('artist', artists);
   await store.replace('playlist', playlists);
 
-  // Deletions: when the server's total differs from the cache, reconcile ids for that kind.
+  // Reconcile: when the server's total differs from the cache's count, compare id lists. Ids the
+  // server no longer has are dropped; ids the cache lacks (a delta that missed them) are fetched.
+  let healed = 0;
+  let tracks: unknown[] | null = null;
+  let albums: unknown[] | null = null;
   for (const kind of ['track', 'album'] as const) {
-    const cached = await store.read(kind);
     const total = (
       kind === 'track'
         ? await library.tracks({ start: 0, limit: 1 })
         : await library.albums({ start: 0, limit: 1 })
     ).total;
-    if (total !== cached.length) {
-      const serverIds = new Set(await library.ids(kind));
-      const gone = cached.filter((item) => !serverIds.has(item.id)).map((item) => item.id);
-      if (gone.length) await store.remove(kind, gone);
+    if (total === (await store.count(kind))) continue;
+    const cached = await store.read(kind);
+    const serverIds = await library.ids(kind);
+    const serverSet = new Set(serverIds);
+    const cachedSet = new Set(cached.map((item) => item.id));
+    const gone = cached.filter((item) => !serverSet.has(item.id)).map((item) => item.id);
+    if (gone.length) await store.remove(kind, gone);
+    const missing = serverIds.filter((id) => !cachedSet.has(id));
+    if (missing.length) {
+      const fetched =
+        kind === 'track'
+          ? await library.byIds('track', missing)
+          : await library.byIds('album', missing);
+      await store.write(kind, fetched);
+      healed += fetched.length;
     }
+    if (gone.length || missing.length) {
+      const fresh = await store.read(kind);
+      if (kind === 'track') tracks = fresh;
+      else albums = fresh;
+    } else if (kind === 'track') tracks = cached;
+    else albums = cached;
   }
 
   await store.writeMeta(newMeta);
-  const [tracks, albums] = await Promise.all([store.read('track'), store.read('album')]);
+  tracks ??= await store.read('track');
+  albums ??= await store.read('album');
   return {
     mode: 'delta',
     snapshot: buildSnapshot(
@@ -293,6 +339,7 @@ export async function syncLibrary(
       artist: artists.length,
       playlist: playlists.length,
     },
+    healed,
   };
 }
 
@@ -320,6 +367,9 @@ export class MemoryLibraryStore implements LibraryStore {
   replace(kind: CacheKind, items: readonly CacheItem[]): Promise<void> {
     this.data[kind] = new Map(items.map((i) => [i.id, i]));
     return Promise.resolve();
+  }
+  count(kind: CacheKind): Promise<number> {
+    return Promise.resolve(this.data[kind].size);
   }
   readMeta(): Promise<LibraryMeta | null> {
     return Promise.resolve(this.meta);

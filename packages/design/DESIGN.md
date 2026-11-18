@@ -14,8 +14,13 @@ nothing in an app defines its own colour, radius or font size.
 2. **Flat cards with hairline borders.** A card is `card` background, 1 px `border`, `radius` 10 px,
    no shadow. The only shadows are the lifted now-playing art and the active pill of a segmented control.
 3. **Muted neutrals.** Greys from the token set; no pure black, no pure white text. Cover art is the only
-   saturated colour besides the primary. Placeholder art uses the six `chart` colours in order, and only
-   stands in for art that exists: an empty row shows an `EmptyState`, never a grid of coloured squares.
+   saturated colour besides the primary. Placeholder art uses the `chart` colours and only stands in
+   for art that exists: an empty row shows an `EmptyState`, never a grid of coloured squares. A
+   placeholder is hashed from the item's own id (a track, not its album, so one album without art is
+   not one solid column) and skips `chart-1`, which sits a hair from `primary`; genre and year cards
+   use all six. Any label drawn on a swatch is `chartInk` (`--chart-ink`), the one near-black that
+   passes 4.5:1 on all six in both themes (`measureChartContrast()`); never `background`, which is
+   white in the light theme.
 4. **Segmented controls, not tabs with underlines.** Filters (`All | Music | Downloaded`) are a pill group
    on a `muted` track with the active segment on `card`.
 5. **Compact type, big in simple mode.** Body 13, captions 11, labels 12, titles 15, headings 18, display
@@ -124,8 +129,9 @@ row, the lyrics and cast buttons, the download menu item, diagnostics).
   in advanced mode.
 - **Dialogs** (`Dialog`, `Dialogs`) are one card, `aria-modal`, focus trapped, Escape closes; used for
   add to playlist, new playlist, rename and delete.
-- **Lists** over the cache are virtualised (`VirtualList`); rows are 56 px (`TrackRow`), grids use
-  144 px cards (`AlbumCard`, `ArtistCard`, `PlaylistCard`, `LabelCard`).
+- **Lists** over the cache are virtualised (`VirtualList`); rows are 3.5 rem (`TrackRow`, 56 px at
+  the 16 px root, 70 px in simple mode, so the row grows with the type, rule 5), grids use 144 px
+  cards (`AlbumCard`, `ArtistCard`, `PlaylistCard`, `LabelCard`).
 - **The Ask bar's results** are a `listbox` under the box: up to four per kind, keyboard through
   them, Enter plays a song or opens the full results page; recent searches when empty. Without a hub
   the bar is the search box and says nothing about asking in words (`ask.hintSearchOnly`).
@@ -136,7 +142,7 @@ row, the lyrics and cast buttons, the download menu item, diagnostics).
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Colours (dark)            | background `#0f0f14`, foreground `#e8e8ee`, card `#17171e`, border `#2a2a35`, inputBorder `#6a6a80`, muted `#22222c`, mutedForeground `#9a9aae`, primary `#2f6fe0` on primaryForeground `#ffffff`, ring `#cfdeff`, secondary `#1f1f28`, success `#22c55e` on `#0f0f14`, danger `#f87171` on `#0f0f14` |
 | Colours (light)           | background `#ffffff`, foreground `#111118`, card `#f7f7f9`, border `#e3e3e9`, inputBorder `#8a8a9c`, muted `#eeeef2`, mutedForeground `#6b6b7e`, primary `#2563eb` on `#ffffff`, ring `#0b1a3f`, secondary `#f1f1f5`, success `#15803d` on `#ffffff`, danger `#dc2626` on `#ffffff`                   |
-| Chart and placeholder art | `#3b82f6` `#14b8a6` `#f59e0b` `#a78bfa` `#f87171` `#a3e635`                                                                                                                                                                                                                                           |
+| Chart and placeholder art | `#3b82f6` `#14b8a6` `#f59e0b` `#a78bfa` `#f87171` `#a3e635`; label ink `#111118` on every swatch                                                                                                                                                                                                      |
 | Radius                    | sm 8, md 10, lg 16, pill 999 (px; radii do not scale)                                                                                                                                                                                                                                                 |
 | Spacing                   | 4-point grid: 4, 8, 12, 16, 20, 24, 32, 40, 48 px, emitted as `--space-N` in rem                                                                                                                                                                                                                      |
 | Type                      | caption 11/14, body 13/18, label 12/16, title 15/20, heading 18/24, display 24/30 (size/line height, px at a 16 px root, emitted as `--font-size-*` and `--line-height-*` in rem); simple mode ×1.25 on the root                                                                                      |

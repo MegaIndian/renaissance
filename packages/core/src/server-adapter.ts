@@ -14,6 +14,21 @@ import type {
   Track,
 } from './models';
 
+/**
+ * The server could not be reached at all: no route, a refused connection, or no answer within the
+ * adapter's timeout. Screens show the "could not reach that server" sentence for this one.
+ */
+export class UnreachableError extends Error {
+  constructor(
+    readonly path: string,
+    readonly reason: 'timeout' | 'network',
+    options?: ErrorOptions,
+  ) {
+    super(`${reason === 'timeout' ? 'No answer in time' : 'No connection'} for ${path}`, options);
+    this.name = 'UnreachableError';
+  }
+}
+
 export type StreamQuality = 'original' | { maxBitrate: number };
 
 export interface Credentials {
@@ -129,18 +144,37 @@ export interface Library {
   userDataChangedSince(since: string, page?: PageRequest): Promise<Page<Track>>;
   /** Every id of a kind, cheaply, so the cache can drop what the server deleted. */
   ids(kind: 'track' | 'album' | 'artist' | 'playlist'): Promise<string[]>;
+  /** The items behind these ids, so the cache can fetch what a delta missed (tracks and albums). */
+  byIds(kind: 'track', ids: readonly string[]): Promise<Track[]>;
+  byIds(kind: 'album', ids: readonly string[]): Promise<Album[]>;
+  /** The server's clock as an ISO datetime, or null when it does not say; the delta syncs from it. */
+  serverTime(): Promise<string | null>;
 }
 
 export interface Favorites {
   set(session: Session, itemId: string, favorite: boolean): Promise<void>;
 }
 
+export interface MoveResult {
+  /** The playlist as the server has it after the move, read back. */
+  entries: PlaylistEntry[];
+  /** True when the read-back order is the one asked for. */
+  ok: boolean;
+  /** How many server calls it took. */
+  calls: number;
+}
+
 export interface Playlists {
+  /** A new playlist visible to this user only. */
   create(session: Session, name: string, trackIds: string[]): Promise<Playlist>;
   rename(session: Session, playlistId: string, name: string): Promise<void>;
   addTracks(session: Session, playlistId: string, trackIds: string[]): Promise<void>;
   removeEntries(session: Session, playlistId: string, entryIds: string[]): Promise<void>;
-  move(session: Session, playlistId: string, entryId: string, toIndex: number): Promise<void>;
+  /**
+   * Put the entry at `toIndex`, then read the playlist back. Adapters compensate for servers whose
+   * move does not land where asked and report whether the final order matches.
+   */
+  move(session: Session, playlistId: string, entryId: string, toIndex: number): Promise<MoveResult>;
   remove(session: Session, playlistId: string): Promise<void>;
 }
 
@@ -152,8 +186,12 @@ export interface ServerEvents {
 
 export interface ServerAdapter {
   readonly server: Server;
+  /** Is anything answering at this address? The server's version when it is. Needs no session. */
+  ping(): Promise<{ version: string | null }>;
   signIn(credentials: Credentials): Promise<Session>;
   signOut(session: Session): Promise<void>;
+  /** Who this token belongs to; throws `ServerError` 401 when the server has revoked it. */
+  me(session: Session): Promise<{ userId: string; userName: string }>;
   readonly quickConnect: QuickConnect;
   library(session: Session): Library;
   readonly favorites: Favorites;

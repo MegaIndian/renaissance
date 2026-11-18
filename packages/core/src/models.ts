@@ -42,16 +42,29 @@ export const Artist = z.object({
   /** Biography from the server's metadata, when it has one. */
   bio: z.string().optional(),
   albumCount: z.number().int().nonnegative().optional(),
+  /**
+   * Every id the server uses for this name, this item's own id included. Jellyfin keeps two
+   * MusicArtist items for one artist when a library gains artist folders after the fact (one under
+   * the metadata folder, one under the music folder); tracks carry one id and `/Artists` the other.
+   * The snapshot merges them by name (`artists.ts`) and lists the ids here.
+   */
+  ids: z.array(z.string()).optional(),
   dateAdded: z.iso.datetime({ offset: true }).optional(),
   ...userFields,
 });
 export type Artist = z.infer<typeof Artist>;
+
+/** One credited artist on a track or album: the id the item carries and the name beside it. */
+export const ArtistCredit = z.object({ id: z.string().min(1), name: z.string() });
+export type ArtistCredit = z.infer<typeof ArtistCredit>;
 
 export const Album = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   artistIds: z.array(z.string()),
   artistName: z.string(),
+  /** The credited artists with their ids, so the artist list can be merged by name. */
+  artistCredits: z.array(ArtistCredit).optional(),
   year: z.number().int().optional(),
   genres: z.array(z.string()).default([]),
   trackCount: z.number().int().nonnegative().optional(),
@@ -70,6 +83,8 @@ export const Track = z.object({
   albumTitle: z.string().optional(),
   artistIds: z.array(z.string()),
   artistName: z.string(),
+  /** The credited artists with their ids, so the artist list can be merged by name. */
+  artistCredits: z.array(ArtistCredit).optional(),
   albumArtistName: z.string().optional(),
   /** Duration in seconds. */
   duration: z.number().nonnegative(),

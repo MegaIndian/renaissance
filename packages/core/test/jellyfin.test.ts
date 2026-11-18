@@ -12,7 +12,10 @@ import {
 } from '../src/adapters/jellyfin';
 import { Server as ServerSchema } from '../src/models';
 import type { Server } from '../src/models';
+import { reorder } from '../src/playlist-reorder';
+import { UnreachableError } from '../src/server-adapter';
 import { fakeFetch, jfAudio, server, session, track as makeTrack } from './fixtures';
+import { jellyfin10_10Move } from './playlist-reorder.test';
 
 const options = { deviceName: 'Test', deviceId: 'dev-1', version: '0.0.0' };
 const adapter = new JellyfinAdapter(server, options);
@@ -339,6 +342,7 @@ describe('JellyfinAdapter calls', () => {
           Ids: ['t1', 't2'],
           UserId: 'u1',
           MediaType: 'Audio',
+          IsPublic: false,
         });
         return { Id: 'pl1' };
       },
@@ -354,7 +358,6 @@ describe('JellyfinAdapter calls', () => {
       },
       'POST /Playlists/pl1/Items': () => undefined,
       'DELETE /Playlists/pl1/Items': () => undefined,
-      'POST /Playlists/pl1/Items/e2/Move/0': () => undefined,
       'DELETE /Items/pl1': () => undefined,
       'GET /Playlists/pl1/Items': () => items([jfAudio('t1', 'A', { PlaylistItemId: 'e1' })]),
     });
@@ -365,7 +368,6 @@ describe('JellyfinAdapter calls', () => {
     expect(calls.at(-1)?.url.searchParams.get('ids')).toBe('t3,t4');
     await adapter.playlists.removeEntries(session, 'pl1', ['e1']);
     expect(calls.at(-1)?.url.searchParams.get('entryIds')).toBe('e1');
-    await adapter.playlists.move(session, 'pl1', 'e2', 0);
     await adapter.playlists.addTracks(session, 'pl1', []);
     const entries = await adapter.library(session).playlistTracks('pl1');
     expect(entries[0]?.entryId).toBe('e1');
@@ -485,6 +487,8 @@ describe('JellyfinAdapter calls', () => {
     socket.onmessage?.({ data: JSON.stringify({ MessageType: 'UserDataChanged' }) });
     socket.onmessage?.({ data: JSON.stringify({ MessageType: 'ForceKeepAlive' }) });
     socket.onmessage?.({ data: 'null' });
+    // One malformed frame from a proxy is ignored, not thrown out of the handler.
+    expect(() => socket.onmessage?.({ data: '{not json' })).not.toThrow();
     expect(events).toEqual({ library: 1, user: 1 });
     expect(socket.sent).toHaveLength(2);
     stop();
@@ -496,5 +500,183 @@ describe('JellyfinAdapter calls', () => {
     const e = new ServerError(500, '/Items');
     expect(e.message).toContain('500');
     expect(e.path).toBe('/Items');
+  });
+
+  it('every request carries an abort signal; a host that never answers fails as unreachable within the timeout', async () => {
+    const seen: { path: string; signal: AbortSignal | null | undefined }[] = [];
+    const blackHole: typeof fetch = (input, init) =>
+      new Promise((_resolve, reject) => {
+        seen.push({ path: new URL(String(input)).pathname, signal: init?.signal });
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const slow = new JellyfinAdapter(server, {
+      ...options,
+      fetch: blackHole,
+      timeouts: { auth: 20, request: 40 },
+    });
+    const started = Date.now();
+    await expect(slow.signIn({ userName: 'a', password: 'b' })).rejects.toMatchObject({
+      name: 'UnreachableError',
+      reason: 'timeout',
+      path: '/Users/AuthenticateByName',
+    });
+    await expect(slow.quickConnect.initiate()).rejects.toMatchObject({ reason: 'timeout' });
+    await expect(slow.ping()).rejects.toMatchObject({ reason: 'timeout' });
+    await expect(slow.library(session).genres()).rejects.toMatchObject({ reason: 'timeout' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(seen.every((s) => s.signal instanceof AbortSignal)).toBe(true);
+    // A refused connection is unreachable too, with the cause kept.
+    const refused = new JellyfinAdapter(server, {
+      ...options,
+      fetch: () => Promise.reject(new TypeError('Failed to fetch')),
+    });
+    const error = await refused.ping().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnreachableError);
+    expect((error as UnreachableError).reason).toBe('network');
+    expect((error as UnreachableError).cause).toBeInstanceOf(TypeError);
+  });
+
+  it('ping reads the public version; me reads /Users/Me and surfaces a revoked token as 401', async () => {
+    const { adapter, calls } = make({
+      'GET /System/Info/Public': () => ({ Version: '10.10.7' }),
+      'GET /Users/Me': (_u, _b, call) =>
+        call.url.search === '' && (call as unknown as { headers?: unknown })
+          ? { Id: 'u1', Name: 'demo' }
+          : undefined,
+    });
+    expect(await adapter.ping()).toEqual({ version: '10.10.7' });
+    expect(await adapter.me(session)).toEqual({ userId: 'u1', userName: 'demo' });
+    expect(calls.at(-1)?.url.pathname).toBe('/Users/Me');
+    const revoked = make({
+      'GET /Users/Me': () => new Response('Unauthorized', { status: 401 }),
+    });
+    await expect(revoked.adapter.me(session)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('byIds fetches tracks and albums in chunks of 100 and serverTime reads the Date header', async () => {
+    const asked: string[] = [];
+    const { adapter } = make({
+      'GET /Items': (url) => {
+        const ids = (url.searchParams.get('Ids') ?? '').split(',');
+        asked.push(`${url.searchParams.get('IncludeItemTypes')}:${ids.length}`);
+        return items(
+          ids.map((id) =>
+            url.searchParams.get('IncludeItemTypes') === 'Audio'
+              ? jfAudio(id, `Song ${id}`)
+              : { Id: id, Name: `Album ${id}`, Type: 'MusicAlbum' },
+          ),
+        );
+      },
+      'GET /System/Info/Public': () =>
+        new Response('{}', {
+          status: 200,
+          headers: { date: 'Wed, 18 Nov 2026 06:46:29 GMT', 'content-type': 'application/json' },
+        }),
+    });
+    const library = adapter.library(session);
+    const tracks = await library.byIds(
+      'track',
+      Array.from({ length: 150 }, (_, i) => `t${i}`),
+    );
+    expect(tracks).toHaveLength(150);
+    expect(tracks[0]?.artistCredits).toEqual([{ id: 'art1', name: 'Kevin MacLeod' }]);
+    const albums = await library.byIds('album', ['a1']);
+    expect(albums[0]).toMatchObject({ id: 'a1', title: 'Album a1' });
+    expect(await library.byIds('track', [])).toEqual([]);
+    expect(asked).toEqual(['Audio:100', 'Audio:50', 'MusicAlbum:1']);
+    expect(await library.serverTime()).toBe('2026-11-18T06:46:29.000Z');
+    const noDate = make({ 'GET /System/Info/Public': () => ({}) });
+    expect(await noDate.adapter.library(session).serverTime()).toBeNull();
+  });
+
+  describe('playlist move with read-back', () => {
+    /** A fake playlist server; `algorithm` is how its Move lands. */
+    function playlistServer(
+      names: string[],
+      algorithm: (list: string[], entryId: string, index: number) => string[],
+    ) {
+      let order = names.map((_, i) => `e${i}`);
+      let moves = 0;
+      const made = make({
+        'GET /Playlists/pl/Items': () =>
+          items(
+            order.map((e) =>
+              jfAudio(`t-${e}`, names[Number(e.slice(1))] ?? e, { PlaylistItemId: e }),
+            ),
+          ),
+        '* /Playlists/pl/Items/e0/Move/0': () => undefined,
+      });
+      // Route every Move/{index} by hand: the fake fetch keys on exact paths.
+      const fetchWithMoves: typeof fetch = async (input, init) => {
+        const url = new URL(String(input));
+        const m = /^\/Playlists\/pl\/Items\/([^/]+)\/Move\/(\d+)$/.exec(url.pathname);
+        if (m) {
+          moves += 1;
+          order = algorithm(order, m[1] as string, Number(m[2]));
+          return new Response(null, { status: 204 });
+        }
+        return made.adapter['fetchImpl'](input, init);
+      };
+      const adapter = new JellyfinAdapter(server, { ...options, fetch: fetchWithMoves });
+      return { adapter, order: () => order, moves: () => moves };
+    }
+    const standard = (list: string[], entryId: string, index: number) => {
+      const out = list.filter((e) => e !== entryId);
+      out.splice(Math.min(index, out.length), 0, entryId);
+      return out;
+    };
+    const names = ['Carefree', 'Fluffing a Duck', 'Monkeys Spinning Monkeys', 'Sneaky Snitch'];
+
+    it('on a server that lands where asked: one move, one read-back, semantics learned as standard', async () => {
+      const { adapter, order, moves } = playlistServer(names, standard);
+      const result = await adapter.playlists.move(session, 'pl', 'e1', 0);
+      expect(result.ok).toBe(true);
+      expect(order()).toEqual(['e1', 'e0', 'e2', 'e3']);
+      expect(result.entries.map((e) => e.entryId)).toEqual(['e1', 'e0', 'e2', 'e3']);
+      expect(moves()).toBe(1);
+      expect(adapter.moveSemantics).toBe('standard');
+    });
+
+    it('on Jellyfin 10.10: the first move is read back, the off-by-one is recognised and compensated', async () => {
+      const { adapter, order, moves } = playlistServer(names, jellyfin10_10Move);
+      // Move up to the top: the server leaves it unchanged; the adapter notices and corrects it.
+      const first = await adapter.playlists.move(session, 'pl', 'e1', 0);
+      expect(first.ok).toBe(true);
+      expect(order()).toEqual(['e1', 'e0', 'e2', 'e3']);
+      expect(adapter.moveSemantics).toBe('priorItem');
+      // Later moves plan straight away: down by one is one call that moves the neighbour up.
+      const before = moves();
+      const second = await adapter.playlists.move(session, 'pl', 'e0', 2);
+      expect(second.ok).toBe(true);
+      expect(order()).toEqual(['e1', 'e2', 'e0', 'e3']);
+      expect(moves() - before).toBe(1);
+      // Every target is reachable.
+      for (let from = 0; from < 4; from++) {
+        for (let to = 0; to < 4; to++) {
+          const entry = order()[from] as string;
+          const wanted = reorder(order(), from, to);
+          const result = await adapter.playlists.move(session, 'pl', entry, to);
+          expect(result.ok, `${from}->${to}`).toBe(true);
+          expect(order()).toEqual(wanted);
+        }
+      }
+    });
+
+    it('a server with unknown semantics reports the mismatch instead of guessing', async () => {
+      const ignores = (list: string[]) => [...list];
+      const { adapter, moves } = playlistServer(names, ignores);
+      const result = await adapter.playlists.move(session, 'pl', 'e0', 2);
+      expect(result.ok).toBe(false);
+      expect(result.entries.map((e) => e.entryId)).toEqual(['e0', 'e1', 'e2', 'e3']);
+      expect(adapter.moveSemantics).toBe('unknown');
+      expect(moves()).toBe(1);
+    });
+
+    it('an unknown entry or a no-op target makes no server call', async () => {
+      const { adapter, moves } = playlistServer(names, standard);
+      expect((await adapter.playlists.move(session, 'pl', 'e2', 2)).ok).toBe(true);
+      expect((await adapter.playlists.move(session, 'pl', 'nope', 0)).ok).toBe(false);
+      expect(moves()).toBe(0);
+    });
   });
 });

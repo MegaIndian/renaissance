@@ -10,7 +10,7 @@ import type { NetworkClass, PlaybackSettings } from './playback-policy';
 import { decidePlayback, defaultPlaybackSettings } from './playback-policy';
 import * as Q from './queue';
 import type { QueueState, RepeatMode } from './queue';
-import type { PlayMethod, ServerAdapter, Session } from './server-adapter';
+import type { PlayMethod, ServerAdapter, Session, StreamQuality } from './server-adapter';
 import type { Store } from './store';
 import { createStore } from './store';
 
@@ -50,6 +50,8 @@ export interface PlayerSnapshot {
   duration: number;
   volume: number;
   method: PlayMethod | null;
+  /** The cap the stream was asked for; `original` when none. */
+  quality: StreamQuality | null;
   error: string | null;
 }
 
@@ -72,6 +74,7 @@ export const initialPlayerSnapshot: PlayerSnapshot = {
   duration: 0,
   volume: 1,
   method: null,
+  quality: null,
   error: null,
 };
 
@@ -80,7 +83,7 @@ export class Player {
   private readonly deps: PlayerDeps;
   private readonly reporter: PlaybackReporter | null;
   private readonly stopListening: () => void;
-  private preloaded: { key: number; url: string } | null = null;
+  private preloaded: { key: number; url: string; playSessionId: string | undefined } | null = null;
   /** The queue key whose stream is loaded in the current slot. */
   private loadedKey: number | undefined;
 
@@ -131,53 +134,71 @@ export class Player {
   private streamFor(
     track: Track,
     playSessionId?: string,
-  ): { url: string; method: PlayMethod } | null {
+  ): { url: string; method: PlayMethod; quality: StreamQuality } | null {
     const session = this.deps.session();
     if (!session) return null;
     const decision = this.decide(track);
     return {
       url: this.deps.adapter.streamUrl(session, track, decision.quality, playSessionId),
       method: decision.method,
+      quality: decision.quality,
     };
   }
 
-  /** Start the current queue position from `position` seconds, through the preloaded slot when it matches. */
-  private start(queue: QueueState, position = 0, autoplay = true): void {
+  /**
+   * Start the current queue position from `position` seconds and report it as a play. When the
+   * next track was preloaded, its slot takes over and the report carries the id its stream was
+   * built with, so the server can match `Stopped` to the transcode it is running.
+   */
+  private start(queue: QueueState, position = 0): void {
     const track = Q.current(queue);
     const key = queue.keys[queue.index];
     if (!track || key === undefined) {
       this.reporter?.stopped(this.snapshot.position);
       this.loadedKey = undefined;
-      this.patch({ queue, status: 'idle', position: 0, duration: 0, method: null, error: null });
+      this.patch({
+        queue,
+        status: 'idle',
+        position: 0,
+        duration: 0,
+        method: null,
+        quality: null,
+        error: null,
+      });
       return;
     }
     const lastPosition = this.snapshot.position;
     const method = this.decide(track).method;
-    const playSessionId = this.reporter?.started(track, method, position, lastPosition);
-    const stream = this.streamFor(track, playSessionId);
-    if (!stream) {
-      this.patch({ queue, status: 'error', error: 'signed-out', method: null });
-      return;
-    }
     const preloaded = this.preloaded;
     this.preloaded = null;
-    const tookOver =
-      position === 0 && preloaded?.key === key && this.deps.audio.takeOver(preloaded.url);
+    const canTakeOver = position === 0 && preloaded?.key === key;
+    const playSessionId = this.reporter?.started(
+      track,
+      method,
+      position,
+      lastPosition,
+      canTakeOver ? preloaded.playSessionId : undefined,
+    );
+    const stream = this.streamFor(track, playSessionId);
+    if (!stream) {
+      this.patch({ queue, status: 'error', error: 'signed-out', method: null, quality: null });
+      return;
+    }
+    const tookOver = canTakeOver && this.deps.audio.takeOver(preloaded.url);
     if (!tookOver) this.deps.audio.load(stream.url, position);
     this.loadedKey = key;
     this.patch({
       queue,
-      status: autoplay ? 'loading' : 'paused',
+      status: 'loading',
       position,
       duration: track.duration,
       method: stream.method,
+      quality: stream.quality,
       error: null,
     });
-    if (autoplay) {
-      this.deps.audio.play().catch((error: unknown) => {
-        this.patch({ status: 'error', error: error instanceof Error ? error.message : 'play' });
-      });
-    }
+    this.deps.audio.play().catch((error: unknown) => {
+      this.patch({ status: 'error', error: error instanceof Error ? error.message : 'play' });
+    });
     this.preloadNext(queue);
   }
 
@@ -191,10 +212,12 @@ export class Player {
     }
     const advanced = Q.next(queue);
     const key = advanced.keys[advanced.index];
-    const stream = this.streamFor(nextTrack);
-    if (key === undefined || !stream) return;
+    if (key === undefined) return;
     if (this.preloaded?.key === key) return;
-    this.preloaded = { key, url: stream.url };
+    const playSessionId = this.reporter?.newId();
+    const stream = this.streamFor(nextTrack, playSessionId);
+    if (!stream) return;
+    this.preloaded = { key, url: stream.url, playSessionId };
     this.deps.audio.preload(stream.url);
   }
 
@@ -245,13 +268,32 @@ export class Player {
     this.start(Q.replace(this.queue, tracks, startAt, this.deps.random), 0);
   }
 
-  /** Put the queue back after a reload: nothing plays until the user presses Play (F22). */
+  /**
+   * Put the queue back after a reload (F22). Nothing is loaded and nothing is reported: the stream
+   * is fetched and `started` goes to the server on the first real `play()`, so a reload never counts
+   * as a play and never starts a transcode.
+   */
   restore(queue: QueueState, position = 0): void {
-    if (!Q.current(queue)) {
+    const track = Q.current(queue);
+    if (!track) {
       this.patch({ queue });
       return;
     }
-    this.start(queue, position, false);
+    this.reporter?.stopped(this.snapshot.position);
+    this.loadedKey = undefined;
+    this.preloaded = null;
+    this.deps.audio.pause();
+    this.deps.audio.preload(null);
+    const decision = this.decide(track);
+    this.patch({
+      queue,
+      status: 'paused',
+      position: Math.max(0, position),
+      duration: track.duration,
+      method: decision.method,
+      quality: decision.quality,
+      error: null,
+    });
   }
 
   playNext(tracks: Track[]): void {

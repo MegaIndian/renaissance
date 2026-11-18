@@ -48,10 +48,24 @@ export class PlaybackReporter {
     return this.active?.track.id;
   }
 
-  /** A track began. Any earlier track still open is stopped at its last known position first. */
-  started(track: Track, method: PlayMethod, position = 0, lastPosition = 0): string {
+  /** A fresh play session id, for a stream URL built before its track starts (the preloaded one). */
+  newId(): string {
+    return this.deps.newId();
+  }
+
+  /**
+   * A track began. Any earlier track still open is stopped at its last known position first. Pass
+   * `playSessionId` when the stream was preloaded under one, so the reports name the stream the
+   * server is serving.
+   */
+  started(
+    track: Track,
+    method: PlayMethod,
+    position = 0,
+    lastPosition = 0,
+    playSessionId: string = this.deps.newId(),
+  ): string {
     if (this.active) this.stopped(lastPosition);
-    const playSessionId = this.deps.newId();
     this.active = { track, method, playSessionId };
     this.lastSentAt = this.deps.now();
     this.dispatch({ trackId: track.id, position, state: 'started', method, playSessionId });

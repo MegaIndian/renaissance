@@ -5,6 +5,8 @@ export * from './playback-policy';
 export * from './playback';
 export * from './play-reporting';
 export * from './library-cache';
+export * from './artists';
+export * from './playlist-reorder';
 export * from './search';
 export * from './sort';
 export * from './settings';
@@ -27,4 +29,5 @@ export {
 } from './adapters/jellyfin';
 export { greetingKey } from './greeting';
 export { trimTrailingSlashes } from './url';
-export type { JellyfinAdapterOptions } from './adapters/jellyfin';
+export type { JellyfinAdapterOptions, MoveSemantics, RequestTimeouts } from './adapters/jellyfin';
+export { DEFAULT_TIMEOUTS } from './adapters/jellyfin';

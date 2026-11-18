@@ -226,19 +226,54 @@ describe('Player', () => {
     expect(player.snapshot.queue.items).toEqual([]);
   });
 
-  it('empty-queue adds start playback; restore loads without playing', () => {
+  it('empty-queue adds start playback', () => {
     const { audio, player } = setup();
     player.addToEnd([tracks[0] as (typeof tracks)[number]]);
     expect(player.snapshot.status).toBe('playing');
+    expect(audio.log).toContain('play');
     const second = setup();
     second.player.playNext([tracks[1] as (typeof tracks)[number]]);
     expect(second.player.snapshot.queue.index).toBe(0);
-    const third = setup();
-    third.player.restore(player.snapshot.queue, 42);
-    expect(third.player.snapshot.status).toBe('paused');
-    expect(third.player.snapshot.position).toBe(42);
-    expect(third.audio.log).toEqual(['load /Audio/1/universal@42', 'preload none']);
-    expect(audio.log).toContain('play');
+  });
+
+  it('restore loads nothing and reports nothing; the first Play loads the stream and reports started there', async () => {
+    const first = setup();
+    first.player.playTracks(tracks, 0);
+    const saved = first.player.snapshot.queue;
+    const { audio, player, reports } = setup();
+    player.restore(saved, 42);
+    expect(player.snapshot.status).toBe('paused');
+    expect(player.snapshot.position).toBe(42);
+    expect(player.snapshot.duration).toBe(180);
+    expect(player.snapshot.method).toBe('direct');
+    expect(audio.log.filter((l) => l.startsWith('load') || l.startsWith('preload /'))).toEqual([]);
+    expect(reports).toEqual([]);
+    await player.play();
+    expect(audio.log).toContain('load /Audio/1/universal@42');
+    expect(reports).toEqual([
+      { trackId: '1', position: 42, state: 'started', method: 'direct', playSessionId: 'ps0' },
+    ]);
+    expect(player.snapshot.status).toBe('playing');
+    // An empty saved queue only replaces the queue.
+    const empty = setup();
+    empty.player.restore(empty.player.snapshot.queue, 0);
+    expect(empty.reports).toEqual([]);
+  });
+
+  it('the preloaded stream carries the play session id the hand-over then reports', () => {
+    const { audio, player, reports } = setup();
+    player.playTracks(tracks, 0);
+    const preloadedUrl = audio.spare ?? '';
+    const preloadedId = new URL(preloadedUrl).searchParams.get('ps');
+    expect(preloadedId).toBeTruthy();
+    audio.emit({ type: 'ended' });
+    expect(reports.at(-1)).toMatchObject({
+      trackId: '2',
+      state: 'started',
+      playSessionId: preloadedId,
+    });
+    // The current stream was never built without an id either.
+    expect(new URL(audio.current ?? '').searchParams.get('ps')).toBe(preloadedId);
   });
 
   it('shuffle on and off through the engine', () => {

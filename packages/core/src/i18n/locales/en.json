@@ -55,16 +55,20 @@
     "quickConnectUnavailable": "This server has Quick Connect turned off. An administrator can enable it in the Jellyfin dashboard.",
     "quickConnectCancel": "Use a password instead",
     "perPerson": "Each person in the house signs in as their own Jellyfin user, so favourites, playlists and play counts are their own.",
-    "errorAddress": "That is not a web address. It starts with http:// or https://.",
+    "errorAddress": "That is not a web address. Type the server's name or IP address, with a port if it has one, like music.example.com or 192.168.1.20:8096.",
     "errorCredentials": "The user name or password is wrong.",
     "errorUnreachable": "Renaissance could not reach that server. Check the address and that the server is on.",
     "errorServer": "The server answered with an error ({{status}}). Try again in a moment.",
+    "httpNotice": "This address uses http, not https, so the password and the sign-in token travel over the network unencrypted. Fine at home on your own Wi-Fi; on anything else use https.",
+    "expired": "Your sign-in expired or was ended on the server. Sign in again to continue.",
     "signedInAs": "Signed in as {{name}}",
     "signOut": "Sign out",
     "switchUser": "Switch user",
     "tokenStorage": "Token protection",
     "tokenEncrypted": "Encrypted in this browser with a key the page cannot export",
-    "tokenPlain": "Stored in this browser without encryption (this page is not on https or localhost)"
+    "tokenPlain": "Stored in this browser without encryption (this page is not on https or localhost)",
+    "tokenNone": "Not remembered in this browser (storage is blocked); you will sign in again after a reload",
+    "signOutClears": "Sign out removes this library, the saved queue and the token from this browser."
   },
   "nav": {
     "home": "Home",
@@ -234,6 +238,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "reordered": "Moved {{title}}",
+    "reorderedTo": "Moved {{title}} to position {{position}}",
+    "reorderFailed": "The server put {{title}} somewhere else. The list shows the server's order; try the move again.",
     "notFound": "This playlist is not on the server any more",
     "synced": "Synced with Jellyfin"
   },

@@ -24,6 +24,7 @@
   --chart-4: #a78bfa;
   --chart-5: #f87171;
   --chart-6: #a3e635;
+  --chart-ink: #111118;
   --radius: 10px;
   --radius-sm: 8px;
   --radius-lg: 16px;
@@ -93,6 +94,7 @@
   --chart-4: #a78bfa;
   --chart-5: #f87171;
   --chart-6: #a3e635;
+  --chart-ink: #111118;
 }
 
 @media (prefers-color-scheme: light) {
@@ -121,6 +123,7 @@
     --chart-4: #a78bfa;
     --chart-5: #f87171;
     --chart-6: #a3e635;
+    --chart-ink: #111118;
   }
 }
 

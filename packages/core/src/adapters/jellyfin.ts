@@ -24,6 +24,7 @@ import type {
   Favorites,
   ItemQuery,
   Library,
+  MoveResult,
   Page,
   PageRequest,
   PlaybackReport,
@@ -36,6 +37,7 @@ import type {
   SortKey,
   StreamQuality,
 } from '../server-adapter';
+import { UnreachableError } from '../server-adapter';
 import { trimTrailingSlashes } from '../url';
 import {
   JfAuthResult,
@@ -80,7 +82,24 @@ export interface JellyfinAdapterOptions {
   fetch?: typeof fetch;
   /** The platform's WebSocket; absent means `subscribe` is a no-op. */
   WebSocket?: typeof WebSocket;
+  /** Milliseconds before a request is abandoned as unreachable; tests shorten these. */
+  timeouts?: Partial<RequestTimeouts>;
 }
+
+export interface RequestTimeouts {
+  /** Sign-in, Quick Connect and ping: the user is waiting on a button. */
+  auth: number;
+  /** Everything else. */
+  request: number;
+}
+
+export const DEFAULT_TIMEOUTS: RequestTimeouts = { auth: 8_000, request: 15_000 };
+
+/** How `Move/{index}` lands on this server: learned from the first reorder's read-back. */
+export type MoveSemantics = 'unknown' | 'standard' | 'priorItem';
+
+const JfPublicInfo = z.object({ Version: z.string().nullish() });
+const JfUser = z.object({ Id: z.string(), Name: z.string().nullish() });
 
 /** Header values sit inside double quotes: drop quotes, backslashes and control characters. */
 export function headerSafe(value: string): string {
@@ -147,6 +166,10 @@ function artistName(item: JfItem): string {
   return item.AlbumArtist ?? '';
 }
 
+function credits(list: { Id: string; Name?: string | null | undefined }[] | null | undefined) {
+  return (list ?? []).map((a) => ({ id: a.Id, name: a.Name ?? '' }));
+}
+
 export function toTrack(item: JfItem): Track {
   const audio = item.MediaStreams?.find((s) => s.Type === 'Audio');
   return TrackSchema.parse({
@@ -156,6 +179,7 @@ export function toTrack(item: JfItem): Track {
     albumTitle: optional(item.Album),
     artistIds: (item.ArtistItems ?? []).map((a) => a.Id),
     artistName: artistName(item),
+    artistCredits: credits(item.ArtistItems),
     albumArtistName: optional(item.AlbumArtist),
     duration: ticksToSeconds(item.RunTimeTicks),
     trackNumber: optional(item.IndexNumber),
@@ -182,6 +206,7 @@ export function toAlbum(item: JfItem): Album {
     id: item.Id,
     title: item.Name || '(untitled)',
     artistIds: artists.map((a) => a.Id),
+    artistCredits: credits(artists),
     artistName:
       item.AlbumArtist ??
       artists
@@ -232,6 +257,9 @@ export class JellyfinAdapter implements ServerAdapter {
   readonly server: Server;
   private readonly options: JellyfinAdapterOptions;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeouts: RequestTimeouts;
+  /** Learned on the first reorder (see `playlist-reorder.ts`); exposed so tests and logs can read it. */
+  moveSemantics: MoveSemantics = 'unknown';
 
   constructor(server: Server, options: JellyfinAdapterOptions) {
     if (server.kind !== 'jellyfin') {
@@ -240,6 +268,7 @@ export class JellyfinAdapter implements ServerAdapter {
     this.server = { ...server, url: serverBase(server.url) };
     this.options = options;
     this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
+    this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts };
   }
 
   private url(path: string, params: Params = {}): URL {
@@ -262,12 +291,25 @@ export class JellyfinAdapter implements ServerAdapter {
     return `MediaBrowser ${parts.join(', ')}`;
   }
 
-  private async request<T>(
+  /**
+   * One call. Every request carries an `AbortSignal` so a black-holed host fails within the timeout
+   * instead of hanging a button; a timeout or a network failure becomes `UnreachableError`.
+   */
+  private async fetchRaw(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
-    schema: z.ZodType<T>,
-    { token, params, body }: { token?: string | undefined; params?: Params; body?: unknown } = {},
-  ): Promise<T> {
+    {
+      token,
+      params,
+      body,
+      timeout = 'request',
+    }: {
+      token?: string | undefined;
+      params?: Params;
+      body?: unknown;
+      timeout?: keyof RequestTimeouts;
+    } = {},
+  ): Promise<Response> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
       Authorization: this.authorizationHeader(token),
@@ -275,11 +317,43 @@ export class JellyfinAdapter implements ServerAdapter {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
-    const response = await this.fetchImpl(this.url(path, params), init);
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      init.signal = AbortSignal.timeout(this.timeouts[timeout]);
+    }
+    let response: Response;
+    try {
+      response = await this.fetchImpl(this.url(path, params), init);
+    } catch (error) {
+      const timedOut =
+        error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+      throw new UnreachableError(path, timedOut ? 'timeout' : 'network', { cause: error });
+    }
     if (!response.ok) throw new ServerError(response.status, path);
+    return response;
+  }
+
+  private async request<T>(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    schema: z.ZodType<T>,
+    options: Parameters<JellyfinAdapter['fetchRaw']>[2] = {},
+  ): Promise<T> {
+    const response = await this.fetchRaw(method, path, options);
     const text = await response.text();
     const json: unknown = text.length ? JSON.parse(text) : undefined;
     return schema.parse(json);
+  }
+
+  async ping(): Promise<{ version: string | null }> {
+    const info = await this.request('GET', '/System/Info/Public', JfPublicInfo, {
+      timeout: 'auth',
+    });
+    return { version: info.Version ?? null };
+  }
+
+  async me(session: Session): Promise<{ userId: string; userName: string }> {
+    const user = await this.request('GET', '/Users/Me', JfUser, { token: session.token });
+    return { userId: user.Id, userName: user.Name ?? session.userName };
   }
 
   private session(result: z.infer<typeof JfAuthResult>): Session {
@@ -294,6 +368,7 @@ export class JellyfinAdapter implements ServerAdapter {
   async signIn(credentials: Credentials): Promise<Session> {
     const result = await this.request('POST', '/Users/AuthenticateByName', JfAuthResult, {
       body: { Username: credentials.userName, Pw: credentials.password },
+      timeout: 'auth',
     });
     return this.session(result);
   }
@@ -304,14 +379,20 @@ export class JellyfinAdapter implements ServerAdapter {
 
   readonly quickConnect: QuickConnect = {
     enabled: (session?: Session) =>
-      this.request('GET', '/QuickConnect/Enabled', z.boolean(), { token: session?.token }),
+      this.request('GET', '/QuickConnect/Enabled', z.boolean(), {
+        token: session?.token,
+        timeout: 'auth',
+      }),
     initiate: async () => {
-      const result = await this.request('POST', '/QuickConnect/Initiate', JfQuickConnectResult);
+      const result = await this.request('POST', '/QuickConnect/Initiate', JfQuickConnectResult, {
+        timeout: 'auth',
+      });
       return { code: result.Code, secret: result.Secret };
     },
     state: async (secret: string) => {
       const result = await this.request('GET', '/QuickConnect/Connect', JfQuickConnectResult, {
         params: { secret },
+        timeout: 'auth',
       });
       return result.Authenticated;
     },
@@ -320,7 +401,7 @@ export class JellyfinAdapter implements ServerAdapter {
         'POST',
         '/Users/AuthenticateWithQuickConnect',
         JfAuthResult,
-        { body: { Secret: secret } },
+        { body: { Secret: secret }, timeout: 'auth' },
       );
       return this.session(result);
     },
@@ -571,6 +652,27 @@ export class JellyfinAdapter implements ServerAdapter {
         }
         return out;
       },
+      byIds: (async (kind: 'track' | 'album', wanted: readonly string[]) => {
+        const out: (Track | Album)[] = [];
+        const chunk = 100;
+        for (let start = 0; start < wanted.length; start += chunk) {
+          const result = await items({
+            Ids: wanted.slice(start, start + chunk).join(','),
+            IncludeItemTypes: kind === 'track' ? 'Audio' : 'MusicAlbum',
+            Fields: kind === 'track' ? TRACK_FIELDS : ALBUM_FIELDS,
+          });
+          if (kind === 'track') out.push(...result.Items.map(toTrack));
+          else out.push(...result.Items.map(toAlbum));
+        }
+        return out;
+      }) as Library['byIds'],
+      serverTime: async () => {
+        // No endpoint returns the clock on 10.10; the `Date` header of any answer does (to the second).
+        const response = await this.fetchRaw('GET', '/System/Info/Public');
+        const date = response.headers.get('date');
+        const time = date ? Date.parse(date) : Number.NaN;
+        return Number.isNaN(time) ? null : new Date(time).toISOString();
+      },
     };
     return library;
   }
@@ -590,7 +692,14 @@ export class JellyfinAdapter implements ServerAdapter {
     create: async (session, name, trackIds) => {
       const created = await this.request('POST', '/Playlists', JfPlaylistCreated, {
         token: session.token,
-        body: { Name: name, Ids: trackIds, UserId: session.userId, MediaType: 'Audio' },
+        body: {
+          Name: name,
+          Ids: trackIds,
+          UserId: session.userId,
+          MediaType: 'Audio',
+          // 10.10 defaults to a public playlist that every other user sees (F86).
+          IsPublic: false,
+        },
       });
       return this.library(session).playlist(created.Id);
     },
@@ -624,20 +733,87 @@ export class JellyfinAdapter implements ServerAdapter {
         },
       );
     },
-    move: async (session, playlistId, entryId, toIndex) => {
-      await this.request(
-        'POST',
-        `/Playlists/${encodeURIComponent(playlistId)}/Items/${encodeURIComponent(entryId)}/Move/${Math.max(0, Math.floor(toIndex))}`,
-        z.unknown(),
-        { token: session.token },
-      );
-    },
+    move: (session, playlistId, entryId, toIndex) =>
+      this.movePlaylistEntry(session, playlistId, entryId, toIndex),
     remove: async (session, playlistId) => {
       await this.request('DELETE', `/Items/${encodeURIComponent(playlistId)}`, z.unknown(), {
         token: session.token,
       });
     },
   };
+
+  private async moveOnce(
+    session: Session,
+    playlistId: string,
+    entryId: string,
+    index: number,
+  ): Promise<void> {
+    await this.request(
+      'POST',
+      `/Playlists/${encodeURIComponent(playlistId)}/Items/${encodeURIComponent(entryId)}/Move/${Math.max(0, Math.floor(index))}`,
+      z.unknown(),
+      { token: session.token },
+    );
+  }
+
+  /**
+   * Move with a read-back (see `playlist-reorder.ts`). First call: send the index as is, read back,
+   * and learn whether this server lands where asked (`standard`) or one slot off (`priorItem`, 10.10).
+   * On a `priorItem` server the compensating moves are planned from the measured model. The result
+   * carries the server's final order and whether it is the one asked for.
+   */
+  private async movePlaylistEntry(
+    session: Session,
+    playlistId: string,
+    entryId: string,
+    toIndex: number,
+  ): Promise<MoveResult> {
+    // The planner is only needed here; loading it on demand keeps it out of the app shell.
+    const { landingIndex10_10, planMoves10_10, reorder } = await import('../playlist-reorder');
+    const library = this.library(session);
+    let entries = await library.playlistTracks(playlistId);
+    const from = entries.findIndex((e) => e.entryId === entryId);
+    const to = Math.max(0, Math.min(Math.floor(toIndex), entries.length - 1));
+    let calls = 1;
+    if (from < 0 || from === to) return { entries, ok: from >= 0, calls };
+    const wanted = reorder(
+      entries.map((e) => e.entryId),
+      from,
+      to,
+    );
+    const same = (list: PlaylistEntry[]) => list.every((e, i) => e.entryId === wanted[i]);
+    const n = entries.length;
+
+    if (this.moveSemantics !== 'priorItem') {
+      await this.moveOnce(session, playlistId, entryId, to);
+      entries = await library.playlistTracks(playlistId);
+      calls += 2;
+      if (same(entries)) {
+        this.moveSemantics = 'standard';
+        return { entries, ok: true, calls };
+      }
+      const landed = entries.findIndex((e) => e.entryId === entryId);
+      if (entries.length !== n || landed !== landingIndex10_10(from, to, n)) {
+        return { entries, ok: false, calls };
+      }
+      this.moveSemantics = 'priorItem';
+    }
+
+    // A 10.10 server: plan from where the entry sits now to where it should be.
+    const current = entries.findIndex((e) => e.entryId === entryId);
+    const target = wanted.indexOf(entryId);
+    for (const step of planMoves10_10(
+      entries.map((e) => e.entryId),
+      current,
+      target,
+    )) {
+      await this.moveOnce(session, playlistId, step.entryId, step.index);
+      calls += 1;
+    }
+    entries = await library.playlistTracks(playlistId);
+    calls += 1;
+    return { entries, ok: same(entries), calls };
+  }
 
   streamUrl(
     session: Session,
@@ -735,9 +911,16 @@ export class JellyfinAdapter implements ServerAdapter {
         socket?.send(JSON.stringify({ MessageType: 'KeepAlive' }));
       };
       socket.onmessage = (message: { data: unknown }) => {
-        const parsed = JfSocketMessage.safeParse(
-          typeof message.data === 'string' ? JSON.parse(message.data) : message.data,
-        );
+        let data: unknown = message.data;
+        if (typeof data === 'string') {
+          // One malformed frame from a proxy must not throw out of the handler.
+          try {
+            data = JSON.parse(data);
+          } catch {
+            return;
+          }
+        }
+        const parsed = JfSocketMessage.safeParse(data);
         if (!parsed.success) return;
         if (parsed.data.MessageType === 'LibraryChanged') events.onLibraryChanged?.();
         if (parsed.data.MessageType === 'UserDataChanged') events.onUserDataChanged?.();

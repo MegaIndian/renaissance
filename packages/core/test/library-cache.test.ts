@@ -17,6 +17,7 @@ function fakeLibrary(data: {
   albums: Album[];
   artists: Artist[];
   playlists: Playlist[];
+  serverTime?: string | null;
 }) {
   const calls: string[] = [];
   const page = <T>(list: T[], p: PageRequest = {}): Page<T> => {
@@ -39,11 +40,14 @@ function fakeLibrary(data: {
     },
     albums: (p?: PageRequest, q?: ItemQuery) => {
       calls.push(`albums ${q?.sort ?? ''}`);
+      if (q?.sort === 'lastSaved') return Promise.resolve({ items: [], total: data.albums.length });
       const list = q?.sort === 'dateAdded' ? [...data.albums].sort(byDateDesc) : data.albums;
       return Promise.resolve(page(list, p));
     },
     tracks: (p?: PageRequest, q?: ItemQuery) => {
       calls.push(`tracks ${q?.sort ?? ''} ${p?.start ?? 0}`);
+      // Nothing was edited on this server: the "recently saved" page is empty, like a quiet library.
+      if (q?.sort === 'lastSaved') return Promise.resolve({ items: [], total: data.tracks.length });
       const list = q?.sort === 'dateAdded' ? [...data.tracks].sort(byDateDesc) : data.tracks;
       return Promise.resolve(page(list, p));
     },
@@ -63,6 +67,15 @@ function fakeLibrary(data: {
     ids: (kind: string) => {
       calls.push(`ids ${kind}`);
       return Promise.resolve((kind === 'track' ? data.tracks : data.albums).map((i) => i.id));
+    },
+    byIds: (kind: string, ids: string[]) => {
+      calls.push(`byIds ${kind} ${ids.join(',')}`);
+      const list: { id: string }[] = kind === 'track' ? data.tracks : data.albums;
+      return Promise.resolve(list.filter((i) => ids.includes(i.id)));
+    },
+    serverTime: () => {
+      calls.push('serverTime');
+      return Promise.resolve(data.serverTime ?? null);
     },
   } as unknown as Library;
   return { lib, calls };
@@ -133,6 +146,69 @@ describe('syncLibrary', () => {
     expect(calls).not.toContain('ids album');
   });
 
+  it('delta: ids the server has and the cache lacks are fetched by id (a healed miss), and the count is compared without a read', async () => {
+    const data = {
+      tracks: [t('old1', 1), t('old2', 2)],
+      albums: [album('al1', { dateAdded: '2026-01-01T00:00:00.000Z' })],
+      artists: [artist('a1')],
+      playlists: [],
+    };
+    const { lib, calls } = fakeLibrary(data);
+    const store = new MemoryLibraryStore();
+    await syncLibrary(lib, store, { now: () => new Date('2026-01-10T00:00:00.000Z') });
+    // A track whose DateCreated is older than the sync time (a slow import) appears on the server:
+    // the date paging never sees it, the count differs, so it is fetched by id.
+    data.tracks = [t('old1', 1), t('old2', 2), t('missed', 3)];
+    data.albums = [
+      album('al1', { dateAdded: '2026-01-01T00:00:00.000Z' }),
+      album('al2', { dateAdded: '2026-01-02T00:00:00.000Z' }),
+    ];
+    calls.length = 0;
+    const result = await syncLibrary(lib, store, {
+      now: () => new Date('2026-01-25T00:00:00.000Z'),
+    });
+    expect(result.mode).toBe('delta');
+    expect(result.healed).toBe(2);
+    expect(result.snapshot.tracks.map((x) => x.id).sort()).toEqual(['missed', 'old1', 'old2']);
+    expect(result.snapshot.albums.map((x) => x.id).sort()).toEqual(['al1', 'al2']);
+    expect(calls).toContain('byIds track missed');
+    expect(calls).toContain('byIds album al2');
+    expect(await store.count('track')).toBe(3);
+    // A second delta with nothing changed compares counts only: no id list, no fetch by id.
+    calls.length = 0;
+    const quiet = await syncLibrary(lib, store, {
+      now: () => new Date('2026-01-26T00:00:00.000Z'),
+    });
+    expect(quiet.healed).toBe(0);
+    expect(calls.filter((c) => c.startsWith('ids') || c.startsWith('byIds'))).toEqual([]);
+  });
+
+  it('the sync time is the server clock when it gives one, the local clock otherwise', async () => {
+    const data = {
+      tracks: [t('a', 1)],
+      albums: [],
+      artists: [],
+      playlists: [],
+      serverTime: '2026-03-01T12:00:00.000Z' as string | null,
+    };
+    const { lib, calls } = fakeLibrary(data);
+    const store = new MemoryLibraryStore();
+    const full = await syncLibrary(lib, store, { now: () => new Date('2026-03-01T12:05:00.000Z') });
+    expect(full.snapshot.syncedAt).toBe('2026-03-01T12:00:00.000Z');
+    expect(calls[0]).toBe('serverTime');
+    data.serverTime = null;
+    const delta = await syncLibrary(lib, store, {
+      now: () => new Date('2026-03-02T00:00:00.000Z'),
+    });
+    expect(delta.snapshot.syncedAt).toBe('2026-03-02T00:00:00.000Z');
+    const failing = fakeLibrary(data);
+    failing.lib.serverTime = () => Promise.reject(new Error('down'));
+    const fallback = await syncLibrary(failing.lib, new MemoryLibraryStore(), {
+      now: () => new Date('2026-03-03T00:00:00.000Z'),
+    });
+    expect(fallback.snapshot.syncedAt).toBe('2026-03-03T00:00:00.000Z');
+  });
+
   it('a corrupt record in the store is skipped, not fatal', async () => {
     const store = new MemoryLibraryStore();
     await store.write('track', [track('ok'), { id: 'bad' } as unknown as Track]);
@@ -154,6 +230,7 @@ describe('syncLibrary', () => {
     const store = new MemoryLibraryStore();
     await store.write('album', [album('x')]);
     await store.writeMeta({ syncedAt: '2026-01-01T00:00:00.000Z', albumArtistIds: [] });
+    expect(await store.count('album')).toBe(1);
     await store.remove('album', ['x']);
     expect(await store.read('album')).toEqual([]);
     await store.clear();
