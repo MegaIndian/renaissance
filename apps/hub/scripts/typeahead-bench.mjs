@@ -44,19 +44,25 @@ let mbCalls = 0;
 let deezerCalls = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const hostOf = (input) => new URL(typeof input === 'string' ? input : input.url).hostname;
+const isMusicBrainz = (input) => hostOf(input) === 'musicbrainz.org';
+const isDeezer = (input) => hostOf(input) === 'api.deezer.com';
+
 /** MusicBrainz and Deezer stand-ins: empty but well-formed answers after a delay. */
 const fakeFetch = async (input) => {
-  const url = typeof input === 'string' ? input : input.url;
-  if (url.includes('musicbrainz.org')) {
+  const url = new URL(typeof input === 'string' ? input : input.url);
+  if (isMusicBrainz(input)) {
     mbCalls += 1;
     await sleep(mbDelay);
-    const body = url.includes('/recording?') ? { recordings: [] } : { 'release-groups': [] };
+    const body = url.pathname.endsWith('/recording')
+      ? { recordings: [] }
+      : { 'release-groups': [] };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   }
-  if (url.includes('deezer.com')) {
+  if (isDeezer(input)) {
     deezerCalls += 1;
     await sleep(120);
     return new Response(JSON.stringify({ data: [] }), {
@@ -71,10 +77,9 @@ const fakeFetch = async (input) => {
   });
 };
 const liveFetch = async (input, init) => {
-  const url = typeof input === 'string' ? input : input.url;
-  if (url.includes('musicbrainz.org')) mbCalls += 1;
-  if (url.includes('deezer.com')) deezerCalls += 1;
-  if (url.includes('musicbrainz.org') || url.includes('deezer.com')) return fetch(input, init);
+  if (isMusicBrainz(input)) mbCalls += 1;
+  if (isDeezer(input)) deezerCalls += 1;
+  if (isMusicBrainz(input) || isDeezer(input)) return fetch(input, init);
   return fakeFetch(input);
 };
 
