@@ -25,10 +25,11 @@ curl -s http://localhost:8787/me -H "Authorization: Bearer $TOKEN"
 ```
 
 `Authorization: Bearer <token>`, `Authorization: MediaBrowser ..., Token="<token>"` and
-`X-Emby-Token: <token>` are all read. `GET /events` and `GET /ask` also read `?token=` because
-`EventSource` cannot set headers. The hub validates a token against Jellyfin `GET /Users/Me` once
-and caches the answer for five minutes under a hash of the token; the token is never stored or
-logged. The profile is upserted in the household database on every sighting.
+`X-Emby-Token: <token>` are all read. `GET /events` also reads `?token=` because `EventSource`
+cannot set headers (`/ask` is a POST and reads headers only). The hub validates a token against
+Jellyfin `GET /Users/Me` once and caches the user's id, name and admin flag for five minutes under a
+hash of the token; the token itself and the rest of the user record are never stored or logged. The
+profile is upserted in the household database on every sighting.
 
 | Code | Body                                  | When                                       |
 | ---- | ------------------------------------- | ------------------------------------------ |
@@ -43,9 +44,11 @@ Jellyfin's administrators are the admins. Admins may add `?scope=house` to `GET 
 
 ## `GET /health`
 
-Liveness plus, with a valid token, which integrations are configured (presence, never a value).
-Never rate limited (container health checks poll it). `version` is read from `apps/hub/package.json`
-beside the built code, so the container reports its real version.
+Liveness plus, with a token the hub has checked recently, which integrations are configured
+(presence, never a value). Never rate limited (container health checks poll it), so the token is
+read from the five-minute cache only: `/health` never calls Jellyfin, never fails when Jellyfin is
+down, and cannot be used to test tokens. Call `/me` first and the detail appears. `version` is read
+from `apps/hub/package.json` beside the built code, so the container reports its real version.
 
 ```sh
 curl -s http://localhost:8787/health
@@ -119,24 +122,40 @@ curl -s "http://localhost:8787/catalogue/search?q=lil%20wayne%20fireman" -H "Aut
 }
 ```
 
+MusicBrainz allows one request a second, so the hub keeps the box live when the whole house types:
+identical in-flight queries share one call, a profile's older prefix still waiting is dropped when
+its newer letters arrive, and the queue is capped (16 waiting calls). Past the cap, or for a prefix
+that was replaced, the route answers `503 { "error": "busy" | "superseded" }` with `retry-after: 1`;
+the apps keep the rows they have and ask again for the current letters. Cached answers (24 h per
+query) skip the limiter altogether.
+
 ## Requests (F61, F62, F63, F87)
 
 A request is a song (`kind: track`) or an album (`kind: album`) the caller wants on the server. The
 pipeline (`apps/hub/src/fetch/pipeline.ts`) runs one request at a time:
 
-| Status        | Meaning                                                                                                                                                                                                          |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested`   | Stored, waiting for the runner                                                                                                                                                                                   |
-| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                          |
-| `downloading` | The best file is being fetched from Soulseek; `progress` is a percentage                                                                                                                                         |
-| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                        |
-| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                          |
-| `failed`      | `reason` says why: `catalogue_miss`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `cancelled`, `error` |
+| Status        | Meaning                                                                                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `requested`   | Stored, waiting for the runner                                                                                                                                                                                           |
+| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                                  |
+| `downloading` | The best file is being fetched from Soulseek; `progress` is `{ unit: "percent", done, total: 100, etaSeconds? }`, the estimate from the transfer rate so far                                                             |
+| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                                |
+| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                                  |
+| `failed`      | `reason` says why: `catalogue_miss`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error` |
+| `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                        |
 
-Every change is a row in `steps` (`at`, `status`, `reason`, `detail`), so the Requests tab can show
-what the pipeline tried: the queries and how many files each returned, the file it picked and why
-(`score 108: title 100% in name, duration matches, flac, free slot, artist in path`), the Lidarr
-track it mapped to, and which scans ran.
+Album requests stay `finding` with `progress: { unit: "songs", done, total }` while Lidarr looks, and
+fail with `not_found_in_time` after `RENAISSANCE_ALBUM_DEADLINE_DAYS` (default 7); the album is then
+unmonitored in Lidarr.
+
+Every status change is a row in `steps` (`at`, `status`, `reason`, `detail`), so the Requests tab can
+show (in advanced mode and to admins) what the pipeline tried: the queries and how many files each
+returned, the file it picked and why (`score 108: title 100% in name, duration matches, flac, free
+slot, artist in path`), the Lidarr track it mapped to, and which scans ran. Progress writes change
+`progress` only and add no step; the log keeps at most 50 steps (the first and the latest), so a
+request that polls for a week stays a few kilobytes. The `reason` codes and `detail` lines are the
+pipeline's own words: the apps show them only in advanced mode or to admins, and translate the
+reason into a plain sentence for everyone else.
 
 Singles: queries are `artist title`, then `artist-without-Lil title` (the Soulseek server returns
 nothing for some short tokens; "Lil Wayne Fireman" gives 0 files, "Wayne Fireman" hundreds), then
@@ -145,10 +164,17 @@ or 320 kbps, a free upload slot, a short queue, the title in the file name, the 
 penalties for live, remix, karaoke, sped-up and DJ-pack folders, and the caller's rules (F80) as
 exclusions. The file is downloaded, mapped to the MusicBrainz track by recording id (then title),
 and imported with Lidarr's `ManualImport` carrying `albumReleaseId` and `disableReleaseSwitching`,
-so Lidarr's edition matching never refuses it. The artist and album are added to Lidarr first, with
-the metadata profile that allows singles (created if missing). Albums are added to Lidarr monitored
-and left to Lidarr and soularr; the hub checks every minute and marks the request `ready` when every
-track has a file.
+so Lidarr's edition matching never refuses it. A new artist is added to Lidarr first, unmonitored
+for new items, with the metadata profile that allows singles (created if missing); an artist that
+already exists is used exactly as it is (its profile and monitoring are never changed, because a
+profile switch would make Lidarr monitor and soularr fetch every single and EP) and the album is
+added explicitly, which Lidarr accepts outside the profile; the step detail says so. Albums are
+added to Lidarr monitored and left to Lidarr and soularr; the hub checks every minute and marks the
+request `ready` when every track has a file.
+
+A cancel can land while the pipeline is mid-search: every write goes through one guard that refuses
+a cancelled or removed row, cancellation is checked again before the download and before the import,
+and `run()` never throws, so a cancel never wedges the queue and never downloads anyway.
 
 ### `GET /requests`
 
@@ -175,7 +201,10 @@ curl -s "http://localhost:8787/requests?scope=house" -H "Authorization: Bearer $
 
 `201` with the stored request. Without ids the pipeline resolves them from MusicBrainz first. If the
 song or album is already on the server (F86), the hub answers `200` with
-`{ "alreadyHere": true, "item": <collection item> }` and nothing is downloaded.
+`{ "alreadyHere": true, "item": <collection item> }` and nothing is downloaded. If the same song or
+album (same `recordingId` or `releaseGroupId`, else the same title and artist) is already being
+fetched for anyone in the house, the hub answers `200` with that request instead of starting a
+second one.
 
 ```sh
 # 201: a request from a catalogue entry
@@ -187,7 +216,8 @@ curl -s -X POST http://localhost:8787/requests -H "Authorization: Bearer $TOKEN"
 curl -s -X POST http://localhost:8787/requests -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"kind":"track","title":"Fireman","artist":"Lil Wayne"}'
 
-# 200 alreadyHere when the library has it; 400 on a missing artist or a title over 200 characters
+# 200 alreadyHere when the library has it; 200 with the running request when it is already on its way;
+# 400 on a missing artist or a title over 200 characters
 ```
 
 ### `GET /requests/:id`
@@ -197,13 +227,14 @@ One request, own or (admins) anyone's; `404 {"error":"not_found"}` otherwise.
 ### `DELETE /requests/:id`
 
 Cancel. Allowed while `requested` or `finding` (the undo of an Ask bar `request` action); `409
-{"error":"too_late"}` once the download has started. The request becomes `failed` with reason
-`cancelled`.
+{"error":"too_late"}` once the download has started. The request becomes `cancelled` (its own
+status, no reason); an album is unmonitored in Lidarr, best effort, and the detail says so.
 
 ### `POST /requests/:id/retry`
 
 Run a failed request again (`202`). A request whose file was already downloaded (`sourceFile`)
-resumes at the import; `409 {"error":"not_failed"}` for anything not failed or cancelled.
+resumes at the import; `409 {"error":"not_failed"}` for anything not `failed` (a cancelled request
+is not retried: ask again instead).
 
 ```sh
 curl -s -X DELETE http://localhost:8787/requests/<id> -H "Authorization: Bearer $TOKEN"
@@ -243,8 +274,12 @@ curl -s -X DELETE http://localhost:8787/rules/1 -H "Authorization: Bearer $TOKEN
 The Ask bar's endpoint. Body: `text` (1 to 2000 chars), optional `language` (`en`, `gu`).
 
 1. The deterministic layer runs first: a Jellyfin search with the caller's own token (`instant`:
-   tracks, albums, artists that person may see) and a catalogue lookup. An exact library title plays
-   at once with no model call (`model: "off"`, `reason: "deterministic"`).
+   tracks, albums, artists that person may see) for the words as typed and for the title inside them
+   ("play carefree", "carefree vagad" also search "carefree"), the hits unioned. An exact library
+   title plays at once with no model call and no catalogue call (`model: "off"`,
+   `reason: "deterministic"`). Otherwise the catalogue is looked up and returned as `catalogue`
+   (songs, albums, artists with art, duration and `libraryId` when already on the server): the add
+   path the apps render as rows with Add and Play, with or without the model.
 2. One call to `ANTHROPIC_INTENT_MODEL` (`claude-opus-5-5`) with the eight strict tools
    `search_library`, `lookup_catalogue`, `play`, `queue`, `make_playlist`, `request`, `set_rule`,
    `explain`, a cached system prompt and the context block. Every tool call is grounded: ids must
@@ -252,13 +287,16 @@ The Ask bar's endpoint. Body: `text` (1 to 2000 chars), optional `language` (`en
    user's words. Rejected calls are listed in `rejected[]` (`unknown_tool`, `invalid_input`,
    `ungrounded_id`, `ungrounded_name`).
 3. Hub-side actions run (`request`, `set_rule`, `search_library`, `lookup_catalogue`, `explain`)
-   and carry `result` and an `undo` route; app-side actions (`play`, `queue`, `make_playlist`) are
-   returned for the app to perform. `why` is one line in the question's language; summaries come
+   and carry `result` and an `undo` route, with a past-tense `summary`; app-side actions (`play`,
+   `queue`, `make_playlist`) are returned for the app to perform, their `summary` in the imperative
+   ("Play Carefree", "Queue 2 songs") and a `doneSummary` ("Playing Carefree") the app shows once it
+   has done them, with its own undo. `why` is one line in the question's language; summaries come
    from `en.json` and `gu.json`.
 
 Without `ANTHROPIC_API_KEY` the hub still answers: `model: "off"`, `reason: "no_key"`, with
-`instant`. Past the monthly cap: `reason: "budget"`. A refusal or API error: `reason: "refusal"` or
-`"error"`, no actions.
+`instant` and `catalogue`. Past the monthly cap: `reason: "budget"` (an estimated cost is reserved
+while a call is in flight, so concurrent asks cannot all pass at the cap). A refusal or API error:
+`reason: "refusal"` or `"error"`, no actions, still with `catalogue`.
 
 ```sh
 curl -s -X POST http://localhost:8787/ask -H "Authorization: Bearer $TOKEN" \
@@ -286,6 +324,15 @@ curl -s -X POST http://localhost:8787/ask -H "Authorization: Bearer $TOKEN" \
       "undo": { "method": "DELETE", "path": "/requests/987a922b-..." }
     }
   ],
+  "catalogue": {
+    "query": "get me fireman by lil wayne",
+    "songs": [
+      { "id": "mb:recording:da9023df-...", "title": "Fireman", "artist": "Lil Wayne", "...": "..." }
+    ],
+    "albums": [],
+    "artists": [],
+    "cached": false
+  },
   "why": "Requested Fireman from Tha Carter II.",
   "rejected": [],
   "usage": { "inputTokens": 2100, "outputTokens": 140, "cacheReadTokens": 1800, "costUsd": 0.0117 },
@@ -339,7 +386,7 @@ curl -N "http://localhost:8787/events?token=$TOKEN"
 # data: {"type":"ping","at":"2026-11-18T05:10:00.000Z"}
 #
 # event: request
-# data: {"type":"request","request":{"id":"...","status":"downloading","progress":{"done":42,"total":100},...}}
+# data: {"type":"request","request":{"id":"...","status":"downloading","progress":{"unit":"percent","done":42,"total":100,"etaSeconds":70},...}}
 #
 # event: ready
 # data: {"type":"ready","request":{"id":"...","status":"ready",...}}
@@ -379,8 +426,10 @@ open "http://localhost:5173/requests?hubToken=$TOKEN"
 ```
 
 The Requests tab lists the caller's requests live over `GET /events`, with cancel and retry and an
-admin "Whole house" switch; Library's "Mine" is `GET /collection`; the Ask bar sends Enter to
-`POST /ask?stream=1` and shows the library hits, then the action cards with undo and the one-line why.
+admin "Whole house" switch; Library's "Mine" is `GET /collection`; the Ask bar calls
+`GET /catalogue/search` as the user types (250 ms after the last letter, the previous call aborted)
+and shows the rows with Add and Play, then sends Enter to `POST /ask?stream=1` and shows the library
+hits, the catalogue rows, the action cards with undo and the one-line why.
 
 ## The request CLI and dry runs
 
@@ -411,6 +460,7 @@ the TrueNAS layout). Nothing is read from a file except `.env` through Node's ow
 | `RENAISSANCE_HUB_ADMINS`              | empty                 | Jellyfin user names or ids who see the whole house; empty: Jellyfin administrators |
 | `RENAISSANCE_BUDGET_USD_MONTH`        | `10`                  | Household model spend a month; the model turns off when reached; 0 off             |
 | `RENAISSANCE_HUB_DRY_RUN`             | `false`               | Log writes to slskd, Lidarr, Navidrome, Jellyfin instead of sending                |
+| `RENAISSANCE_ALBUM_DEADLINE_DAYS`     | `7`                   | Days an album request waits on Lidarr before `not_found_in_time`                   |
 | `RENAISSANCE_LIDARR_DOWNLOADS_DIR`    | `/downloads/complete` | slskd's completed folder as Lidarr's container sees it                             |
 | `RENAISSANCE_CONTACT`                 | repo URL              | MusicBrainz `User-Agent` contact                                                   |
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY`    |                       | Token checks (`/Users/Me`), library lookups, `Library/Refresh`                     |
@@ -426,4 +476,6 @@ Secrets (`*_API_KEY`, `NAVIDROME_PASSWORD`) are typed as secrets: `describe()` r
 only, request logging is off, error messages carry a path but never a query string or header. The
 container image is `apps/hub/Dockerfile` (multi-stage, `node:22-alpine`, runs as `node`, `/data`
 volume, health check on `/health`); the hub is bundled with esbuild so `@renaissance/core` is inlined
-and no TypeScript runs in the image.
+and no TypeScript runs in the image. The release workflow publishes it as
+`ghcr.io/megaindian/renaissance-hub:<tag>` on every `v*` and `phase-*` tag and as `:edge` on every
+push to `main`; `docker/hub/compose.yml` pins a tag.

@@ -7,7 +7,9 @@
 # /files/downloads/music/complete). The hub itself never touches the files; Lidarr moves them.
 services:
   renaissance-hub:
-    image: ghcr.io/megaindian/renaissance-hub:latest
+    # Published by .github/workflows/release.yml: `:<tag>` for every v* and phase-* tag, `:edge` for
+    # main, `:sha-<7>` for both. Pin a tag here (never `latest`), so a redeploy changes nothing by itself.
+    image: ghcr.io/megaindian/renaissance-hub:phase-2
     # Or build from a checkout:  docker build -f apps/hub/Dockerfile -t renaissance-hub .
     container_name: renaissance-hub
     restart: unless-stopped

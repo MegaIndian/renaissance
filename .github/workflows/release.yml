@@ -4,10 +4,18 @@ on:
   push:
     branches: [main]
     tags: ['v*', 'phase-*']
+  # Publish the hub image from any branch by hand (a review build: the tag is the input).
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Tag for ghcr.io/megaindian/renaissance-hub (letters, digits, dots, dashes)'
+        required: true
+        default: 'preview'
 
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 env:
   HUSKY: 0
@@ -47,6 +55,60 @@ jobs:
       # does not list workflow_dispatch runs on a pull request, so it never satisfied the required
       # `CI` check. Until the PR is opened with a GitHub App or fine-grained PAT token, a maintainer
       # presses "Approve and run" on the held run once per version PR (CONTRIBUTING, Releases).
+
+  image:
+    # The deploy path: TrueNAS pulls this image (docker/hub/compose.yml pins a tag). Every `v*` and
+    # `phase-*` tag publishes `:<tag>`, every push to main publishes `:edge`, a dispatch publishes the
+    # tag it was given. Nothing here is `:latest`, so a redeploy never changes under a pinned compose.
+    name: Hub image to GHCR
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/megaindian/renaissance-hub
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags
+        id: tags
+        run: |
+          case "${{ github.event_name }}" in
+            workflow_dispatch) tag="${{ inputs.image_tag }}" ;;
+            *) if [[ "${GITHUB_REF}" == refs/tags/* ]]; then tag="${GITHUB_REF_NAME}"; else tag="edge"; fi ;;
+          esac
+          if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then echo "bad tag: $tag" >&2; exit 1; fi
+          echo "tags=${IMAGE}:${tag},${IMAGE}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/hub/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the pushed image
+        run: |
+          first="$(echo '${{ steps.tags.outputs.tags }}' | cut -d, -f1)"
+          docker run -d --name hub -p 8788:8787 "$first"
+          expected="$(node -p "require('./apps/hub/package.json').version")"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8788/health | grep -q "\"version\":\"$expected\""; then echo "hub $expected up"; exit 0; fi
+            sleep 1
+          done
+          docker logs hub; exit 1
 
   release:
     name: GitHub release with web build
