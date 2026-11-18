@@ -67,7 +67,8 @@ export function Sidebar() {
         </nav>
       ) : null}
       <div className="mt-auto flex flex-col gap-3 px-2 pt-4">
-        <LanguageSwitch />
+        {/* Simple mode keeps Language in Settings and on the sign-in screen (DESIGN.md), as the phone header does. */}
+        {!signedIn || mode === 'advanced' ? <LanguageSwitch /> : null}
         <NavLink
           to={signedIn ? '/settings' : '/sign-in'}
           className={({ isActive }) =>

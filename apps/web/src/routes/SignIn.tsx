@@ -85,7 +85,9 @@ export function SignIn() {
   /**
    * An address typed without a scheme: is https answering? When it is not and plain http is, the
    * field is rewritten to `http://` and the notice shows; nothing is sent until the next press.
-   * Returns the server to use now, or null when the user should read the notice first.
+   * When neither answers the unreachable sentence shows at once: a third round trip to the same
+   * dead host would only make the user wait another timeout. Returns the server to use now, or
+   * null when the user should read what the screen says first.
    */
   const resolveScheme = async (server: Server): Promise<Server | null> => {
     if (addressHasScheme(address)) return server;
@@ -97,7 +99,8 @@ export function SignIn() {
       try {
         await createAdapter(http).ping();
       } catch {
-        return server;
+        setError(t('signIn.errorUnreachable'));
+        return null;
       }
       setAddress(http.url);
       setNotice(t('signIn.httpNotice'));

@@ -25,7 +25,10 @@ export function SyncStatus() {
     text = t('library.syncedAt', { when: relativeTime(snapshot.syncedAt, t) });
   }
   return (
-    <div className="flex items-center gap-2 text-caption text-muted-foreground" aria-live="polite">
+    <div
+      className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-caption text-muted-foreground"
+      aria-live="polite"
+    >
       {text ? <span className="truncate">{text}</span> : null}
       <button
         type="button"

@@ -8,7 +8,7 @@ import { creditsArtist, findArtist } from '@renaissance/core';
 import type { Album, Artist, CacheItem, Playlist, Track } from '@renaissance/core';
 import type { TFunction } from 'i18next';
 
-import { libraryStore, patchItems } from './library';
+import { broadcastLibraryChange, libraryStore, patchItems } from './library';
 import { getPlayer } from './player';
 import { sessionStore } from './session';
 import { toast } from './toast';
@@ -21,9 +21,12 @@ function current() {
 
 type Kind = 'track' | 'album' | 'artist' | 'playlist';
 
-function setLocalFavorite(kind: Kind, id: string, favorite: boolean): void {
-  patchItems(kind, (item: CacheItem) =>
-    item.id === id && item.isFavorite !== favorite ? { ...item, isFavorite: favorite } : item,
+function setLocalFavorite(kind: Kind, id: string, favorite: boolean, broadcast: boolean): void {
+  patchItems(
+    kind,
+    (item: CacheItem) =>
+      item.id === id && item.isFavorite !== favorite ? { ...item, isFavorite: favorite } : item,
+    { broadcast },
   );
 }
 
@@ -34,15 +37,17 @@ export async function toggleFavorite(
 ): Promise<void> {
   const next = !item.isFavorite;
   const title = 'title' in item ? item.title : item.name;
-  setLocalFavorite(kind, item.id, next);
+  // This tab changes at once; the other tabs hear of it once the server agrees (or on the rollback).
+  setLocalFavorite(kind, item.id, next, false);
   try {
     const { adapter, session } = current();
     await adapter.favorites.set(session, item.id, next);
+    broadcastLibraryChange();
     toast(t(next ? 'favorites.added' : 'favorites.removed', { title }), {
       undo: () => void toggleFavorite(kind, { ...item, isFavorite: next }, t),
     });
   } catch {
-    setLocalFavorite(kind, item.id, !next);
+    setLocalFavorite(kind, item.id, !next, true);
     toast(t('error.failed'), { tone: 'danger' });
   }
 }

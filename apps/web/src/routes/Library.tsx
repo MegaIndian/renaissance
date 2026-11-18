@@ -18,6 +18,7 @@ import type { View } from '../components/SortBar';
 import { SyncStatus } from '../components/SyncStatus';
 import { TrackList, useTrackRowHeight } from '../components/TrackList';
 import { VirtualList, useColumns } from '../components/VirtualList';
+import { focusRing } from '../components/focus';
 
 export { TrackList };
 
@@ -183,7 +184,7 @@ export function Library() {
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-heading font-semibold">{t('nav.library')}</h1>
-        <SyncStatus />
+        {mode === 'advanced' ? <SyncStatus /> : null}
       </div>
       <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
         <SegmentedControl
@@ -311,7 +312,7 @@ export function Library() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to="/favorites"
-              className="text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              className={`inline-flex min-h-6 items-center rounded-sm text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground ${focusRing}`}
             >
               {t('nav.favorites')}
             </Link>

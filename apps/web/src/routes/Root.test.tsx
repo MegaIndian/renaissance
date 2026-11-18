@@ -68,9 +68,9 @@ describe('Root shell', () => {
     expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
   });
 
-  it('translates the not-found page', () => {
+  it('translates the not-found page', async () => {
     setViewport(1280);
-    setLanguage('gu');
+    await setLanguage('gu');
     renderApp('/nope');
     expect(screen.getByText('આ સરનામે કોઈ પેજ નથી')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'હોમ પર જાઓ' })).toBeInTheDocument();

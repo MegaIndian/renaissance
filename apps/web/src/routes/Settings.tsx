@@ -103,7 +103,7 @@ export function Settings() {
           value={language}
           options={supportedLanguages.map((lng) => ({ value: lng, label: t(`language.${lng}`) }))}
           onChange={(lng: Language) => {
-            setLanguage(lng);
+            void setLanguage(lng);
             updateSettings({ language: lng });
           }}
         />

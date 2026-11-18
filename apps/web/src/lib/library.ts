@@ -1,10 +1,13 @@
 /**
  * The library on the web (F14): an IndexedDB `LibraryStore` per server and user, one in-memory
  * snapshot every screen reads, the instant search index over it, and the sync lifecycle (load from
- * disk, refresh from the server, refresh again on server pushes and every fifteen minutes).
+ * disk, refresh from the server, refresh again on server pushes and every fifteen minutes). When the
+ * browser refuses IndexedDB (a private window with site data blocked), core's `MemoryLibraryStore`
+ * holds the library for the session instead, so the app still works; it is synced in full on every load.
  */
 import {
   LibraryIndex,
+  MemoryLibraryStore,
   createStore,
   emptySnapshot,
   loadSnapshot,
@@ -35,19 +38,29 @@ interface LibrarySchema extends DBSchema {
   meta: { key: string; value: LibraryMeta };
 }
 
+/** A store the web app can hold: core's interface, plus `close` where the platform has one. */
+export type WebLibraryStore = LibraryStore & { close?: () => Promise<void> };
+
 /** One database per server and user, so switching users never shows someone else's favourites (F86). */
 export class IndexedDbLibraryStore implements LibraryStore {
   private db: Promise<IDBPDatabase<LibrarySchema>>;
 
   constructor(readonly name: string) {
-    this.db = openDB<LibrarySchema>(name, 1, {
-      upgrade(db) {
-        for (const kind of ['track', 'album', 'artist', 'playlist'] as const) {
-          db.createObjectStore(kind, { keyPath: 'id' });
-        }
-        db.createObjectStore('meta');
-      },
-    });
+    // An async wrapper: `indexedDB` missing or a getter that throws becomes a rejection, not a throw.
+    this.db = (async () =>
+      openDB<LibrarySchema>(name, 1, {
+        upgrade(db) {
+          for (const kind of ['track', 'album', 'artist', 'playlist'] as const) {
+            db.createObjectStore(kind, { keyPath: 'id' });
+          }
+          db.createObjectStore('meta');
+        },
+      }))();
+  }
+
+  /** Resolves once the database is open; rejects when the browser refuses storage. */
+  async ready(): Promise<void> {
+    await this.db;
   }
 
   async read(kind: CacheKind): Promise<CacheItem[]> {
@@ -98,14 +111,36 @@ export class IndexedDbLibraryStore implements LibraryStore {
   }
 }
 
-/** Remove a user's database from this browser (sign-out, F86). Safe when it does not exist. */
+/**
+ * Open this user's store: IndexedDB when the browser allows it, memory for the session when it does
+ * not (`indexedDB` undefined, a getter that throws `SecurityError`, or an open that fails).
+ */
+export async function openLibraryStore(
+  name: string,
+): Promise<{ store: WebLibraryStore; persisted: boolean }> {
+  try {
+    const store = new IndexedDbLibraryStore(name);
+    await store.ready();
+    return { store, persisted: true };
+  } catch {
+    return { store: new MemoryLibraryStore(), persisted: false };
+  }
+}
+
+/**
+ * Remove a user's database from this browser (sign-out, F86). Safe when it does not exist, and when
+ * the browser blocks storage altogether (there is nothing to remove).
+ */
 export function deleteLibrary(session: Session): Promise<void> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve();
   return new Promise((resolve) => {
-    const request = indexedDB.deleteDatabase(dbName(session));
-    request.onsuccess = () => resolve();
-    request.onerror = () => resolve();
-    request.onblocked = () => resolve();
+    try {
+      const request = indexedDB.deleteDatabase(dbName(session));
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
   });
 }
 
@@ -122,6 +157,8 @@ export interface LibraryState {
   sync: SyncState;
   /** Set once the first read from disk (or the first sync) finished. */
   ready: boolean;
+  /** False when the browser refused IndexedDB and the library lives in memory for this session. */
+  persisted: boolean;
 }
 
 export const libraryStore = createStore<LibraryState>({
@@ -129,6 +166,7 @@ export const libraryStore = createStore<LibraryState>({
   index: new LibraryIndex(),
   sync: { status: 'idle', progress: null, mode: null, error: null },
   ready: false,
+  persisted: true,
 });
 
 const REFRESH_INTERVAL_MS = 15 * 60_000;
@@ -139,7 +177,7 @@ const CHANNEL = 'renaissance-library';
 
 let active: {
   key: string;
-  store: IndexedDbLibraryStore;
+  store: WebLibraryStore;
   adapter: ServerAdapter;
   session: Session;
   stop: () => void;
@@ -149,6 +187,8 @@ let active: {
 } | null = null;
 let syncing: Promise<void> | null = null;
 let retryDelay = RETRY_FIRST_MS;
+/** Bumped by every start and stop, so a start that lost the race while opening its store gives up. */
+let generation = 0;
 
 function setSnapshot(snapshot: LibrarySnapshot): void {
   libraryStore.set((s) => ({
@@ -206,7 +246,14 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
   const key = dbName(session);
   if (active?.key === key) return;
   stopLibrary();
-  const store = new IndexedDbLibraryStore(key);
+  const mine = ++generation;
+  patchSync({ status: 'loading', progress: null, error: null });
+  const { store, persisted } = await openLibraryStore(key);
+  if (mine !== generation) {
+    void store.close?.().catch(() => undefined);
+    return;
+  }
+  libraryStore.set((s) => ({ ...s, persisted }));
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const schedule = (delay = 2000): void => {
@@ -244,11 +291,9 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
       if (retryTimer) clearTimeout(retryTimer);
       window.removeEventListener('online', onOnline);
       channel?.close();
-      // A store whose open failed rejects here too; sign-out must not surface that.
-      void store.close().catch(() => undefined);
+      void store.close?.().catch(() => undefined);
     },
   };
-  patchSync({ status: 'loading', progress: null, error: null });
   try {
     const snapshot = await loadSnapshot(store);
     if (active?.key !== key) return;
@@ -260,6 +305,7 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
 }
 
 export function stopLibrary(): void {
+  generation += 1;
   active?.stop();
   active = null;
   syncing = null;
@@ -268,13 +314,24 @@ export function stopLibrary(): void {
     index: new LibraryIndex(),
     sync: { status: 'idle', progress: null, mode: null, error: null },
     ready: false,
+    persisted: true,
   });
 }
 
-/** Apply a local change (favourite toggled, playlist renamed) to the snapshot and the disk cache at once. */
+/** Tell the other tabs of this browser, signed in as the same user, to refresh from the server. */
+export function broadcastLibraryChange(): void {
+  active?.broadcast();
+}
+
+/**
+ * Apply a local change (favourite toggled, playlist renamed) to the snapshot and the disk cache at
+ * once. The other tabs are told to refresh unless the caller asks to wait (an optimistic change
+ * broadcasts once the server has it, so the other tab never reads the old state back).
+ */
 export function patchItems<K extends CacheKind>(
   kind: K,
   update: (item: CacheItem) => CacheItem | null,
+  options: { broadcast?: boolean } = {},
 ): void {
   const state = libraryStore.get();
   const listKey = { track: 'tracks', album: 'albums', artist: 'artists', playlist: 'playlists' }[
@@ -302,7 +359,7 @@ export function patchItems<K extends CacheKind>(
   if (active) {
     if (changed.length) void active.store.write(kind, changed).catch(() => undefined);
     if (removed.length) void active.store.remove(kind, removed).catch(() => undefined);
-    active.broadcast();
+    if (options.broadcast !== false) active.broadcast();
   }
 }
 

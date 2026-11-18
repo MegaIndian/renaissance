@@ -33,7 +33,7 @@ export function TransportControls({
     one: t('player.repeatOne'),
   };
   return (
-    <div className="flex items-center justify-center gap-2 sm:gap-3">
+    <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
       {withModes ? (
         <button
           type="button"
@@ -90,6 +90,9 @@ export function TransportControls({
   );
 }
 
+/** Where a control that needs a wide bar appears: from the desktop breakpoint, or one wider. */
+export type WideFrom = 'lg' | 'xl';
+
 /**
  * The scrubber (F24): a range input, so arrow keys, Home and End seek as well as the pointer. The
  * times can be kept for wide screens only (`timesFrom`), where the bar has room for them.
@@ -101,7 +104,7 @@ export function Scrubber({
 }: {
   withTimes?: boolean;
   /** Show the times from this breakpoint up; below it the track alone is the scrubber. */
-  timesFrom?: 'lg';
+  timesFrom?: WideFrom;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -109,7 +112,8 @@ export function Scrubber({
   const player = getPlayer();
   const max = Math.max(1, Math.round(duration || queue.items[queue.index]?.duration || 0));
   const value = Math.min(max, Math.round(position));
-  const time = `${timesFrom ? 'hidden lg:inline' : ''} w-10 shrink-0 font-mono text-caption text-muted-foreground`;
+  const shown = { lg: 'hidden lg:inline', xl: 'hidden xl:inline' };
+  const time = `${timesFrom ? shown[timesFrom] : ''} w-10 shrink-0 font-mono text-caption text-muted-foreground`;
   return (
     <div className={`flex w-full items-center gap-2 ${className}`}>
       {withTimes ? <span className={`${time} text-right`}>{formatDuration(value)}</span> : null}
@@ -130,12 +134,14 @@ export function Scrubber({
   );
 }
 
-export function VolumeControl() {
+/** The volume slider, from the breakpoint where the bar has room for it. */
+export function VolumeControl({ from = 'lg' }: { from?: WideFrom }) {
   const { t } = useTranslation();
   const { volume } = usePlayer();
   const player = getPlayer();
+  const shown = { lg: 'hidden lg:flex', xl: 'hidden xl:flex' };
   return (
-    <div className="hidden items-center gap-2 lg:flex">
+    <div className={`${shown[from]} items-center gap-2`}>
       <Icon name="volume" className="size-4 text-muted-foreground" />
       <input
         type="range"

@@ -59,7 +59,7 @@ export function AlbumPage() {
             {album.artistIds[0] ? (
               <Link
                 to={`/artist/${encodeURIComponent(album.artistIds[0])}`}
-                className={`rounded-sm font-medium hover:underline ${focusRing}`}
+                className={`inline-flex min-h-6 items-center rounded-sm font-medium hover:underline ${focusRing}`}
               >
                 {album.artistName || t('library.unknownArtist')}
               </Link>

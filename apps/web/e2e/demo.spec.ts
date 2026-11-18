@@ -1,5 +1,8 @@
+import { chartInk } from '@renaissance/design';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+
+import { channelDistance, hexToRgb, inkOnSwatch, renderedPixels } from './lib/pixels';
 
 /**
  * The phase 1 exit test against a real Jellyfin (the demo container with the four Kevin MacLeod
@@ -395,6 +398,42 @@ test.describe('against the demo Jellyfin', () => {
     expect(Math.abs((heart?.y ?? 0) - (queue?.y ?? 99))).toBeLessThan(4);
     expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 
+    // 1024 to 1366 in simple mode (the default, 1.25×): the scrubber keeps at least 160 px, the
+    // transport sits clear of the title, nothing overflows; the times and the volume come at 1280.
+    const title = bar.getByRole('link', { name: 'Open now playing' });
+    const remaining = bar.getByText(/^-\d+:\d\d$/);
+    for (const [width, mode] of [
+      [1024, 'simple'],
+      [1180, 'simple'],
+      [1280, 'simple'],
+      [1366, 'simple'],
+      [1024, 'advanced'],
+    ] as const) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(`/library?section=tracks&lang=en&theme=dark&mode=${mode}`);
+      await expect(page.getByText('4 songs')).toBeVisible({ timeout: 15_000 });
+      const sliderBox = await slider.boundingBox();
+      expect(sliderBox?.width ?? 0, `${mode} ${width}: scrubber width`).toBeGreaterThanOrEqual(160);
+      const titleBox = await title.boundingBox();
+      const previous = await bar.getByRole('button', { name: 'Previous' }).boundingBox();
+      expect(
+        previous?.x ?? 0,
+        `${mode} ${width}: transport clear of the title`,
+      ).toBeGreaterThanOrEqual((titleBox?.x ?? 0) + (titleBox?.width ?? 0));
+      expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      const heartBox = await bar.getByRole('button', { name: /favourites/ }).boundingBox();
+      expect(heartBox?.x ?? 0, `${mode} ${width}: heart after the scrubber`).toBeGreaterThanOrEqual(
+        (sliderBox?.x ?? 0) + (sliderBox?.width ?? 0),
+      );
+      if (mode === 'simple' && width < 1280) {
+        await expect(remaining).toBeHidden();
+        await expect(bar.getByRole('slider', { name: 'Volume' })).toBeHidden();
+      } else {
+        await expect(remaining).toBeVisible();
+        await expect(bar.getByRole('slider', { name: 'Volume' })).toBeVisible();
+      }
+    }
+
     // 1280 x 800: now playing sits above the fold in both modes, and the page draws no second transport.
     for (const mode of ['simple', 'advanced']) {
       await page.setViewportSize({ width: 1280, height: 800 });
@@ -410,19 +449,78 @@ test.describe('against the demo Jellyfin', () => {
       const artBox = await page.getByTestId('now-playing-art').boundingBox();
       expect(artBox?.height ?? 999).toBeLessThanOrEqual(800 * 0.4 + 2);
 
-      // 390 x 844: the lyrics, queue and cast row is above the fold without scrolling.
+      // 390 x 844: the lyrics, queue and cast row is above the fold without scrolling. Polled,
+      // because the bar leaves this route a frame after the viewport crosses the phone breakpoint.
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(actions).toBeVisible();
-      const mainBox = await main.boundingBox();
-      const phoneBox = await actions.boundingBox();
-      expect((phoneBox?.y ?? 0) + (phoneBox?.height ?? 0)).toBeLessThanOrEqual(
-        (mainBox?.y ?? 0) + (mainBox?.height ?? 0) + 1,
-      );
+      await expect
+        .poll(
+          async () => {
+            const mainBox = await main.boundingBox();
+            const phoneBox = await actions.boundingBox();
+            return (
+              (phoneBox?.y ?? 0) +
+              (phoneBox?.height ?? 0) -
+              ((mainBox?.y ?? 0) + (mainBox?.height ?? 0))
+            );
+          },
+          { message: `${mode} phone: action row below the main area` },
+        )
+        .toBeLessThanOrEqual(1);
       await expect
         .poll(() => main.evaluate((el) => el.scrollHeight - el.clientHeight), {
           message: `${mode} phone overflow`,
         })
         .toBeLessThanOrEqual(1);
+    }
+
+    // A 25 px root (a reader's zoom) at 390: the transport wraps and the sync line wraps; no page
+    // scrolls sideways.
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const route of ['/now-playing?mode=simple', '/library?section=tracks&mode=advanced']) {
+      await page.goto(`${route}&lang=en&theme=dark`);
+      await page.addStyleTag({ content: 'html { font-size: 25px !important; }' });
+      await expect(page.getByRole('main')).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          ),
+        )
+        .toBeLessThanOrEqual(0);
+      expect(await page.getByRole('main').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+        true,
+      );
+    }
+
+    // The label on a real placeholder and on a real genre card renders in the chart ink, read from
+    // pixels, in both themes.
+    const ink = hexToRgb(chartInk);
+    for (const theme of ['dark', 'light'] as const) {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.goto(`/now-playing?lang=en&theme=${theme}&mode=simple`);
+      const artLabel = page
+        .getByTestId('now-playing-art')
+        .getByTestId('placeholder-art')
+        .locator('span');
+      await expect(artLabel).toBeVisible();
+      const art = inkOnSwatch(await renderedPixels(page, artLabel));
+      expect(art.inked, `${theme} placeholder label drawn`).toBeGreaterThan(20);
+      expect(art.ratio, `${theme} placeholder label contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(channelDistance(art.ink, ink), `${theme} placeholder ink`).toBeLessThan(24);
+      // Genres are an advanced-mode section.
+      await page.goto(`/library?section=genres&lang=en&theme=${theme}&mode=advanced`);
+      const genre = page
+        .getByRole('main')
+        .getByRole('link')
+        .filter({ hasText: /songs?$/ })
+        .first();
+      await expect(genre).toBeVisible({ timeout: 15_000 });
+      const genreLabel = genre.locator('span span').first();
+      const card = inkOnSwatch(await renderedPixels(page, genreLabel));
+      expect(card.inked, `${theme} genre label drawn`).toBeGreaterThan(20);
+      expect(card.ratio, `${theme} genre label contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(channelDistance(card.ink, ink), `${theme} genre ink`).toBeLessThan(24);
     }
 
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -455,5 +553,42 @@ test.describe('against the demo Jellyfin', () => {
           .filter((n) => n.startsWith('renaissance-library')),
       ),
     ).toEqual([]);
+  });
+
+  test('a browser that blocks IndexedDB (site data blocked in a private window) still signs in and loads the library for the session', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => {
+      Object.defineProperty(window, 'indexedDB', {
+        configurable: true,
+        get() {
+          throw new DOMException('Access is denied', 'SecurityError');
+        },
+      });
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    try {
+      await signIn(page);
+      // In-app navigation only: without storage the session lasts this page load.
+      await page.getByRole('complementary').getByRole('link', { name: 'Library' }).click();
+      await page.getByRole('radio', { name: 'Songs' }).click();
+      await expect(page.getByText('4 songs')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole('button', { name: 'Play Carefree' })).toBeVisible();
+      await page.getByRole('button', { name: 'Play Carefree' }).click();
+      await expect(
+        page.getByRole('contentinfo').getByRole('button', { name: 'Pause' }),
+      ).toBeVisible({
+        timeout: 15_000,
+      });
+      await page.getByRole('contentinfo').getByRole('button', { name: 'Pause' }).click();
+      await page.getByRole('complementary').getByRole('link', { name: 'Settings' }).click();
+      await expect(page.getByText('storage is blocked')).toBeVisible();
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
   });
 });

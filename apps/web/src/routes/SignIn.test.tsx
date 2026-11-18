@@ -68,6 +68,35 @@ describe('SignIn', () => {
     vi.restoreAllMocks();
   });
 
+  it('a scheme-less address that answers on neither scheme says unreachable after two pings and sends nothing', async () => {
+    setLanguage('en');
+    const signIn = vi.spyOn(sessionModule, 'signIn');
+    const pinged: string[] = [];
+    vi.spyOn(sessionModule, 'createAdapter').mockImplementation(
+      (server) =>
+        ({
+          ping: () => {
+            pinged.push(server.url);
+            return Promise.reject(new TypeError('fetch failed'));
+          },
+        }) as never,
+    );
+    renderApp('/sign-in');
+    const user = userEvent.setup();
+    const address = await screen.findByRole('textbox', { name: 'Server address' });
+    await user.type(address, '10.255.255.1:8096');
+    await user.type(screen.getByRole('textbox', { name: 'User name' }), 'mom');
+    await user.type(screen.getByLabelText('Password'), 'pw');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not reach that server');
+    expect(pinged).toEqual(['https://10.255.255.1:8096', 'http://10.255.255.1:8096']);
+    // No third attempt: the password never left the form and the field keeps what was typed.
+    expect(signIn).not.toHaveBeenCalled();
+    expect(address).toHaveValue('10.255.255.1:8096');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+    vi.restoreAllMocks();
+  });
+
   it('a scheme-less address that answers on https signs in there, with no notice', async () => {
     setLanguage('en');
     const signIn = vi.spyOn(sessionModule, 'signIn').mockImplementation(async (server, c) => {

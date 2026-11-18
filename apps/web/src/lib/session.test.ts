@@ -7,10 +7,12 @@ import { dbName } from './library';
 import {
   createAdapter,
   expireSession,
+  followOtherTabs,
   isPlainHttp,
   resetSessionForTests,
   restoreSession,
   serverFromAddress,
+  sessionKey,
   sessionStore,
   signOut,
   withHttp,
@@ -74,6 +76,30 @@ describe('a revoked token', () => {
     // Expiring twice, or while signed out, changes nothing.
     expireSession();
     expect(sessionStore.get().reason).toBe('expired');
+  });
+
+  it('a 401 seen by an adapter that is no longer the current one is ignored (the next user stays signed in)', async () => {
+    const { impl } = answering(401);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
+    const expired = vi.fn();
+    // User A's adapter, still paging a sync after A signed out; user B is signed in now.
+    const previous = createAdapter(session.server, expired);
+    const current = createAdapter(session.server, expired);
+    const b = { ...session, userId: 'u2', userName: 'B', token: 'tok-b' };
+    sessionStore.set({
+      status: 'signedIn',
+      session: b,
+      adapter: current,
+      vault: 'encrypted',
+      reason: null,
+    });
+    await expect(previous.favorites.set(session, 't1', true)).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(expired).not.toHaveBeenCalled();
+    expect(sessionStore.get().status).toBe('signedIn');
+    await expect(current.favorites.set(b, 't1', true)).rejects.toMatchObject({ status: 401 });
+    expect(expired).toHaveBeenCalledOnce();
   });
 
   it('restore checks the token once with /Users/Me: 401 expires it, a server that is down keeps it', async () => {
@@ -145,5 +171,61 @@ describe('sign-out', () => {
     expect(localStorage.getItem(`renaissance.queue.${session.userId}`)).toBeNull();
     expect(await open()).toBe(false);
     expect(queryClient.clear).toHaveBeenCalled();
+  });
+});
+
+describe('other tabs', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await clearSession();
+    resetSessionForTests();
+  });
+
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  it('a sign-out posted by another tab ends the same user here with its reason; sign-out and expiry post it', async () => {
+    const { impl } = answering(204, '');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
+    const stop = followOtherTabs();
+    const otherTab = new BroadcastChannel('renaissance-session');
+    const heard: unknown[] = [];
+    otherTab.onmessage = (event: MessageEvent<unknown>) => heard.push(event.data);
+    try {
+      const adapter = createAdapter(session.server);
+      const signedIn = {
+        status: 'signedIn',
+        session,
+        adapter,
+        vault: 'encrypted',
+        reason: null,
+      } as const;
+      sessionStore.set(signedIn);
+      // Another user's sign-out, and a message that is not one, change nothing.
+      otherTab.postMessage({ type: 'signed-out', key: 'demo:someone-else', reason: null });
+      otherTab.postMessage('renaissance-library-demo-u1');
+      await settle();
+      expect(sessionStore.get().status).toBe('signedIn');
+      otherTab.postMessage({ type: 'signed-out', key: sessionKey(session), reason: 'expired' });
+      await settle();
+      expect(sessionStore.get()).toMatchObject({ status: 'signedOut', reason: 'expired' });
+      sessionStore.set(signedIn);
+      otherTab.postMessage({ type: 'signed-out', key: sessionKey(session), reason: null });
+      await settle();
+      expect(sessionStore.get()).toMatchObject({ status: 'signedOut', reason: null });
+
+      // This tab's own sign-out and expiry tell the others.
+      sessionStore.set(signedIn);
+      await signOut();
+      sessionStore.set(signedIn);
+      expireSession();
+      await settle();
+      expect(heard).toEqual([
+        { type: 'signed-out', key: 'demo:u1', reason: null },
+        { type: 'signed-out', key: 'demo:u1', reason: 'expired' },
+      ]);
+    } finally {
+      stop();
+      otherTab.close();
+    }
   });
 });

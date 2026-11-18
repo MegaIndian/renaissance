@@ -11,8 +11,16 @@ import {
   renamePlaylist,
 } from './playlist-actions';
 import { i18n } from './i18n';
-import { libraryStore } from './library';
+import { libraryStore, startLibrary, stopLibrary } from './library';
+import { sessionStore } from './session';
 import { toastStore } from './toast';
+
+/** Start the library module for the fake session so it owns a BroadcastChannel to post on. */
+async function startLibraryForTests(): Promise<void> {
+  stopLibrary();
+  const { adapter, session } = sessionStore.get();
+  await startLibrary(adapter as never, session as never);
+}
 
 const t = i18n.t.bind(i18n);
 const find = (id: string) => libraryStore.get().snapshot.tracks.find((x) => x.id === id);
@@ -39,6 +47,38 @@ describe('favourites', () => {
     await toggleFavorite('track', tracks[0]!, t);
     expect(find('t1')?.isFavorite).toBe(false);
     expect(toastStore.get()?.tone).toBe('danger');
+  });
+
+  it('tells the other tabs after the server agrees, not before; and again on a rollback', async () => {
+    const heard: unknown[] = [];
+    const listener = new BroadcastChannel('renaissance-library');
+    listener.onmessage = (event: MessageEvent<unknown>) => heard.push(event.data);
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    try {
+      let release: (() => void) | undefined;
+      const { calls } = signInFake({
+        favoritesGate: () => new Promise<void>((r) => (release = r)),
+      });
+      await startLibraryForTests();
+      const pending = toggleFavorite('track', tracks[0]!, t);
+      await settle();
+      expect(find('t1')?.isFavorite).toBe(true);
+      expect(heard).toEqual([]);
+      release?.();
+      await pending;
+      await settle();
+      expect(calls.favorites).toEqual([{ id: 't1', favorite: true }]);
+      expect(heard).toHaveLength(1);
+
+      signInFake({ fail: { favorites: true } });
+      await startLibraryForTests();
+      await toggleFavorite('track', tracks[0]!, t);
+      await settle();
+      expect(heard).toHaveLength(2);
+    } finally {
+      listener.close();
+      stopLibrary();
+    }
   });
 });
 

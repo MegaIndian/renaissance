@@ -66,9 +66,12 @@ export function NowPlaying() {
             {track.artistIds[0] ? (
               <Link
                 to={`/artist/${encodeURIComponent(track.artistIds[0])}`}
-                className={`truncate rounded-sm text-body text-muted-foreground hover:text-foreground ${focusRing}`}
+                // A 24 px target (rule 12) on an 18 px text line: the extra 3 px above and below
+                // are pulled back with negative margins, so the column is no taller than the text
+                // and the action row stays above the fold at 390 x 844 in simple mode.
+                className={`-my-0.75 inline-flex min-h-6 max-w-full items-center self-start rounded-sm text-body text-muted-foreground hover:text-foreground ${focusRing}`}
               >
-                {track.artistName}
+                <span className="truncate">{track.artistName}</span>
               </Link>
             ) : (
               <p className="truncate text-body text-muted-foreground">{track.artistName}</p>

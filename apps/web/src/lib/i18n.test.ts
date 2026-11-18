@@ -13,12 +13,19 @@ describe('language detection', () => {
     expect(detectLanguage('?lang=xx', 'yy', 'zz')).toBe('en');
   });
 
-  it('sets html lang on load and on change', () => {
+  it('sets html lang on load and on change, and fetches the Gujarati catalog once when switched', async () => {
     expect(document.documentElement.lang).toBe(i18n.language);
-    setLanguage('gu');
+    const switched = setLanguage('gu');
     expect(document.documentElement.lang).toBe('gu');
-    setLanguage('en');
+    await switched;
+    expect(i18n.t('nav.home')).toBe('હોમ');
+    await setLanguage('en');
     expect(document.documentElement.lang).toBe('en');
+    expect(i18n.t('nav.home')).toBe('Home');
+    // Already loaded: switching back is immediate.
+    void setLanguage('gu');
+    expect(i18n.t('nav.home')).toBe('હોમ');
+    await setLanguage('en');
   });
 });
 

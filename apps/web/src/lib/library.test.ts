@@ -1,8 +1,18 @@
-import { LibraryIndex, buildSnapshot, loadSnapshot } from '@renaissance/core';
-import { describe, expect, it } from 'vitest';
+import { LibraryIndex, MemoryLibraryStore, buildSnapshot, loadSnapshot } from '@renaissance/core';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { albums, artists, playlists, session, tracks } from '../test/fakes';
-import { IndexedDbLibraryStore, addItems, dbName, libraryStore, patchItems } from './library';
+import { albums, artists, fakeAdapter, playlists, session, tracks } from '../test/fakes';
+import {
+  IndexedDbLibraryStore,
+  addItems,
+  dbName,
+  deleteLibrary,
+  libraryStore,
+  openLibraryStore,
+  patchItems,
+  startLibrary,
+  stopLibrary,
+} from './library';
 
 describe('IndexedDbLibraryStore', () => {
   it('writes, reads, replaces, removes and clears every kind plus the meta record', async () => {
@@ -41,6 +51,7 @@ describe('local patches', () => {
       index: new LibraryIndex(snapshot),
       sync: { status: 'idle', progress: null, mode: null, error: null },
       ready: true,
+      persisted: true,
     });
     patchItems('track', (item) => (item.id === 't1' ? { ...item, isFavorite: true } : item));
     expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(true);
@@ -55,5 +66,55 @@ describe('local patches', () => {
     expect(libraryStore.get().snapshot.playlists).toHaveLength(1);
     patchItems('artist', (item) => (item.id === 'a1' ? { ...item, isFavorite: true } : item));
     expect(libraryStore.get().snapshot.albumArtists[0]?.isFavorite).toBe(true);
+  });
+});
+
+describe('storage that is blocked', () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+  afterEach(() => {
+    stopLibrary();
+    if (original) Object.defineProperty(globalThis, 'indexedDB', original);
+  });
+
+  const blocked = {
+    'indexedDB undefined': () =>
+      Object.defineProperty(globalThis, 'indexedDB', { value: undefined, configurable: true }),
+    'indexedDB getter throws SecurityError': () =>
+      Object.defineProperty(globalThis, 'indexedDB', {
+        configurable: true,
+        get() {
+          throw new DOMException('Access is denied', 'SecurityError');
+        },
+      }),
+  };
+
+  for (const [name, block] of Object.entries(blocked)) {
+    it(`${name}: the library falls back to a memory store, loads and syncs; delete and stop tolerate it`, async () => {
+      block();
+      const opened = await openLibraryStore('blocked');
+      expect(opened.store).toBeInstanceOf(MemoryLibraryStore);
+      expect(opened.persisted).toBe(false);
+
+      await startLibrary(fakeAdapter().adapter, session);
+      const state = libraryStore.get();
+      expect(state.ready).toBe(true);
+      expect(state.persisted).toBe(false);
+      expect(state.sync.status).toBe('idle');
+      expect(state.snapshot.tracks.map((t) => t.id).sort()).toEqual(['t1', 't2', 't3', 't4']);
+      // Local changes still land in the session store.
+      patchItems('track', (item) => (item.id === 't1' ? { ...item, isFavorite: true } : item));
+      expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(true);
+
+      await expect(deleteLibrary(session)).resolves.toBeUndefined();
+      expect(() => stopLibrary()).not.toThrow();
+      expect(libraryStore.get().persisted).toBe(true);
+    });
+  }
+
+  it('with IndexedDB available the store is on disk', async () => {
+    const opened = await openLibraryStore(`open-${Date.now()}`);
+    expect(opened.persisted).toBe(true);
+    expect(opened.store).toBeInstanceOf(IndexedDbLibraryStore);
+    await opened.store.close?.();
   });
 });

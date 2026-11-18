@@ -137,8 +137,17 @@ export interface FakeAdapterCalls {
   playlists: string[];
 }
 
-export function fakeAdapter(fail: { favorites?: boolean } = {}) {
+export interface FakeAdapterOptions {
+  fail?: { favorites?: boolean };
+  /** Awaited before a favourite call answers, so a test can hold the server's answer back. */
+  favoritesGate?: () => Promise<void>;
+}
+
+export function fakeAdapter(options: FakeAdapterOptions = {}) {
+  const fail = options.fail ?? {};
   const calls: FakeAdapterCalls = { favorites: [], reports: [], playlists: [] };
+  const page = <T>(items: T[]): Promise<{ items: T[]; total: number }> =>
+    Promise.resolve({ items, total: items.length });
   const adapter = {
     server: session.server,
     imageUrl: (_s: Session, id: string, width: number) =>
@@ -149,10 +158,10 @@ export function fakeAdapter(fail: { favorites?: boolean } = {}) {
       return Promise.resolve();
     },
     favorites: {
-      set: (_s: Session, id: string, favorite: boolean) => {
-        if (fail.favorites) return Promise.reject(new Error('down'));
+      set: async (_s: Session, id: string, favorite: boolean) => {
+        await options.favoritesGate?.();
+        if (fail.favorites) throw new Error('down');
         calls.favorites.push({ id, favorite });
-        return Promise.resolve();
       },
     },
     playlists: {
@@ -188,6 +197,15 @@ export function fakeAdapter(fail: { favorites?: boolean } = {}) {
       },
     },
     library: () => ({
+      // The paged reads one full sync needs, over the fixtures.
+      artists: () => page(artists),
+      albumArtists: () => page(artists),
+      playlists: () => page(playlists),
+      tracks: () => page(tracks),
+      albums: () => page(albums),
+      userDataChangedSince: () => page([]),
+      ids: () => Promise.resolve([]),
+      byIds: () => Promise.resolve([]),
       albumTracks: () => Promise.resolve(tracks.filter((t) => t.albumId === 'al1')),
       album: (id: string) =>
         id === 'al1'
@@ -205,8 +223,8 @@ export function fakeAdapter(fail: { favorites?: boolean } = {}) {
 }
 
 /** Sign a fake user in with the fixture library and a fresh Player on a FakeAudio. */
-export function signInFake(options: { fail?: { favorites?: boolean } } = {}) {
-  const { adapter, calls } = fakeAdapter(options.fail ?? {});
+export function signInFake(options: FakeAdapterOptions = {}) {
+  const { adapter, calls } = fakeAdapter(options);
   sessionStore.set({ status: 'signedIn', session, adapter, vault: 'encrypted', reason: null });
   const snapshot = buildSnapshot(tracks, albums, artists, playlists, {
     syncedAt: '2026-11-17T21:00:00.000Z',
@@ -217,6 +235,7 @@ export function signInFake(options: { fail?: { favorites?: boolean } } = {}) {
     index: new LibraryIndex(snapshot),
     sync: { status: 'idle', progress: null, mode: 'delta', error: null },
     ready: true,
+    persisted: true,
   });
   const audio = new FakeAudio();
   const player = new Player({

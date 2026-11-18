@@ -1,6 +1,8 @@
-import { colors } from '@renaissance/design';
+import { chartInk, colors } from '@renaissance/design';
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+
+import { channelDistance, hexToRgb, inkOnSwatch, renderedPixels } from './lib/pixels';
 
 /** DESIGN.md rule 12: at least 24 × 24 px in advanced mode, 30 × 30 px in simple mode (1.25×). */
 const MIN = { advanced: 24, simple: 30 } as const;
@@ -157,3 +159,58 @@ test('the favicon and theme colour are served', async ({ page, request }) => {
   await page.goto('/');
   expect(await page.locator('meta[name="theme-color"]').count()).toBe(2);
 });
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`${theme}: a genre card label and a placeholder label render in the chart ink at 4.5:1 on every swatch (pixels, not classes)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`/?theme=${theme}`);
+    // The same markup `LabelCard` and `PlaceholderArt` render, mounted over the page with the
+    // built stylesheet: a `text-chart-ink` that the theme never mapped would inherit `foreground`
+    // here exactly as it does on the real cards. Dark swatch 6 against a pale ink was 1.2:1.
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.id = 'ink-probe';
+      host.style.cssText =
+        'position:fixed;inset:0;z-index:9999;display:flex;flex-wrap:wrap;gap:16px;padding:16px;background:var(--background)';
+      for (let i = 1; i <= 6; i++) {
+        const card = document.createElement('span');
+        card.className = 'flex aspect-video items-end rounded-sm p-3';
+        card.style.cssText = `background: var(--chart-${i}); width: 240px`;
+        card.dataset['probe'] = `card-${i}`;
+        const label = document.createElement('span');
+        label.className = 'truncate text-title font-semibold text-chart-ink';
+        label.textContent = 'Orchestra';
+        card.append(label);
+        host.append(card);
+        const art = document.createElement('div');
+        art.className = 'relative shrink-0 overflow-hidden rounded-sm';
+        art.style.cssText = `background: var(--chart-${i}); width: 160px; height: 160px`;
+        art.dataset['probe'] = `art-${i}`;
+        const caption = document.createElement('span');
+        caption.className =
+          'absolute bottom-1.5 left-2 right-2 truncate text-caption font-semibold text-chart-ink';
+        caption.textContent = 'Monkeys Spinning Monkeys';
+        art.append(caption);
+        host.append(art);
+      }
+      document.body.append(host);
+    });
+    const ink = hexToRgb(chartInk);
+    for (let i = 1; i <= 6; i++) {
+      for (const kind of ['card', 'art'] as const) {
+        const label = page.locator(`[data-probe="${kind}-${i}"] > span`);
+        const drawn = inkOnSwatch(await renderedPixels(page, label));
+        expect(drawn.inked, `${kind} ${i}: glyph pixels drawn`).toBeGreaterThan(20);
+        expect(
+          drawn.ratio,
+          `${kind} ${i}: contrast of the ink on the swatch`,
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(channelDistance(drawn.ink, ink), `${kind} ${i}: ink is the chart ink`).toBeLessThan(
+          24,
+        );
+      }
+    }
+  });
+}

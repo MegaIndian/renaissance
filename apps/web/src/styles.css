@@ -33,6 +33,8 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  /* The one ink for labels on the six swatches (DESIGN.md rule 3); `text-chart-ink` exists only through this line. */
+  --color-chart-ink: var(--chart-ink);
 
   --text-*: initial;
   --text-caption: var(--font-size-caption);
