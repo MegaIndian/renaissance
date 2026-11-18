@@ -1,5 +1,5 @@
 /**
- * The fixed tool set (ADR 0007, ADR 0009). The model acts only through these; the JSON schemas are
+ * The fixed tool set (ADR 0007, ADR 0010). The model acts only through these; the JSON schemas are
  * strict so the API guarantees the shape, and the Zod schemas re-check on the way in. Every id an
  * action names must be in the grounding context of the same call.
  */

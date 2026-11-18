@@ -2,7 +2,7 @@
 
 The hub is the one server-side process (`apps/hub`, Fastify). It holds every key, runs the fetch
 pipeline, the intent engine and the household database, and talks to Jellyfin, Lidarr, slskd,
-Navidrome, MusicBrainz, Deezer and the Anthropic API so the apps never do (ADR 0006 to 0009).
+Navidrome, MusicBrainz, Deezer and the Anthropic API so the apps never do (ADR 0006, 0007, 0009 and 0010).
 
 Every body is JSON. Validation is Zod; a failed parse answers `400` with
 `{ "error": "invalid_request", "issues": [...] }` (Zod's issue list). The shapes below are the Zod

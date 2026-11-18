@@ -1,4 +1,4 @@
-# ADR 0009: The intent engine: one call, fixed tools, never invent
+# ADR 0010: The intent engine: one call, fixed tools, never invent
 
 Date: 2026-11-18. Status: accepted. Implements ADR 0007 points 2, 3, 5 and 6.
 

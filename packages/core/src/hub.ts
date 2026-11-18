@@ -1,5 +1,5 @@
 /**
- * Shapes shared between the hub and the apps (ADR 0006 to 0009). The hub validates with these on
+ * Shapes shared between the hub and the apps (ADR 0006, 0007, 0009 and 0010). The hub validates with these on
  * the way in and the apps validate with them on the way out, so one change here changes both.
  */
 import { z } from 'zod';

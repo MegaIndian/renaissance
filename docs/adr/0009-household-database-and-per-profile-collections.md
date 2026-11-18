@@ -1,4 +1,4 @@
-# ADR 0008: The household database and per-profile collections
+# ADR 0009: The household database and per-profile collections
 
 Date: 2026-11-18. Status: accepted. Builds on ADR 0006 and ADR 0007.
 

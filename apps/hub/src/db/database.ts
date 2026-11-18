@@ -1,5 +1,5 @@
 /**
- * The household database (ADR 0008): one SQLite file through `node:sqlite`, no native build step, so
+ * The household database (ADR 0009): one SQLite file through `node:sqlite`, no native build step, so
  * the Alpine image needs nothing extra. Migrations are code, run in order at start, each once.
  */
 import { mkdirSync } from 'node:fs';
