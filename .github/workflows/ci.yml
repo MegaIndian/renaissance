@@ -5,8 +5,8 @@ on:
   # Release calls this workflow on every push to main and on tags, so a push trigger here would run
   # it twice; the required `CI` check on a pull request comes from the pull_request run.
   workflow_call:
-  # Release dispatches this on the Changesets version branch, whose pull_request run GitHub holds for
-  # approval because its author is github-actions[bot]; the dispatched run reports the `CI` check.
+  # Manual runs on any branch from the Actions tab or `gh workflow run ci.yml --ref <branch>`. Such a
+  # run does not appear on a pull request's checks, so it cannot stand in for the pull_request run.
   workflow_dispatch:
 
 concurrency:

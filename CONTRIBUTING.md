@@ -54,11 +54,14 @@ checkbox.
   and it is not installed today.
 - Squash merge; the PR title becomes the commit message.
 - Releases: merging to `main` runs the Release workflow, which opens or updates the Changesets version
-  PR (`chore(release): version packages`, branch `changeset-release/main`). GitHub holds that PR's own
-  CI run for approval because its author is `github-actions[bot]`, so Release dispatches CI on the
-  branch itself and that run reports the required `CI` check. If it ever fails to appear, a maintainer
-  can open the held run under Actions and press "Approve and run", or `gh workflow run ci.yml --ref
-changeset-release/main`. Merging the version PR writes the package changelogs and versions.
+  PR (`chore(release): version packages`, branch `changeset-release/main`). GitHub holds that PR's CI
+  run for approval because its author is `github-actions[bot]`, and the required `CI` check stays
+  missing until a maintainer opens the held run under Actions and presses "Approve and run" (or
+  `gh api -X POST repos/MegaIndian/renaissance/actions/runs/<run id>/approve`). One click per version
+  PR; a dispatched run on the branch does not count, because GitHub does not list `workflow_dispatch`
+  runs on a pull request. Opening the PR with a GitHub App or fine-grained PAT token would remove the
+  click; the repository has no such secret today. Merging the version PR writes the package changelogs
+  and versions.
 
 ## Licence
 
