@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 /**
- * `pnpm dev`: the web app and the hub together, with two differences from `turbo run dev`: when
- * either process exits, the other is stopped and this script exits with the same code; and the hub
- * must answer `/health` within a few seconds of starting, or both are stopped and this exits 1. So a
- * hub that dies on a taken port, or throws at start and sits in `node --watch`'s "waiting for file
- * changes", is never hidden behind a web server that keeps running.
+ * `pnpm dev`: the web app and the hub together, with three differences from `turbo run dev`: when
+ * either process exits, the other is stopped and this script exits with the same code; the hub must
+ * answer `/health` within a few seconds of starting, or both are stopped and this exits 1; and after
+ * that, `/health` is polled every few seconds for the whole session, so a hub that dies later (and sits
+ * in `node --watch`'s "waiting for file changes") stops the web server too instead of hiding behind it.
+ * `apps/hub/.env` is read first, so a port set there is the port polled here.
  */
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';
+
+// The hub loads apps/hub/.env itself (`node --env-file-if-exists`); read the same file here so the
+// port polled below is the port the hub listens on. Variables already in the shell win, as there.
+const hubEnvFile = fileURLToPath(new URL('../apps/hub/.env', import.meta.url));
+if (existsSync(hubEnvFile)) process.loadEnvFile(hubEnvFile);
 
 const hubPort = Number(process.env.RENAISSANCE_HUB_PORT ?? 8787);
 const children = [
@@ -15,6 +23,9 @@ const children = [
   { name: 'hub', filter: 'hub', port: hubPort },
 ];
 const HEALTH_TIMEOUT_MS = Number(process.env.RENAISSANCE_DEV_HEALTH_TIMEOUT_MS ?? 15_000);
+/** After the start, how often `/health` is asked and how long it may stay silent before both stop. */
+const HEALTH_INTERVAL_MS = Number(process.env.RENAISSANCE_DEV_HEALTH_INTERVAL_MS ?? 3_000);
+const HEALTH_GRACE_MS = Number(process.env.RENAISSANCE_DEV_HEALTH_GRACE_MS ?? 10_000);
 
 /** Both loopback families: a listener on ::1 alone would otherwise pass and push Vite to 5174. */
 const loopbacks = ['127.0.0.1', '::1'];
@@ -75,17 +86,19 @@ async function hubAnswers() {
       });
       if (res.ok) return true;
     } catch {
-      /* not up yet on this address */
+      /* not up on this address */
     }
   }
   return false;
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const deadline = Date.now() + HEALTH_TIMEOUT_MS;
 let up = false;
 while (!up && Date.now() < deadline && !shuttingDown) {
   up = await hubAnswers();
-  if (!up) await new Promise((resolve) => setTimeout(resolve, 250));
+  if (!up) await sleep(250);
 }
 if (!up && !shuttingDown) {
   console.error(
@@ -96,3 +109,24 @@ if (!up && !shuttingDown) {
 }
 
 console.log(`web http://localhost:${children[0].port}   hub http://localhost:${hubPort}`);
+
+// The hub runs under `node --watch`, which survives a crash of the server it runs and waits for a
+// file change, so its exit never reaches the handler above. Keep asking /health; a hub silent for
+// the grace period stops the session with exit 1 (a restart during a file edit is shorter than that).
+let silentSince = null;
+while (!shuttingDown) {
+  await sleep(HEALTH_INTERVAL_MS);
+  if (shuttingDown) break;
+  if (await hubAnswers()) {
+    silentSince = null;
+    continue;
+  }
+  silentSince ??= Date.now();
+  if (Date.now() - silentSince >= HEALTH_GRACE_MS) {
+    console.error(
+      `\nhub: no answer on http://localhost:${hubPort}/health for ${HEALTH_GRACE_MS / 1000} s. ` +
+        'The hub died; its error is above. Stopping the web server too.',
+    );
+    stopAll(1);
+  }
+}

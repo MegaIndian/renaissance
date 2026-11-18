@@ -45,7 +45,7 @@ Nothing else. No account with us, no telemetry.
 ## Run it (developers)
 
 ```sh
-corepack enable            # or: npm i -g pnpm
+npm i -g pnpm@12           # or, on Node 22 only: corepack enable
 pnpm install
 pnpm dev                   # web on http://localhost:5173, hub on http://localhost:8787
 pnpm --filter mobile start # Expo dev server (needs Xcode or Android Studio, or Expo Go)

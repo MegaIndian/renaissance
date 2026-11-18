@@ -27,11 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -47,6 +47,8 @@ jobs:
         run: pnpm typecheck --filter=!mobile
       - name: Typecheck (mobile)
         run: pnpm --filter mobile typecheck
+      - name: Expo SDK versions (apps/mobile stays on what expo@58 pins; fails on any drift)
+        run: pnpm --filter mobile exec expo install --check
       - name: Test (coverage floor 80 % on core and hub)
         run: pnpm test
       - name: Build web
@@ -60,9 +62,12 @@ jobs:
       - name: Hub smoke test (the version in /health is the manifest's)
         run: |
           node apps/hub/dist/server.js &
-          sleep 2
           expected="$(node -p "require('./apps/hub/package.json').version")"
-          body="$(curl --fail --silent http://127.0.0.1:8787/health)"
+          for i in $(seq 1 15); do
+            if body="$(curl --fail --silent http://127.0.0.1:8787/health)"; then ok=1; break; fi
+            sleep 1
+          done
+          test "${ok:-0}" = 1
           echo "$body"
           echo "$body" | grep -F "\"version\":\"$expected\""
           kill %1

@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/Icon';
 import { useTheme } from '@/lib/theme';
 
 /** Bottom player (phase 0: nothing plays, so the Play button is muted, never a second blue). Mirrors web. */
@@ -50,17 +51,8 @@ export function NowPlayingBar() {
           },
         ]}
       >
-        <View
-          style={[
-            styles.triangle,
-            {
-              borderLeftColor: colors.mutedForeground,
-              borderTopWidth: space[1] + 1,
-              borderBottomWidth: space[1] + 1,
-              borderLeftWidth: space[2],
-            },
-          ]}
-        />
+        {/* The shared `play` path from the design package, the same glyph the web draws. */}
+        <Icon name="play" color={colors.mutedForeground} />
       </Pressable>
     </View>
   );
@@ -70,11 +62,4 @@ const styles = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1 },
   title: { flex: 1 },
   play: { alignItems: 'center', justifyContent: 'center' },
-  triangle: {
-    width: 0,
-    height: 0,
-    marginLeft: 2,
-    borderTopColor: 'transparent',
-    borderBottomColor: 'transparent',
-  },
 });

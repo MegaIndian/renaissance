@@ -4,7 +4,8 @@ Thank you. This page gets you from clone to a merged pull request.
 
 ## Setup in ten minutes
 
-1. Node 22 or later (`.nvmrc`), pnpm 12 (`corepack enable`), Git. For mobile: Xcode 16+ or Android Studio,
+1. Node 22.18 or later (`.nvmrc`), Git, and pnpm 12: `npm i -g pnpm@12` (on Node 22, `corepack enable` also
+   works; Node 24 and later ship without corepack). For mobile: Xcode 16+ or Android Studio,
    or the Expo Go app.
 2. `git clone https://github.com/MegaIndian/renaissance && cd renaissance && pnpm install`
 3. `pnpm dev` starts the web app and the hub. `pnpm --filter mobile start` starts Expo.

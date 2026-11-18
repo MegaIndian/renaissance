@@ -69,7 +69,7 @@ curl -s -X POST http://localhost:8787/ask \
 # 400: empty text
 curl -s -X POST http://localhost:8787/ask -H 'content-type: application/json' -d '{"text":""}'
 
-# 415: not JSON
+# 415: a form body (no parser for it; JSON and plain text are parsed, plain text then fails validation with 400)
 curl -s -X POST http://localhost:8787/ask -d 'text=hello'
 
 # Browser preflight from the web dev server: 204 with access-control-allow-origin
@@ -143,12 +143,12 @@ for i in 1 2 3; do curl -s -o /dev/null -w '%{http_code}\n' http://localhost:878
 
 ## Errors the framework returns
 
-| Code | When                                                 |
-| ---- | ---------------------------------------------------- |
-| 404  | Unknown route, or an id that is not stored           |
-| 413  | Body over Fastify's 1 MiB default                    |
-| 415  | A body without `content-type: application/json`      |
-| 429  | More requests than the per-address limit in a minute |
+| Code | When                                                                       |
+| ---- | -------------------------------------------------------------------------- |
+| 404  | Unknown route, or an id that is not stored                                 |
+| 413  | Body over Fastify's 1 MiB default                                          |
+| 415  | A content type the hub has no parser for (anything but JSON or plain text) |
+| 429  | More requests than the per-address limit in a minute                       |
 
 ## Configuration
 
