@@ -99,7 +99,10 @@ async function signIn(page) {
   await page.getByRole('textbox', { name: 'User name' }).fill(demo.user);
   await page.getByLabel('Password').fill(demo.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.getByText(/Last refreshed|Loading your library/).waitFor({ timeout: 20_000 });
+  await page
+    .getByRole('heading', { level: 1 })
+    .filter({ hasText: ',' })
+    .waitFor({ timeout: 20_000 });
   // Wait for the first sync so the library screens have songs.
   await page.goto(`${base}/library?section=tracks&lang=en&theme=dark`);
   await page

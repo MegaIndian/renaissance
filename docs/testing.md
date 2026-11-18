@@ -2,12 +2,12 @@
 
 Three layers, all run by `pnpm test` and CI except the last, which needs a real server.
 
-| Layer                     | Where                                                                                                                                                                          | Runs                                                                |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| Unit, core                | `packages/core/test` (Vitest, coverage floor 80 % on lines, branches, functions, statements)                                                                                   | `pnpm test`, CI                                                     |
-| Unit, web                 | `apps/web/src/**/*.test.tsx` (Vitest, jsdom, Testing Library; a fake adapter and a fake audio port in `src/test/fakes.ts`; `fake-indexeddb` for the vault and the cache)       | `pnpm test`, CI                                                     |
-| Browser, static           | `apps/web/e2e/accessibility.spec.ts` (Playwright on Chromium against the built app: focus outline colour and width, 24 and 30 px targets, not-found shell, favicon)            | `pnpm --filter web e2e`, CI                                         |
-| Browser, against Jellyfin | `apps/web/e2e/demo.spec.ts` (sign in, browse, play with the server's play count rising, favourite, playlist create, rename, add, delete, the Ask bar from the cache, sign out) | `pnpm --filter web e2e` with the variables below; **skipped in CI** |
+| Layer                     | Where                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Runs                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Unit, core                | `packages/core/test` (Vitest, coverage floor 80 % on lines, branches, functions, statements)                                                                                                                                                                                                                                                                                                                                                                                                                                      | `pnpm test`, CI                                                     |
+| Unit, web                 | `apps/web/src/**/*.test.tsx` (Vitest, jsdom, Testing Library; a fake adapter and a fake audio port in `src/test/fakes.ts`; `fake-indexeddb` for the vault and the cache)                                                                                                                                                                                                                                                                                                                                                          | `pnpm test`, CI                                                     |
+| Browser, static           | `apps/web/e2e/accessibility.spec.ts` (Playwright on Chromium against the built app: focus outline colour and width, 24 and 30 px targets, not-found shell, favicon) and `signin.spec.ts` (the 8 s request timeout against a host that never answers, https first for a scheme-less address with the http notice before anything is sent, the Content-Security-Policy meta)                                                                                                                                                        | `pnpm --filter web e2e`, CI                                         |
+| Browser, against Jellyfin | `apps/web/e2e/demo.spec.ts` (sign in; the artist page by every id the server holds for the name, from the grid, from the album and with the server down; row geometry; play with the server's play count rising; three reloads that are not plays; favourite; playlist create, rename, add, keyboard reorder read back from the server, undo, a second user who cannot see it, delete; the bar at 820 px; now playing above the fold at 1280×800 and 390×844; the Ask bar from the cache; sign out removing the library database) | `pnpm --filter web e2e` with the variables below; **skipped in CI** |
 
 ## The demo server
 
@@ -33,8 +33,11 @@ a home server, so CI runs the static browser tests only; the Jellyfin suite is t
 judges' job on a machine that can reach the demo container. To run it on a laptop with Docker:
 `node docker/demo/start.mjs` prints the address and the password.
 
-The suite cleans up after itself (favourites off, `e2e *` playlists deleted) before each test, and it
-raises the play count of one track by one each run.
+The suite cleans up after itself (favourites off, `e2e *` playlists and `e2e-user-*` users deleted)
+before each test, and it raises the play count of one track by one each run. The demo user must be a
+Jellyfin administrator for the second-user test, which creates and deletes that user through the API.
+Jellyfin keeps one token per device id, so the suite signs the second user in from its own device id
+and takes a fresh token before each administrative call.
 
 ## Screenshots
 

@@ -2,8 +2,9 @@
 
 Taken from the production build with Playwright's Chromium at exact viewports (device scale 2):
 phone 390×844, tablet 820×1180, desktop 1280×800, English and Gujarati, dark and light, simple and
-advanced mode, signed in to the demo Jellyfin (four Kevin MacLeod tracks, loose files, so there are no
-albums and the placeholder art stands in for covers). Retake them with
+advanced mode, signed in to the demo Jellyfin (four Kevin MacLeod tracks in one album without covers,
+so the placeholder art stands in; the server holds two artist entities for the one name, which the
+app shows as one). Retake them with
 `pnpm --filter web build && pnpm --filter web screenshots` with the `RENAISSANCE_DEMO_*` variables set
 (`docs/testing.md`). The URL parameters `?lang=`, `?theme=` and `?mode=` select the language, theme
 and mode for a run.
