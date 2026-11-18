@@ -17,6 +17,8 @@ async function size(locator: Locator): Promise<{ width: number; height: number }
 }
 
 async function expectAtLeast(locator: Locator, min: number): Promise<void> {
+  // Routes other than Home are lazy chunks: wait for the first control before counting.
+  await locator.first().waitFor();
   const count = await locator.count();
   expect(count).toBeGreaterThan(0);
   for (let i = 0; i < count; i++) {
@@ -78,11 +80,15 @@ for (const theme of ['dark', 'light'] as const) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`/?theme=${theme}`);
     const controls = [
-      page.getByRole('link', { name: 'Sign in' }).first(), // the primary LinkButton on the home card
+      page.getByRole('main').getByRole('link', { name: 'Sign in' }), // the primary LinkButton on the home card
       page.getByRole('complementary').getByRole('link', { name: 'Library' }),
       page.getByRole('radio', { name: 'English' }),
       page.getByRole('combobox'),
     ];
+    // The first control is the one primary on the screen; the locator must not drift to another link.
+    expect(await controls[0]?.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+      rgb(colors[theme].primary),
+    );
     for (const control of controls) {
       const outline = await focusOutline(page, control);
       // The Ask bar draws its outline on the box around the input (focus-within); read it there.
@@ -118,7 +124,10 @@ test('a mouse click does not draw the outline, keyboard focus does', async ({ pa
   await page.mouse.up();
   expect(clicked).not.toBe('solid');
   await page.goto('/sign-in');
-  // The Ask bar takes focus on load (desktop); Tab moves to the first sign-in field.
+  // Nothing is focused on load (the desktop rests without a ring); ⌘K reaches the Ask bar and
+  // Tab moves on to the first sign-in field.
+  await expect(page.getByRole('combobox')).not.toBeFocused();
+  await page.keyboard.press('Control+k');
   await expect(page.getByRole('combobox')).toBeFocused();
   await page.keyboard.press('Tab');
   const server = page.getByRole('textbox', { name: 'Server address' });

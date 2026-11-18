@@ -34,12 +34,14 @@ export function Root({ children }: { children?: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {desktop ? (
           <div className="relative z-10 border-b border-border px-6 py-3">
-            <AskBar autoFocus />
+            <AskBar />
           </div>
         ) : (
           <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-2">
             <span aria-hidden className="inline-block size-3.5 rounded-sm bg-primary" />
-            <span className="min-w-0 flex-1 truncate text-body font-semibold">{t('app.name')}</span>
+            <span className="brand-name min-w-0 flex-1 truncate text-body font-semibold">
+              {t('app.name')}
+            </span>
             <LanguageSwitch />
             <NavLink
               to={signedIn ? '/settings' : '/sign-in'}
