@@ -78,6 +78,9 @@ export function jellyfinLibrary(options: {
   url: string | undefined;
   apiKey: string | undefined;
   fetch?: Fetch;
+  /** Log the library refresh instead of asking for it (reads still run). */
+  dryRun?: boolean;
+  log?: { info(obj: Record<string, unknown>, msg: string): void };
 }) {
   const doFetch = options.fetch ?? fetch;
   const configured = options.url !== undefined && options.apiKey !== undefined;
@@ -137,9 +140,31 @@ export function jellyfinLibrary(options: {
       }
       return out;
     },
+    /**
+     * Every track by the named artists the caller may see (one call, names pipe-separated), so a
+     * typeahead row can be marked "in your library" when the typed words were the artist, not a
+     * title the search would have found.
+     */
+    async tracksByArtists(
+      token: string,
+      names: readonly string[],
+      limit = 200,
+    ): Promise<LibraryHit[]> {
+      if (!options.url || names.length === 0) return [];
+      const found = await items(token, {
+        Artists: names.join('|'),
+        IncludeItemTypes: 'Audio',
+        Limit: String(limit),
+      });
+      return found.map(toHit);
+    },
     /** Ask Jellyfin to look for new files after an import. */
     async refresh(): Promise<boolean> {
       if (!configured || !options.apiKey) return false;
+      if (options.dryRun) {
+        options.log?.info({ dryRun: true }, 'would POST jellyfin Library/Refresh');
+        return true;
+      }
       await httpJson(
         'jellyfin',
         `${options.url}/Library/Refresh`,

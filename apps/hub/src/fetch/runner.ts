@@ -6,6 +6,7 @@
  */
 import type { Stores } from '../db/index.js';
 import type { EventBus } from '../events/bus.js';
+import type { HealthState } from '../health.js';
 import type { Logger } from '../log.js';
 import type { Pipeline } from './pipeline.js';
 
@@ -17,6 +18,8 @@ export function createRunner(options: {
   bus: EventBus;
   log: Logger;
   albumPollMs?: number;
+  /** Told whether the database took the sweep, for `/health`. */
+  health?: HealthState;
 }) {
   const { pipeline, stores, bus, log } = options;
   const queue: string[] = [];
@@ -45,8 +48,11 @@ export function createRunner(options: {
   async function tick(): Promise<void> {
     try {
       stores.cache.sweep();
+      options.health?.markDatabase(true);
     } catch (error) {
-      log.warn({ error: error instanceof Error ? error.message : String(error) }, 'sweep failed');
+      const message = error instanceof Error ? error.message : String(error);
+      options.health?.markDatabase(false, message);
+      log.error({ error: message }, 'database write failed (health is degraded)');
     }
     await pipeline.pollAlbums();
   }

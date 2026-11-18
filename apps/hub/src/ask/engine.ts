@@ -20,12 +20,13 @@ import type {
 import { askTools } from '@renaissance/core';
 import { createI18n } from '@renaissance/core/i18n';
 
+import { LimiterBusyError } from '../catalogue/rate-limiter.js';
 import type { CatalogueService } from '../catalogue/service.js';
 import type { Stores } from '../db/index.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
 import type { Logger } from '../log.js';
 import type { RequestService } from '../requests/service.js';
-import { hasGujarati, normalize } from '../text.js';
+import { hasGujarati, looksLikeSentence, normalize } from '../text.js';
 import type { BudgetMeter } from './budget.js';
 import { SYSTEM_PROMPT, userMessage } from './prompt.js';
 import type { GroundingContext } from './prompt.js';
@@ -274,6 +275,26 @@ export function createEngine(deps: EngineDeps) {
           if (album.artistId) newRequest.artistId = album.artistId;
         }
         const created = await requests.create(input.profile, newRequest);
+        if (created.kind === 'duplicate') {
+          // Someone already asked: nothing new to undo. The asker is a watcher now (design W).
+          const mine = created.request.requestedBy === input.profile.id;
+          return {
+            tool,
+            input: grounded.input,
+            ranBy: 'hub',
+            result: { alreadyRequested: true, request: created.request },
+            undoable: false,
+            summary: t(
+              language,
+              mine ? 'hub.summary.alreadyRequestedMine' : 'hub.summary.alreadyRequested',
+              {
+                title: created.request.title,
+                artist: created.request.artist,
+                name: created.request.requestedByName,
+              },
+            ),
+          };
+        }
         if (created.kind === 'already') {
           return {
             tool,
@@ -413,8 +434,16 @@ export function createEngine(deps: EngineDeps) {
           why: t(language, 'hub.why.exact', { title: exact.title }),
         };
       }
-      // The catalogue rows are the add path with or without the model (design A).
-      const cat = await catalogue.search(input.text).catch((error: unknown) => {
+      // The catalogue rows are the add path with or without the model (design A). They are asked
+      // about the title inside the words ("get me fireman by lil wayne" asks about "fireman lil
+      // wayne"), and the rows that do not answer those words are pruned (design Q). When the
+      // MusicBrainz queue is full the Deezer rows stand in rather than nothing.
+      const query = stripCommand(input.text) || input.text;
+      const who = { owner: input.profile.id };
+      const cat = await catalogue.search(query, who).catch(async (error: unknown) => {
+        if (error instanceof LimiterBusyError) {
+          return catalogue.search(query, { ...who, fast: true }).catch(() => undefined);
+        }
         log.warn(
           { error: error instanceof Error ? error.message : String(error) },
           'catalogue lookup failed',
@@ -422,6 +451,9 @@ export function createEngine(deps: EngineDeps) {
         return undefined;
       });
       const withCatalogue = cat ? { catalogue: cat } : {};
+      // Without a key, a sentence ("play something calm for cooking") gets the one line that says
+      // smart answers are off and what still works; a name that matched nothing gets nothing
+      // here, and the app says nothing matches (design Q).
       if (!deps.client)
         return {
           ...base,
@@ -430,7 +462,7 @@ export function createEngine(deps: EngineDeps) {
           reason: 'no_key',
           instant,
           actions: [],
-          why: '',
+          why: looksLikeSentence(input.text) ? t(language, 'ask.modelOff') : '',
         };
       const reservation = budget.reserve();
       if (!reservation)

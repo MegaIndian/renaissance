@@ -47,8 +47,9 @@ export async function requestRoutes(
       return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
     const result = await deps.requests.create(request.profile!, parsed.data);
     if (result.kind === 'already') return reply.code(200).send(result.already);
-    // The same song is already on its way (for anyone in the house): answer with that request.
-    if (result.kind === 'duplicate') return reply.code(200).send(result.request);
+    // The same song is already on its way (for anyone in the house): the caller now watches it.
+    if (result.kind === 'duplicate')
+      return reply.code(200).send({ alreadyRequested: true, request: result.request });
     return reply.code(201).send(result.request);
   });
 
@@ -77,6 +78,12 @@ export async function requestRoutes(
         return reply.code(409).send({
           error: 'too_late',
           message: 'The download has started; it cannot be cancelled.',
+        });
+      }
+      if (result === 'not_active') {
+        return reply.code(409).send({
+          error: 'not_active',
+          message: 'The request has already finished; there is nothing to cancel.',
         });
       }
       return result;

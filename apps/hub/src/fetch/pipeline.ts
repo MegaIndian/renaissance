@@ -13,20 +13,23 @@ import type { MusicRequest, RequestProgress, RequestStatus } from '@renaissance/
 
 import type { CatalogueService } from '../catalogue/service.js';
 import type { Stores } from '../db/index.js';
+import { lastRequestedAt } from '../db/requests.js';
 import type { RequestUpdate } from '../db/requests.js';
 import type { EventBus } from '../events/bus.js';
 import { sleep as realSleep } from '../http.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
 import type { Logger } from '../log.js';
-import { normalize, tokenOverlap } from '../text.js';
+import { normalize, tokenOverlap, tokens } from '../text.js';
 import { buildQueries } from './clean.js';
 import { ensureSinglesProfile, waitForCommand } from './lidarr.js';
 import type {
   LidarrAlbum,
   LidarrArtist,
   LidarrClient,
+  LidarrQuality,
   LidarrRelease,
   LidarrTrack,
+  ManualImportFile,
 } from './lidarr.js';
 import type { NavidromeClient } from './navidrome.js';
 import { baseName, parentName, rank } from './rank.js';
@@ -54,6 +57,8 @@ export interface PipelineDeps {
   navidrome?: NavidromeClient;
   /** The slskd completed folder as Lidarr sees it. */
   lidarrDownloadsDir: string;
+  /** Where soularr parks files Lidarr refused, as Lidarr sees it; album polls file them from there. */
+  lidarrFailedImportsDir?: string;
   rootFolder?: string;
   log: Logger;
   sleep?: (ms: number) => Promise<void>;
@@ -66,6 +71,8 @@ export interface PipelineDeps {
   maxAttempts?: number;
   /** Polls without a transfer record for the enqueued file before the attempt counts as failed. */
   missingTransferPolls?: number;
+  /** How often an album poll looks in the download folders for files Lidarr refused to import. */
+  arrivalCheckMs?: number;
   /** Writes are logged, not sent (the clients do that); the mapping step uses MusicBrainz tracks. */
   dryRun?: boolean;
 }
@@ -75,6 +82,7 @@ export const TRACKS_TIMEOUT_MS = 90_000;
 export const ALBUM_DEADLINE_MS = 7 * 24 * 60 * 60_000;
 export const MISSING_TRANSFER_POLLS = 5;
 export const POLL_MS = 3_000;
+export const ARRIVAL_CHECK_MS = 10 * 60_000;
 
 /** The Lidarr track a downloaded file stands for: by MusicBrainz recording id, then by title. */
 export function mapTrack(
@@ -108,6 +116,17 @@ export function lidarrPathFor(downloadsDir: string, remoteFilename: string): str
   return posix.join(downloadsDir, parentName(remoteFilename), baseName(remoteFilename));
 }
 
+/** "0111 Look Back at It", "A Boogie Wit da Hoodie - Look Back at It.flac": the title in a file name. */
+export function fileTitle(filename: string, artist: string): string {
+  const base = baseName(filename)
+    .replace(/\.[^.]+$/, '')
+    .replace(/^[\d\s.\-_]+/, '');
+  const artistTokens = new Set(tokens(artist));
+  return tokens(base)
+    .filter((t) => !artistTokens.has(t))
+    .join(' ');
+}
+
 export function describePick(s: Scored): string {
   return `${baseName(s.candidate.filename)} from ${s.candidate.username} (score ${s.score}: ${s.reasons.join(', ')})`;
 }
@@ -133,13 +152,18 @@ export function createPipeline(deps: PipelineDeps) {
     return current;
   }
 
+  /** The asker and everyone who asked for the same thing while it was on its way. */
+  const parties = (req: MusicRequest): string[] => [req.requestedBy, ...(req.watchers ?? [])];
+
   /** Every status write: refuses cancelled rows, appends a step, tells the apps. */
   function update(id: string, patch: RequestUpdate): MusicRequest {
     live(id);
     const next = stores.requests.update(id, patch);
     if (!next) throw new PipelineError('gone', 'The request was removed');
-    bus.publish(next.requestedBy, { type: 'request', request: next });
-    if (next.status === 'ready') bus.publish(next.requestedBy, { type: 'ready', request: next });
+    for (const who of parties(next)) {
+      bus.publish(who, { type: 'request', request: next });
+      if (next.status === 'ready') bus.publish(who, { type: 'ready', request: next });
+    }
     return next;
   }
 
@@ -148,15 +172,32 @@ export function createPipeline(deps: PipelineDeps) {
     live(id);
     const next = stores.requests.progress(id, value);
     if (!next) throw new PipelineError('gone', 'The request was removed');
-    bus.publish(next.requestedBy, { type: 'request', request: next });
+    for (const who of parties(next)) bus.publish(who, { type: 'request', request: next });
     return next;
+  }
+
+  /** The catalogue's match, when it is not the words that were typed (shown on the card). */
+  function matchedFor(
+    req: MusicRequest,
+    found: { title: string; artist: string },
+  ): { title: string; artist: string } | undefined {
+    const same =
+      normalize(found.title) === normalize(req.title) &&
+      normalize(found.artist) === normalize(req.artist);
+    return same ? undefined : { title: found.title, artist: found.artist };
   }
 
   async function resolveIds(req: MusicRequest): Promise<MusicRequest> {
     if (req.kind === 'track' && req.recordingId && req.releaseGroupId && req.artistId) return req;
     if (req.kind === 'album' && req.releaseGroupId && req.artistId) return req;
     if (req.kind === 'track') {
-      const song = await deps.catalogue.findSong(req.title, req.artist);
+      // The caller's duration (from the typeahead row) picks the version meant and is kept: the
+      // recording's own length never replaces it.
+      const song = await deps.catalogue.findSong(
+        req.title,
+        req.artist,
+        req.duration !== undefined ? { duration: req.duration } : {},
+      );
       if (!song?.releaseGroupId || !song.artistId) {
         throw new PipelineError(
           'catalogue_miss',
@@ -169,8 +210,10 @@ export function createPipeline(deps: PipelineDeps) {
         artistId: song.artistId,
       };
       if (song.releaseId) ids.releaseId = song.releaseId;
-      if (song.duration !== undefined) ids.duration = song.duration;
+      if (song.duration !== undefined && req.duration === undefined) ids.duration = song.duration;
       if (song.album) ids.album = song.album;
+      const matched = matchedFor(req, song);
+      if (matched) ids.matched = matched;
       return update(req.id, {
         status: 'finding',
         detail: `Matched ${song.title} by ${song.artist}`,
@@ -184,10 +227,16 @@ export function createPipeline(deps: PipelineDeps) {
         `MusicBrainz has no album "${req.title}" by ${req.artist}`,
       );
     }
+    const ids: NonNullable<RequestUpdate['ids']> = {
+      releaseGroupId: album.releaseGroupId,
+      artistId: album.artistId,
+    };
+    const matched = matchedFor(req, album);
+    if (matched) ids.matched = matched;
     return update(req.id, {
       status: 'finding',
       detail: `Matched ${album.title} by ${album.artist}`,
-      ids: { releaseGroupId: album.releaseGroupId, artistId: album.artistId },
+      ids,
     });
   }
 
@@ -400,14 +449,16 @@ export function createPipeline(deps: PipelineDeps) {
       // Nothing was added to Lidarr, so map against MusicBrainz's own track list to show the pick.
       tracks = await musicBrainzTracks(release.foreignReleaseId);
     }
-    const want: { title: string; recordingId?: string; duration?: number } = { title: req.title };
+    const want: { title: string; recordingId?: string; duration?: number } = {
+      title: req.matched?.title ?? req.title,
+    };
     if (req.recordingId) want.recordingId = req.recordingId;
     if (req.duration !== undefined) want.duration = req.duration;
     const track = mapTrack(tracks, want);
     if (!track) {
       throw new PipelineError(
         'track_unmapped',
-        `None of the ${tracks.length} tracks on ${full.title} (release ${release.foreignReleaseId}) is "${req.title}"`,
+        `None of the ${tracks.length} tracks on ${full.title} (release ${release.foreignReleaseId}) is "${want.title}"`,
       );
     }
     const path = lidarrPathFor(deps.lidarrDownloadsDir, remoteFilename);
@@ -484,22 +535,25 @@ export function createPipeline(deps: PipelineDeps) {
     update(requestId, { status: 'importing', detail });
   }
 
+  /** Ready: the item lands in the asker's collection and in every watcher's; all of them hear it. */
   function finish(req: MusicRequest, detail: string): MusicRequest {
     const itemId =
       req.kind === 'track'
         ? `mb:recording:${req.recordingId}`
         : `mb:release-group:${req.releaseGroupId}`;
-    const item: Parameters<Stores['collection']['add']>[0] = {
-      profile: req.requestedBy,
-      item: itemId,
-      kind: req.kind,
-      title: req.title,
-      artist: req.artist,
-      addedBy: req.requestedBy,
-      source: 'request',
-    };
-    if (req.album) item.album = req.album;
-    stores.collection.add(item);
+    for (const profile of parties(req)) {
+      const item: Parameters<Stores['collection']['add']>[0] = {
+        profile,
+        item: itemId,
+        kind: req.kind,
+        title: req.title,
+        artist: req.artist,
+        addedBy: profile,
+        source: 'request',
+      };
+      if (req.album) item.album = req.album;
+      stores.collection.add(item);
+    }
     return update(req.id, { status: 'ready', detail });
   }
 
@@ -521,15 +575,17 @@ export function createPipeline(deps: PipelineDeps) {
       return finish(live(resolved.id), `Imported ${baseName(resolved.sourceFile)}`);
     }
     const policy = parseRules(stores.rules.list(resolved.requestedBy).map((r) => r.text));
+    // The song the catalogue matched is the one searched for and mapped, when it corrected the words.
+    const name = resolved.matched ?? { title: resolved.title, artist: resolved.artist };
     const want: Parameters<typeof rank>[1] = {
-      title: resolved.title,
-      artist: resolved.artist,
+      title: name.title,
+      artist: name.artist,
       policy,
     };
     if (resolved.duration !== undefined) want.duration = resolved.duration;
     const queryInput: Parameters<typeof buildQueries>[0] = {
-      title: resolved.title,
-      artist: resolved.artist,
+      title: name.title,
+      artist: name.artist,
     };
     if (resolved.album) queryInput.album = resolved.album;
     const queries = buildQueries(queryInput);
@@ -574,6 +630,9 @@ export function createPipeline(deps: PipelineDeps) {
     const resolved = await resolveIds(req);
     const { artist, note } = await ensureArtist(lidarr, resolved.artistId!);
     const album = await ensureAlbum(lidarr, artist, resolved.releaseGroupId!, true);
+    // A cancel that landed while the album was being added found nothing to unmonitor: check now,
+    // before anything is monitored or searched (run()'s `gone` branch unmonitors as well).
+    live(resolved.id);
     if (!album.monitored) await lidarr.updateAlbum({ ...album, monitored: true });
     live(resolved.id);
     await lidarr.command('AlbumSearch', { albumIds: [album.id] });
@@ -587,6 +646,94 @@ export function createPipeline(deps: PipelineDeps) {
         total: album.statistics?.trackCount ?? 0,
       },
     });
+  }
+
+  /** Lidarr's import candidates in a folder; a folder Lidarr cannot read counts as empty. */
+  async function candidatesIn(lidarr: LidarrClient, folder: string) {
+    try {
+      return await lidarr.importCandidates(folder);
+    } catch (error) {
+      log.warn(
+        { folder, error: error instanceof Error ? error.message : String(error) },
+        'could not list import candidates',
+      );
+      return [];
+    }
+  }
+
+  const lastArrivalCheck = new Map<string, number>();
+
+  /**
+   * soularr fetched the album (or some of it) but Lidarr's automatic import refused the files
+   * ("Has missing tracks" against another edition) and they sit in the download or failed-imports
+   * folder. Lidarr lists them in `manualimport`; the hub maps each to a track on the release it
+   * monitors and files them with the same explicit `ManualImport` the single path uses.
+   */
+  async function fileArrivals(
+    lidarr: LidarrClient,
+    req: MusicRequest,
+    album: LidarrAlbum,
+  ): Promise<{ outcome: 'nothing' | 'filed' | 'unmapped'; detail?: string }> {
+    const folders = [deps.lidarrDownloadsDir, deps.lidarrFailedImportsDir].filter(
+      (f): f is string => !!f,
+    );
+    const artistName = album.artist?.artistName ?? req.artist;
+    const mine: { path: string; quality: LidarrQuality; trackId?: number }[] = [];
+    for (const folder of folders) {
+      for (const c of await candidatesIn(lidarr, folder)) {
+        const lidarrSaysOurs = c.album?.id === album.id;
+        const folderSaysOurs =
+          tokenOverlap(album.title, parentName(c.path)) >= 0.6 &&
+          tokenOverlap(artistName, c.path) >= 0.5;
+        if (!lidarrSaysOurs && !folderSaysOurs) continue;
+        const entry: (typeof mine)[number] = { path: c.path, quality: c.quality };
+        if (lidarrSaysOurs && c.tracks?.length === 1) entry.trackId = c.tracks[0]!.id;
+        mine.push(entry);
+      }
+    }
+    if (mine.length === 0) return { outcome: 'nothing' };
+    const full = await waitForReleases(lidarr, album);
+    const release = pickRelease(full);
+    if (!release)
+      return { outcome: 'unmapped', detail: `Lidarr album ${full.title} has no releases` };
+    const tracks = await waitForTracks(lidarr, full.id, release.id);
+    const files: ManualImportFile[] = [];
+    const used = new Set<number>();
+    for (const file of mine) {
+      const track =
+        tracks.find((t) => t.id === file.trackId) ??
+        mapTrack(tracks, { title: fileTitle(file.path, artistName) });
+      if (!track || used.has(track.id)) continue;
+      used.add(track.id);
+      files.push({
+        path: file.path,
+        artistId: full.artistId ?? album.artistId ?? 0,
+        albumId: full.id,
+        albumReleaseId: release.id,
+        trackIds: [track.id],
+        quality: file.quality,
+        disableReleaseSwitching: true,
+      });
+    }
+    if (files.length === 0) {
+      return {
+        outcome: 'unmapped',
+        detail: `${mine.length} file(s) for ${full.title} arrived (${mine.map((m) => baseName(m.path)).join(', ')}) but none matched a track on release ${release.foreignReleaseId}`,
+      };
+    }
+    const command = await lidarr.manualImport(files);
+    try {
+      await waitForCommand(lidarr, command.id, sleep);
+    } catch (error) {
+      return {
+        outcome: 'unmapped',
+        detail: `Lidarr refused the ${files.length} file(s) that arrived for ${full.title}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return {
+      outcome: 'filed',
+      detail: `Filed ${files.length} file(s) that had arrived for ${full.title}: ${files.map((f) => baseName(f.path)).join(', ')}`,
+    };
   }
 
   /** Best effort: stop Lidarr (and soularr) looking for an album nobody wants any more. */
@@ -623,6 +770,14 @@ export function createPipeline(deps: PipelineDeps) {
         const detail = error instanceof Error ? error.message : String(error);
         if (reason === 'gone') {
           log.info({ request: id, detail }, 'request stopped');
+          // An album cancelled while it was being added to Lidarr: the cancel found nothing to
+          // unmonitor, so the album the pipeline just added would stay monitored and soularr
+          // would fetch it. Unmonitor it now that it exists.
+          const stopped = stores.requests.get(id);
+          if (stopped?.kind === 'album') {
+            const note = await unmonitorAlbum(stopped);
+            if (note) log.info({ request: id, note }, 'album unmonitored after a late cancel');
+          }
           return undefined;
         }
         log.error({ request: id, reason, detail }, 'request failed');
@@ -646,18 +801,44 @@ export function createPipeline(deps: PipelineDeps) {
         .listByStatus('finding')
         .filter((r) => r.kind === 'album' && r.releaseGroupId);
       const deadlineMs = deps.albumDeadlineMs ?? ALBUM_DEADLINE_MS;
+      const arrivalEvery = deps.arrivalCheckMs ?? ARRIVAL_CHECK_MS;
       for (const req of waiting) {
         try {
-          const album = await lidarr.albumByForeignId(req.releaseGroupId!);
+          let album = await lidarr.albumByForeignId(req.releaseGroupId!);
           if (!album) continue;
-          const total = album.statistics?.trackCount ?? 0;
-          const done = album.statistics?.trackFileCount ?? 0;
+          let total = album.statistics?.trackCount ?? 0;
+          let done = album.statistics?.trackFileCount ?? 0;
+          const incomplete = !(total > 0 && done >= total);
+          const checked = lastArrivalCheck.get(req.id) ?? 0;
+          if (incomplete && now() - checked >= arrivalEvery) {
+            lastArrivalCheck.set(req.id, now());
+            const arrived = await fileArrivals(lidarr, req, album);
+            if (arrived.outcome === 'unmapped') {
+              const note = await unmonitorAlbum(req);
+              update(req.id, {
+                status: 'failed',
+                reason: 'import_failed',
+                detail: `${arrived.detail}${note ? `; ${note}` : ''}`,
+              });
+              lastArrivalCheck.delete(req.id);
+              continue;
+            }
+            if (arrived.outcome === 'filed') {
+              update(req.id, { status: 'finding', detail: arrived.detail! });
+              album = (await lidarr.albumByForeignId(req.releaseGroupId!)) ?? album;
+              total = album.statistics?.trackCount ?? total;
+              done = album.statistics?.trackFileCount ?? done;
+            }
+          }
           if (total > 0 && done >= total) {
+            lastArrivalCheck.delete(req.id);
             await scans(req.id, lidarr, album.artistId);
             finish(req, `Lidarr imported ${done} of ${total} tracks`);
-          } else if (now() - Date.parse(req.createdAt) > deadlineMs) {
+          } else if (now() - lastRequestedAt(req) > deadlineMs) {
+            // Measured from the last time it was requested: a retry a week later gets a full week.
             const days = Math.round(deadlineMs / (24 * 60 * 60_000));
             const note = await unmonitorAlbum(req);
+            lastArrivalCheck.delete(req.id);
             update(req.id, {
               status: 'failed',
               reason: 'not_found_in_time',

@@ -26,6 +26,7 @@ import { createPipeline } from './fetch/pipeline.js';
 import { createRunner } from './fetch/runner.js';
 import { slskdClient } from './fetch/slskd.js';
 import type { SlskdClient } from './fetch/slskd.js';
+import { createHealthState } from './health.js';
 import type { Fetch } from './http.js';
 import { jellyfinLibrary } from './jellyfin/library.js';
 import type { JellyfinLibrary } from './jellyfin/library.js';
@@ -41,6 +42,9 @@ import { meRoutes } from './routes/me.js';
 import { requestRoutes } from './routes/requests.js';
 import { ruleRoutes } from './routes/rules.js';
 import { version } from './version.js';
+
+/** Every method a route answers; the preflight for a DELETE (cancel, undo) must allow it. */
+export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'DELETE'] as const;
 
 /** Everything the app wires; each piece can be replaced in tests. */
 export interface BuildOptions {
@@ -88,7 +92,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     });
   const library =
     options.library ??
-    jellyfinLibrary({ url: config.jellyfin.url, apiKey: config.jellyfin.apiKey, fetch: doFetch });
+    jellyfinLibrary({
+      url: config.jellyfin.url,
+      apiKey: config.jellyfin.apiKey,
+      fetch: doFetch,
+      dryRun: config.dryRun,
+      log,
+    });
   const musicBrainz =
     options.musicBrainz ?? musicBrainzClient({ version, contact: config.contact, fetch: doFetch });
   const catalogue =
@@ -145,13 +155,18 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     dryRun: config.dryRun,
     albumDeadlineMs: config.albumDeadlineMs,
     ...(config.lidarr.rootFolder ? { rootFolder: config.lidarr.rootFolder } : {}),
+    ...(config.lidarrFailedImportsDir
+      ? { lidarrFailedImportsDir: config.lidarrFailedImportsDir }
+      : {}),
     log,
   });
+  const health = createHealthState();
   const runner = createRunner({
     pipeline,
     stores,
     bus,
     log,
+    health,
     ...(options.albumPollMs ? { albumPollMs: options.albumPollMs } : {}),
   });
   const requests = createRequestService({
@@ -189,14 +204,16 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const engine = createEngine(engineDeps);
 
   if (config.corsOrigins.length > 0) {
-    await app.register(cors, { origin: config.corsOrigins });
+    // The browser preflights every DELETE (cancel, every undo): the methods must be listed, or the
+    // app's Cancel and Undo die in the preflight while the hub never sees them.
+    await app.register(cors, { origin: config.corsOrigins, methods: [...CORS_METHODS] });
   }
   // Per client address, every route but /health; 429 with retry-after past the limit.
   if (config.rateLimitPerMinute > 0) {
     await app.register(rateLimit, { max: config.rateLimitPerMinute, timeWindow: '1 minute' });
   }
 
-  await healthRoutes(app, config, authenticator);
+  await healthRoutes(app, config, authenticator, health);
   await meRoutes(app, { authenticator, stores });
   await catalogueRoutes(app, { authenticator, catalogue, library });
   await requestRoutes(app, { authenticator, requests });

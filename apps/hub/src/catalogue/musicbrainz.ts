@@ -44,6 +44,8 @@ export interface MbReleaseRef {
 export interface MbRecording {
   id: string;
   title: string;
+  /** "live, 1999", "remix", "instrumental": MusicBrainz's own note on which version this is. */
+  disambiguation?: string;
   length?: number;
   'artist-credit'?: MbArtistCredit[];
   releases?: MbReleaseRef[];
@@ -148,9 +150,13 @@ export function musicBrainzClient(options: {
       const body = await get<{ artists?: MbArtist[] }>('artist', { query, limit: String(limit) });
       return body.artists ?? [];
     },
-    /** A release with its media and tracks, for the import mapping. */
-    release(id: string): Promise<MbRelease> {
-      return get<MbRelease>(`release/${id}`, { inc: 'recordings+artist-credits+release-groups' });
+    /** A release with its media and tracks, for the import mapping (the pipeline's lane). */
+    release(id: string, who: Omit<ScheduleOptions, 'key'> = { vital: true }): Promise<MbRelease> {
+      return get<MbRelease>(
+        `release/${id}`,
+        { inc: 'recordings+artist-credits+release-groups' },
+        who,
+      );
     },
     recording(id: string): Promise<MbRecording> {
       return get<MbRecording>(`recording/${id}`, { inc: 'artist-credits+releases+release-groups' });

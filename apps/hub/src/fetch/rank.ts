@@ -92,14 +92,18 @@ export function score(c: Candidate, want: Want): { scored?: Scored; excluded?: s
   reasons.push(`title ${Math.round(titleOverlap * 100)}% in name`);
 
   const titleTokens = new Set(tokens(want.title));
+  const folder = parentName(path).replace(/[_-]/g, ' ');
   for (const [key, re] of Object.entries(VERSION_TOKENS)) {
     const inName = re.test(base.replace(/[_-]/g, ' '));
+    // "Eagles Live/03 Hotel California.flac": the version word sits on the folder, not the file.
+    const inFolder = !inName && key !== 'explicit' && key !== 'clean' && re.test(folder);
     const askedFor = [...titleTokens].some((t) => re.test(t));
-    if (!inName || askedFor) continue;
+    if ((!inName && !inFolder) || askedFor) continue;
     if (want.policy.exclude.includes(key)) return { excluded: `rule: no ${key}` };
     if (key !== 'explicit' && key !== 'clean') {
+      // A folder is as telling as the name: "Eagles Live" holds live takes whatever the files say.
       s -= key === 'remix' ? 45 : 30;
-      reasons.push(`${key} in name`);
+      reasons.push(inName ? `${key} in name` : `${key} in folder`);
     }
   }
   // DJ edit packs and remix folders: the file is a version even when its name looks plain.

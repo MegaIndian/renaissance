@@ -13,7 +13,10 @@ import { normalize } from '../text.js';
 
 export type CreateResult =
   | { kind: 'request'; request: MusicRequest }
-  /** The same song or album is already being fetched (by anyone in the house). */
+  /**
+   * The same song or album is already being fetched (by anyone in the house); the caller is now a
+   * watcher of that request, so Ready and the item reach them too.
+   */
   | { kind: 'duplicate'; request: MusicRequest }
   | { kind: 'already'; already: AlreadyHere };
 
@@ -68,7 +71,12 @@ export function createRequestService(deps: {
         return { kind: 'already', already: { alreadyHere: true, item } };
       }
       const duplicate = activeDuplicate(input);
-      if (duplicate) return { kind: 'duplicate', request: duplicate };
+      if (duplicate) {
+        const watched = stores.requests.watch(duplicate.id, profile.id) ?? duplicate;
+        if (watched.requestedBy !== profile.id)
+          bus.publish(profile.id, { type: 'request', request: watched });
+        return { kind: 'duplicate', request: watched };
+      }
       const request = stores.requests.create(input, profile.id);
       bus.publish(profile.id, { type: 'request', request });
       deps.enqueue(request.id);
@@ -81,17 +89,23 @@ export function createRequestService(deps: {
         : stores.requests.listMine(profile.id);
     },
 
-    /** Own requests (or any, for admins). */
+    /** Own requests, ones the profile watches (or any, for admins). */
     get(profile: Profile, id: string): MusicRequest | undefined {
       const req = stores.requests.get(id);
       if (!req) return undefined;
-      return req.requestedBy === profile.id || profile.role === 'admin' ? req : undefined;
+      const mine = req.requestedBy === profile.id || (req.watchers ?? []).includes(profile.id);
+      return mine || profile.role === 'admin' ? req : undefined;
+    },
+
+    /** Only the asker (or an admin) may stop or retry a request; a watcher only sees it. */
+    owns(profile: Profile, req: MusicRequest): boolean {
+      return req.requestedBy === profile.id || profile.role === 'admin';
     },
 
     /** Runs a failed request again; one that already downloaded its file resumes at the import. */
     retry(profile: Profile, id: string): MusicRequest | 'not_found' | 'not_failed' {
       const req = this.get(profile, id);
-      if (!req) return 'not_found';
+      if (!req || !this.owns(profile, req)) return 'not_found';
       if (req.status !== 'failed') return 'not_failed';
       const next = stores.requests.update(id, {
         status: 'requested',
@@ -105,17 +119,31 @@ export function createRequestService(deps: {
     /**
      * Stops a request that has not started downloading; the undo of a request action. The row
      * becomes `cancelled` (its own status: nothing failed), and an album is unmonitored in Lidarr.
+     * The write is conditional: a poll or a step that finished while Lidarr was being told wins,
+     * and the answer is `too_late`.
      */
-    async cancel(profile: Profile, id: string): Promise<MusicRequest | 'not_found' | 'too_late'> {
+    async cancel(
+      profile: Profile,
+      id: string,
+    ): Promise<MusicRequest | 'not_found' | 'too_late' | 'not_active'> {
       const req = this.get(profile, id);
-      if (!req) return 'not_found';
+      if (!req || !this.owns(profile, req)) return 'not_found';
+      // Cancelling twice is fine (the undo button pressed again); a finished one has nothing to stop.
+      if (req.status === 'cancelled') return req;
+      if (req.status === 'ready' || req.status === 'failed') return 'not_active';
       if (req.status !== 'requested' && req.status !== 'finding') return 'too_late';
       const note = req.kind === 'album' ? await deps.abandon?.(req) : undefined;
-      const next = stores.requests.update(id, {
-        status: 'cancelled',
-        detail: `Cancelled by ${profile.name}${note ? `; ${note}` : ''}`,
-      })!;
-      bus.publish(next.requestedBy, { type: 'request', request: next });
+      const next = stores.requests.cancel(
+        id,
+        `Cancelled by ${profile.name}${note ? `; ${note}` : ''}`,
+      );
+      if (!next) {
+        const now = stores.requests.get(id);
+        if (!now) return 'not_found';
+        return now.status === 'ready' || now.status === 'failed' ? 'not_active' : 'too_late';
+      }
+      for (const who of [next.requestedBy, ...(next.watchers ?? [])])
+        bus.publish(who, { type: 'request', request: next });
       return next;
     },
   };

@@ -87,7 +87,12 @@ describe('GET /health', () => {
     const { app } = await build();
     const anon = await app.inject({ url: '/health' });
     expect(anon.statusCode).toBe(200);
-    expect(anon.json()).toEqual({ status: 'ok', service: 'renaissance-hub', version });
+    expect(anon.json()).toEqual({
+      status: 'ok',
+      service: 'renaissance-hub',
+      version,
+      database: 'ok',
+    });
     const bad = await app.inject({ url: '/health', headers: auth('nope') });
     expect(bad.json().integrations).toBeUndefined();
     const good = await app.inject({ url: '/health', headers: auth() });
@@ -353,8 +358,25 @@ describe('/requests', () => {
       payload: { kind: 'track', ...firemanSong },
     });
     expect(second.statusCode).toBe(200);
-    expect(second.json().id).toBe(first.json().id);
+    // The answer says so, names the running request, and Mom now watches it: it is in her list.
+    expect(second.json().alreadyRequested).toBe(true);
+    expect(second.json().request.id).toBe(first.json().id);
+    expect(second.json().request.watchers).toEqual([mom.id]);
     expect(second.json().alreadyHere).toBeUndefined();
+    const momList = await app.inject({ url: '/requests', headers: auth('tok-mom') });
+    expect(momList.json().map((r: { id: string }) => r.id)).toEqual([first.json().id]);
+    const momOne = await app.inject({
+      url: `/requests/${first.json().id}`,
+      headers: auth('tok-mom'),
+    });
+    expect(momOne.statusCode).toBe(200);
+    // A watcher sees it but cannot stop it: only the asker (or an admin) may.
+    const momCancel = await app.inject({
+      method: 'DELETE',
+      url: `/requests/${first.json().id}`,
+      headers: auth('tok-mom'),
+    });
+    expect(momCancel.statusCode).toBe(404);
     await app.hub.runner.idle();
     await app.close();
   });
@@ -482,13 +504,24 @@ describe('/catalogue/search', () => {
     await app.close();
   });
 
-  it('validates q and marks library hits', async () => {
+  it("validates q and marks library hits, by the words typed and by the rows' artists", async () => {
     const lib = fakeLibrary();
-    lib.library.search = async () => ({
-      tracks: [{ id: 'jf-t1', kind: 'track', title: 'Fireman', artist: 'Lil Wayne' }],
-      albums: [{ id: 'jf-a1', kind: 'album', title: 'Tha Carter II' }],
-      artists: [],
-    });
+    lib.library.search = async (_token: string, text: string) =>
+      text === 'fireman'
+        ? {
+            tracks: [{ id: 'jf-t1', kind: 'track', title: 'Fireman', artist: 'Lil Wayne' }],
+            albums: [{ id: 'jf-a1', kind: 'album', title: 'Tha Carter II' }],
+            artists: [],
+          }
+        : {
+            tracks: [],
+            albums: [],
+            artists: [{ id: 'jf-ar1', kind: 'artist', title: 'Lil Wayne' }],
+          };
+    lib.library.tracksByArtists = async (_token: string, names: readonly string[]) =>
+      names.includes('Lil Wayne')
+        ? [{ id: 'jf-t1', kind: 'track', title: 'Fireman', artist: 'Lil Wayne' }]
+        : [];
     const { app } = await build({ library: lib.library });
     expect((await app.inject({ url: '/catalogue/search?q=a', headers: auth() })).statusCode).toBe(
       400,
@@ -497,6 +530,10 @@ describe('/catalogue/search', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().songs[0]).toMatchObject({ title: 'Fireman', libraryId: 'jf-t1' });
     expect(res.json().albums[0]).toMatchObject({ title: carterAlbum.title, libraryId: 'jf-a1' });
+    // An artist query: the name search finds no track called "lil wayne", the artist lookup does.
+    const byArtist = await app.inject({ url: '/catalogue/search?q=lil wayne', headers: auth() });
+    expect(byArtist.statusCode).toBe(200);
+    expect(byArtist.json().songs[0]).toMatchObject({ title: 'Fireman', libraryId: 'jf-t1' });
     await app.close();
   });
 });

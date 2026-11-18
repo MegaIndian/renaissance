@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import {
   AlreadyHere,
+  AlreadyRequested,
   AskResponse,
   Budget,
   CatalogueSearch,
@@ -118,8 +119,9 @@ export function createHubClient(options: HubClientOptions) {
         scope === 'house' ? '/requests?scope=house' : '/requests',
       ),
     request: (id: string) => call(MusicRequest, 'GET', `/requests/${encodeURIComponent(id)}`),
+    /** A new request (201), the one already on its way (`alreadyRequested`), or the item already on the server. */
     createRequest: (input: NewRequest) =>
-      call(MusicRequest.or(AlreadyHere), 'POST', '/requests', input),
+      call(MusicRequest.or(AlreadyHere).or(AlreadyRequested), 'POST', '/requests', input),
     cancelRequest: (id: string) =>
       call(MusicRequest, 'DELETE', `/requests/${encodeURIComponent(id)}`),
     retryRequest: (id: string) =>

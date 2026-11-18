@@ -82,6 +82,17 @@ export const migrations: readonly string[] = [
   `ALTER TABLE requests ADD COLUMN progress_unit TEXT;
    ALTER TABLE requests ADD COLUMN progress_eta INTEGER;
    UPDATE requests SET status = 'cancelled', reason = NULL WHERE status = 'failed' AND reason = 'cancelled';`,
+  // 4: what the catalogue matched when it differs from what was typed, and the profiles who asked
+  // for the same thing while it was on its way (they get Ready and the item too).
+  `ALTER TABLE requests ADD COLUMN matched_title TEXT;
+   ALTER TABLE requests ADD COLUMN matched_artist TEXT;
+   CREATE TABLE request_watchers (
+     request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+     profile TEXT NOT NULL REFERENCES profiles(id),
+     added_at TEXT NOT NULL,
+     PRIMARY KEY (request_id, profile)
+   );
+   CREATE INDEX request_watchers_by_profile ON request_watchers (profile);`,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

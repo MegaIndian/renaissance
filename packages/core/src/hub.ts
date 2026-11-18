@@ -153,9 +153,26 @@ export const MusicRequest = NewRequest.extend({
   progress: RequestProgress.optional(),
   /** The Soulseek path of the file that was downloaded; a retry imports it without a new download. */
   sourceFile: z.string().optional(),
+  /**
+   * What the catalogue matched when it differs from what was typed (a Deezer row resolved to a
+   * MusicBrainz recording with another spelling or credit): the song that will actually arrive.
+   */
+  matched: z.object({ title: z.string().min(1), artist: z.string().min(1) }).optional(),
+  /** Profiles who asked for the same thing while it was on its way; they get Ready and the item too. */
+  watchers: z.array(z.string().min(1)).optional(),
   steps: z.array(RequestStep),
 });
 export type MusicRequest = z.infer<typeof MusicRequest>;
+
+/**
+ * What `POST /requests` answers when someone in the house is already fetching the same song or
+ * album: the running request, and the caller is now one of its watchers.
+ */
+export const AlreadyRequested = z.object({
+  alreadyRequested: z.literal(true),
+  request: MusicRequest,
+});
+export type AlreadyRequested = z.infer<typeof AlreadyRequested>;
 
 // Collection (F86)
 

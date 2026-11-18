@@ -4,6 +4,7 @@ import type { Authenticator } from '../auth/authenticator.js';
 import { tokenFrom } from '../auth/plugin.js';
 import { describe } from '../config.js';
 import type { HubConfig } from '../config.js';
+import type { HealthState } from '../health.js';
 import { version } from '../version.js';
 
 /**
@@ -17,9 +18,17 @@ export async function healthRoutes(
   app: FastifyInstance,
   config: HubConfig,
   authenticator: Authenticator,
+  health?: HealthState,
 ): Promise<void> {
-  app.get('/health', { config: { rateLimit: false } }, async (request) => {
-    const body: Record<string, unknown> = { status: 'ok', service: 'renaissance-hub', version };
+  app.get('/health', { config: { rateLimit: false } }, async (request, reply) => {
+    const databaseOk = health?.database.ok ?? true;
+    const body: Record<string, unknown> = {
+      status: databaseOk ? 'ok' : 'degraded',
+      service: 'renaissance-hub',
+      version,
+      ...(health ? { database: databaseOk ? 'ok' : 'error' } : {}),
+    };
+    if (!databaseOk) reply.code(503);
     const token = tokenFrom(request);
     if (token && authenticator.configured) {
       try {

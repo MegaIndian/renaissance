@@ -65,6 +65,8 @@ const schema = z.object({
   RENAISSANCE_ALBUM_DEADLINE_DAYS: z.coerce.number().min(0).default(7),
   /** The slskd completed-downloads folder as Lidarr's container sees it. */
   RENAISSANCE_LIDARR_DOWNLOADS_DIR: z.string().trim().min(1).default('/downloads/complete'),
+  /** Where soularr parks files Lidarr refused to import, as Lidarr sees it; the hub files them from there. */
+  RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR: optionalText,
   /** Lidarr root folder for new artists; empty takes Lidarr's first root folder. */
   LIDARR_ROOT_FOLDER: optionalText,
   JELLYFIN_URL: optionalUrl,
@@ -100,6 +102,7 @@ export interface HubConfig {
   /** Milliseconds an album request may wait on Lidarr. */
   albumDeadlineMs: number;
   lidarrDownloadsDir: string;
+  lidarrFailedImportsDir: string | undefined;
   contact: string | undefined;
   jellyfin: { url: string | undefined; apiKey: string | undefined };
   anthropic: { apiKey: string | undefined; intentModel: string; enrichmentModel: string };
@@ -140,6 +143,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dryRun: e.RENAISSANCE_HUB_DRY_RUN,
     albumDeadlineMs: e.RENAISSANCE_ALBUM_DEADLINE_DAYS * 24 * 60 * 60_000,
     lidarrDownloadsDir: e.RENAISSANCE_LIDARR_DOWNLOADS_DIR,
+    lidarrFailedImportsDir: e.RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR,
     contact: e.RENAISSANCE_CONTACT,
     jellyfin: { url: e.JELLYFIN_URL, apiKey: e.JELLYFIN_API_KEY },
     anthropic: {

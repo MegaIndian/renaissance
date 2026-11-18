@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import type { Profile } from '@renaissance/core';
 
+import { HttpError } from '../http.js';
 import type { Authenticator } from './authenticator.js';
 
 declare module 'fastify' {
@@ -60,10 +61,22 @@ export function requireProfile(authenticator: Authenticator, allowQuery = false)
     let profile: Profile | null;
     try {
       profile = await authenticator.authenticate(token);
-    } catch {
-      return reply.code(503).send({
-        error: 'jellyfin_unreachable',
-        message: 'Jellyfin did not answer; try again shortly.',
+    } catch (error) {
+      // Jellyfin not answering is one thing; the hub's own database refusing a write (a read-only
+      // volume, a full disk) is another, and must not be reported as Jellyfin's fault.
+      if (error instanceof HttpError) {
+        return reply.code(503).send({
+          error: 'jellyfin_unreachable',
+          message: 'Jellyfin did not answer; try again shortly.',
+        });
+      }
+      request.log.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'authentication failed on the hub side',
+      );
+      return reply.code(500).send({
+        error: 'storage_error',
+        message: 'The hub could not read or write its database.',
       });
     }
     if (!profile) return reply.code(401).send({ error: 'unauthorized' });

@@ -37,6 +37,8 @@ services:
       LIDARR_API_KEY: <lidarr api key>
       LIDARR_ROOT_FOLDER: /files/media/music
       RENAISSANCE_LIDARR_DOWNLOADS_DIR: /files/downloads/music/complete
+      # soularr's failed_imports sits under the folder above on Main-HUB; set this when it does not.
+      # RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR: /files/downloads/music/failed_imports
       SLSKD_URL: http://192.168.87.196:30336
       SLSKD_API_KEY: <slskd api key>
       NAVIDROME_URL: http://192.168.87.196:30043

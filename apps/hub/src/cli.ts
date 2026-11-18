@@ -55,7 +55,12 @@ async function main(): Promise<number> {
   const log = recordingLogger((line) => console.log(line));
   const stores = createStores(config.databasePath);
   const bus = createEventBus();
-  const library = jellyfinLibrary({ url: config.jellyfin.url, apiKey: config.jellyfin.apiKey });
+  const library = jellyfinLibrary({
+    url: config.jellyfin.url,
+    apiKey: config.jellyfin.apiKey,
+    dryRun: config.dryRun,
+    log,
+  });
   const catalogue = catalogueService({
     musicBrainz: musicBrainzClient({ version, contact: config.contact }),
     deezer: deezerClient(),
@@ -97,7 +102,11 @@ async function main(): Promise<number> {
     ...(lidarr ? { lidarr } : {}),
     ...(navidrome ? { navidrome } : {}),
     lidarrDownloadsDir: config.lidarrDownloadsDir,
+    ...(config.lidarrFailedImportsDir
+      ? { lidarrFailedImportsDir: config.lidarrFailedImportsDir }
+      : {}),
     dryRun: config.dryRun,
+    arrivalCheckMs: 0,
     ...(config.lidarr.rootFolder ? { rootFolder: config.lidarr.rootFolder } : {}),
     log,
   });
@@ -132,7 +141,12 @@ async function main(): Promise<number> {
       `${parsed.dryRun ? 'dry run: ' : ''}request ${request.id} for "${parsed.title}" by ${parsed.artist}`,
     );
   }
-  const result = await pipeline.run(request!.id);
+  let result = await pipeline.run(request!.id);
+  if (result?.kind === 'album' && result.status === 'finding') {
+    // One poll, as the hub's minute tick would do: files soularr already fetched are filed now.
+    await pipeline.pollAlbums();
+    result = stores.requests.get(result.id);
+  }
   stores.close();
   if (!result) return 1;
   console.log(

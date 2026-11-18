@@ -1,7 +1,9 @@
 /**
  * `GET /catalogue/search?q=`: typeahead for the one search box (F61). Answers at once: the cache
  * when the words were looked up before, else Deezer rows (`partial: true`); MusicBrainz is asked on
- * Enter and when a song is added, never per keystroke.
+ * Enter and when a song is added, never per keystroke. Deezer calls are spaced through their own
+ * limiter, so the typist's older prefix is dropped (`503 superseded`) and a full queue answers
+ * `503 busy`; the app keeps the rows it has and asks again.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -43,16 +45,27 @@ export async function catalogueRoutes(
         }
         throw error;
       }
-      // Library hits first (F61): songs already on the server carry their Jellyfin id.
+      // Library hits first (F61): songs already on the server carry their Jellyfin id. The words
+      // are searched as a name, and the rows' artists are looked up too, so an artist query
+      // ("kevin macleod") still marks the songs the server has.
       if (deps.library.configured && request.callerToken) {
-        const instant = await deps.library.search(request.callerToken, parsed.data.q, 10);
+        const token = request.callerToken;
+        const artists = [...new Set(result.songs.map((s) => s.artist))].slice(0, 4);
+        const [instant, byArtist] = await Promise.all([
+          deps.library.search(token, parsed.data.q, 10),
+          deps.library.tracksByArtists(token, artists).catch(() => []),
+        ]);
+        const sameSong = (
+          t: { title: string; artist?: string | undefined },
+          song: { title: string; artist: string },
+        ) =>
+          t.title.toLowerCase() === song.title.toLowerCase() &&
+          !!t.artist &&
+          song.artist.toLowerCase().includes(t.artist.toLowerCase().split(' ')[0] ?? '');
         for (const song of result.songs) {
-          const hit = instant.tracks.find(
-            (t) =>
-              t.title.toLowerCase() === song.title.toLowerCase() &&
-              !!t.artist &&
-              song.artist.toLowerCase().includes(t.artist.toLowerCase().split(' ')[0] ?? ''),
-          );
+          const hit =
+            instant.tracks.find((t) => sameSong(t, song)) ??
+            byArtist.find((t) => sameSong(t, song));
           if (hit) song.libraryId = hit.id;
         }
         for (const album of result.albums) {

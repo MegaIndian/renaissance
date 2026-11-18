@@ -153,15 +153,38 @@ describe('musicBrainzClient', () => {
 });
 
 describe('deezerClient', () => {
-  it('returns tracks and swallows failures', async () => {
+  it('returns tracks, albums and artists, and reports a failure or a quota error as no answer', async () => {
+    const limiter = createRateLimiter(0);
     const ok = deezerClient({
-      fetch: fakeFetch({ '/search': () => ({ data: [deezerTrack] }) }).fetch,
+      fetch: fakeFetch({
+        '/search/album': () => ({
+          data: [{ id: 3, title: 'Tha Carter II', artist: deezerTrack.artist }],
+        }),
+        '/search/artist': () => ({ data: [deezerTrack.artist] }),
+        '/search': () => ({ data: [deezerTrack] }),
+      }).fetch,
+      limiter,
     });
-    expect((await ok.search('fireman'))[0]?.preview).toBe(deezerTrack.preview);
-    const down = deezerClient({ fetch: fakeFetch({ '/search': () => ({ __status: 500 }) }).fetch });
-    expect(await down.search('fireman')).toEqual([]);
-    const empty = deezerClient({ fetch: fakeFetch({ '/search': () => ({}) }).fetch });
-    expect(await empty.search('fireman')).toEqual([]);
+    expect((await ok.search('fireman'))?.[0]?.preview).toBe(deezerTrack.preview);
+    expect((await ok.searchAlbums('carter'))?.[0]?.title).toBe('Tha Carter II');
+    expect((await ok.searchArtists('wayne'))?.[0]?.name).toBe('Lil Wayne');
+    const down = deezerClient({
+      fetch: fakeFetch({ '/search': () => ({ __status: 500 }) }).fetch,
+      limiter,
+    });
+    expect(await down.search('fireman')).toBeUndefined();
+    const empty = deezerClient({ fetch: fakeFetch({ '/search': () => ({}) }).fetch, limiter });
+    expect(await empty.search('fireman')).toBeUndefined();
+    // The quota: a 200 with an error body and no data is not "nothing found".
+    const quota = deezerClient({
+      fetch: fakeFetch({
+        '/search': () => ({
+          error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 },
+        }),
+      }).fetch,
+      limiter,
+    });
+    expect(await quota.search('fireman')).toBeUndefined();
   });
 });
 
@@ -299,13 +322,44 @@ describe('catalogueService', () => {
     expect(calls.filter((c) => c.url.includes('/release/')).length).toBe(1);
   });
 
-  it('falls back to the first recording when no title matches exactly, and remembers a miss', async () => {
+  it('never lets a remix or another title stand in for the song, accepts a feature credit, and remembers a miss', async () => {
     const stores = memoryStores();
     const { fetch } = fakeFetch({
-      '/recording?': (url) =>
-        url.searchParams.get('query')?.includes('Nothing')
-          ? { recordings: [] }
-          : { recordings: [{ ...fireman, title: 'Fireman (Remix)' }] },
+      '/recording?': (url) => {
+        const q = url.searchParams.get('query') ?? '';
+        if (q.includes('Nothing')) return { recordings: [] };
+        if (q.includes('Drowning')) {
+          return {
+            recordings: [
+              {
+                ...fireman,
+                id: 'c0ffee00-0000-4000-8000-00000000d001',
+                title: 'Drowning (feat. Kodak Black)',
+              },
+            ],
+          };
+        }
+        if (q.includes('Kolaveri')) {
+          return {
+            recordings: [
+              {
+                ...fireman,
+                id: 'c0ffee00-0000-4000-8000-00000000d002',
+                title: 'Why This Kolaveri Di (The Soup of Love)',
+              },
+            ],
+          };
+        }
+        // What MusicBrainz lists for "Fireman" by Lil Wayne when the plain recording is missing:
+        // a remix, a song whose title merely contains the words, and a different song.
+        return {
+          recordings: [
+            { ...fireman, id: 'c0ffee00-0000-4000-8000-00000000a001', title: 'Fireman (Remix)' },
+            { ...fireman, id: 'c0ffee00-0000-4000-8000-00000000a002', title: 'Lil Wayne Fireman' },
+            { ...fireman, id: 'c0ffee00-0000-4000-8000-00000000a003', title: 'Hustler Musik' },
+          ],
+        };
+      },
       '/release-group?': () => ({ 'release-groups': [] }),
     });
     const mb = musicBrainzClient({
@@ -319,7 +373,15 @@ describe('catalogueService', () => {
       deezer: deezerClient({ fetch }),
       cache: stores.cache,
     });
-    expect((await svc.findSong('Fireman', 'Lil Wayne'))?.title).toBe('Fireman (Remix)');
+    // A remix is another song: the request fails with catalogue_miss rather than fetching it.
+    expect(await svc.findSong('Fireman', 'Lil Wayne')).toBeUndefined();
+    // A feature credit or a subtitle in the title is the same song.
+    expect((await svc.findSong('Drowning', 'Lil Wayne'))?.title).toBe(
+      'Drowning (feat. Kodak Black)',
+    );
+    expect((await svc.findSong('Why This Kolaveri Di', 'Lil Wayne'))?.title).toBe(
+      'Why This Kolaveri Di (The Soup of Love)',
+    );
     expect(await svc.findSong('Nothing', 'Nobody')).toBeUndefined();
     expect(await svc.findSong('Nothing', 'Nobody')).toBeUndefined();
     expect(await svc.findAlbum('Nothing', 'Nobody')).toBeUndefined();
@@ -439,7 +501,8 @@ describe('rate limiter: four typists', () => {
     // Two phones typing the same word cost one call.
     const a1 = limiter.schedule(call('fireman'), { key: 'fireman', owner: 'sahil', batch: 'f' });
     const a2 = limiter.schedule(call('fireman'), { key: 'fireman', owner: 'mom', batch: 'f' });
-    expect(a1).toBe(a2);
+    // One call, but each phone holds its own promise (so one moving on never fails the other).
+    expect(a1).not.toBe(a2);
     // Mom types on: her earlier prefix (a different batch) is dropped while it waits.
     const old = limiter.schedule(call('fire'), { key: 'fire', owner: 'mom', batch: 'fire' });
     const older = limiter.schedule(call('fir'), { key: 'fir', owner: 'kevin', batch: 'fir' });
@@ -453,6 +516,7 @@ describe('rate limiter: four typists', () => {
     await expect(refused).rejects.toMatchObject({ code: 'busy' });
     await vi.advanceTimersByTimeAsync(0);
     expect(await a1).toBe('fireman');
+    expect(await a2).toBe('fireman');
     await vi.advanceTimersByTimeAsync(3000);
     expect(await older).toBe('fir');
     expect(await newer).toBe('firem');
@@ -467,6 +531,80 @@ describe('rate limiter: four typists', () => {
     expect(await plain).toBe('plain');
     expect(new LimiterBusyError('busy').message).toContain('busy');
     vi.useRealTimers();
+  });
+
+  it('drops a shared call only when every owner has moved on, and never a vital one', async () => {
+    vi.useFakeTimers();
+    try {
+      const limiter = createRateLimiter(1000, { maxQueue: 2 });
+      const ran: string[] = [];
+      const call = (name: string) => async () => {
+        ran.push(name);
+        return name;
+      };
+      // Something is running (and stays running until released), so the next calls wait in the queue.
+      let release: (value: string) => void = () => undefined;
+      const running = limiter.schedule(
+        () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+          }),
+      );
+      // Mom and Dad both wait on "fireman"; Mom types on. Dad's answer must still come.
+      const momFireman = limiter.schedule(call('fireman'), {
+        key: 'fireman',
+        owner: 'mom',
+        batch: 'fireman',
+      });
+      const dadFireman = limiter.schedule(call('fireman'), {
+        key: 'fireman',
+        owner: 'dad',
+        batch: 'fireman',
+      });
+      const momMore = limiter.schedule(call('fireman x'), {
+        key: 'fireman x',
+        owner: 'mom',
+        batch: 'fireman x',
+      });
+      await expect(momFireman).rejects.toMatchObject({ code: 'superseded' });
+      expect(limiter.queued()).toBe(2);
+      // The queue is full for typists, never for the pipeline, whose call goes first.
+      await expect(
+        limiter.schedule(call('typist'), { owner: 'kevin', batch: 'k' }),
+      ).rejects.toMatchObject({
+        code: 'busy',
+      });
+      const vital = limiter.schedule(call('pipeline'), { vital: true });
+      expect(limiter.queued()).toBe(3);
+      release('running');
+      expect(await running).toBe('running');
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(await vital).toBe('pipeline');
+      expect(await dadFireman).toBe('fireman');
+      expect(await momMore).toBe('fireman x');
+      expect(ran).toEqual(['pipeline', 'fireman', 'fireman x']);
+      // An anonymous sharer keeps a call alive even when its typist moves on.
+      const hold = limiter.schedule(
+        () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+          }),
+      );
+      const shared = limiter.schedule(call('kishore'), {
+        key: 'kishore',
+        owner: 'mom',
+        batch: 'kishore',
+      });
+      const anonymous = limiter.schedule(call('kishore'), { key: 'kishore' });
+      limiter.schedule(call('kishore k'), { key: 'kishore k', owner: 'mom', batch: 'kishore k' });
+      await expect(shared).rejects.toMatchObject({ code: 'superseded' });
+      release('held');
+      expect(await hold).toBe('held');
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await anonymous).toBe('kishore');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('catalogueService shares one search between concurrent callers and passes the owner on', async () => {
@@ -524,6 +662,12 @@ describe('the fast path (typeahead)', () => {
         mbCalls += 1;
         return { 'release-groups': [{ ...rg, 'artist-credit': [wayne] }] };
       },
+      'api.deezer.com/search/album': () => ({
+        data: [
+          { id: 3, title: 'Tha Carter II', artist: deezerTrack.artist, release_date: '2005-12-06' },
+        ],
+      }),
+      'api.deezer.com/search/artist': () => ({ data: [deezerTrack.artist] }),
       'api.deezer.com/search': () => {
         dzCalls += 1;
         return { data: [deezerTrack, { ...deezerTrack, id: 9, title: 'Fireman' }] };
@@ -536,7 +680,7 @@ describe('the fast path (typeahead)', () => {
         fetch,
         limiter: createRateLimiter(0),
       }),
-      deezer: deezerClient({ fetch }),
+      deezer: deezerClient({ fetch, limiter: createRateLimiter(0) }),
       cache: stores.cache,
     });
     const fast = await svc.search('fireman', { owner: 'u-mom', fast: true });

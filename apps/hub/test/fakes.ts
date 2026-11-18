@@ -350,6 +350,7 @@ export function fakeLibrary(
       searches.push(text);
       return { tracks: [], albums: [], artists: [] };
     },
+    tracksByArtists: async () => [],
     refresh: async () => {
       if (options.failRefresh) throw new Error('jellyfin down');
       refreshes.push(1);
