@@ -1,4 +1,10 @@
-/** Navidrome through the Subsonic API: `startScan` after an import. Optional. */
+/**
+ * Navidrome through the Subsonic API: `startScan` after an import. Optional.
+ *
+ * Authentication is the Subsonic token scheme: `t = md5(password + salt)` with a fresh salt per
+ * call, so the password itself never travels. md5 here is the protocol, not password storage; the
+ * password is an environment variable the hub reads, never something it stores or hashes to keep.
+ */
 import { createHash, randomBytes } from 'node:crypto';
 
 import { httpJson } from '../http.js';

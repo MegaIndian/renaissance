@@ -119,7 +119,7 @@ export function AskBar({
           {shortcutKey() === 'mac' ? t('ask.shortcutMac') : t('ask.shortcut')}
         </kbd>
       </div>
-      {compact && !value && !showResults ? null : (
+      {(compact && !value && !showResults) || answer ? null : (
         <p className="truncate text-caption text-muted-foreground" aria-live="polite">
           {hint}
         </p>

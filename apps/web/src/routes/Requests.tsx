@@ -116,6 +116,10 @@ export function Requests() {
   );
 }
 
+function percent(done: number, total: number): number {
+  return total > 0 ? Math.min(100, Math.max(0, Math.round((done / total) * 100))) : 0;
+}
+
 function RequestRow({
   request,
   showWho,
@@ -149,12 +153,19 @@ function RequestRow({
         <StatusPill status={request.status} />
       </div>
       {request.status === 'downloading' && request.progress ? (
-        <progress
-          className="h-1 w-full"
+        <div
+          role="progressbar"
           aria-label={t('requests.status.downloading')}
-          value={request.progress.done}
-          max={request.progress.total}
-        />
+          aria-valuenow={request.progress.done}
+          aria-valuemin={0}
+          aria-valuemax={request.progress.total}
+          className="h-1 w-full overflow-hidden rounded-pill bg-muted"
+        >
+          <div
+            className="h-full rounded-pill bg-primary"
+            style={{ width: `${percent(request.progress.done, request.progress.total)}%` }}
+          />
+        </div>
       ) : null}
       {reason ? <p className="text-caption text-danger">{reason}</p> : null}
       {last?.detail ? <p className="text-caption text-muted-foreground">{last.detail}</p> : null}

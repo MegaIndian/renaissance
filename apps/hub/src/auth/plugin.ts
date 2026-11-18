@@ -12,14 +12,30 @@ declare module 'fastify' {
   }
 }
 
-/** `Authorization: Bearer <token>`, `X-Emby-Token`, or `?token=` (EventSource cannot set headers). */
+/** Longest Authorization header the hub reads; Jellyfin tokens are 32 characters. */
+export const MAX_AUTH_HEADER = 1024;
+
+/**
+ * `Authorization: Bearer <token>`, `Authorization: MediaBrowser ..., Token="<token>"`,
+ * `X-Emby-Token`, or `?token=` (EventSource cannot set headers). Parsed with string splits, no
+ * regular expression, so a long header cannot make it slow.
+ */
 export function tokenFrom(request: FastifyRequest, allowQuery = false): string | null {
   const auth = request.headers.authorization;
-  if (typeof auth === 'string') {
-    const m = /^(?:Bearer|MediaBrowser)\s+(.+)$/i.exec(auth.trim());
-    if (m?.[1]) {
-      const token = /Token="([^"]+)"/.exec(m[1]);
-      return token?.[1] ?? m[1].trim();
+  if (typeof auth === 'string' && auth.length <= MAX_AUTH_HEADER) {
+    const trimmed = auth.trim();
+    const space = trimmed.indexOf(' ');
+    const scheme = (space === -1 ? trimmed : trimmed.slice(0, space)).toLowerCase();
+    const rest = space === -1 ? '' : trimmed.slice(space + 1).trim();
+    if (rest.length > 0 && (scheme === 'bearer' || scheme === 'mediabrowser')) {
+      const marker = 'token="';
+      const at = rest.toLowerCase().indexOf(marker);
+      if (at !== -1) {
+        const start = at + marker.length;
+        const end = rest.indexOf('"', start);
+        if (end > start) return rest.slice(start, end);
+      }
+      return rest;
     }
   }
   const emby = request.headers['x-emby-token'];

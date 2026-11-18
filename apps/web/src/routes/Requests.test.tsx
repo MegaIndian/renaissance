@@ -53,7 +53,10 @@ describe('Requests', () => {
     renderWithI18n(<Requests />, hub);
     expect(await screen.findByText('Fireman')).toBeInTheDocument();
     expect(screen.getByText('Downloading')).toBeInTheDocument();
-    expect(screen.getByRole('progressbar', { name: 'Downloading' })).toHaveValue(42);
+    expect(screen.getByRole('progressbar', { name: 'Downloading' })).toHaveAttribute(
+      'aria-valuenow',
+      '42',
+    );
     expect(screen.getByText('Failed')).toBeInTheDocument();
     expect(screen.getByText('Nobody on Soulseek is sharing it right now')).toBeInTheDocument();
     expect(screen.getByText('Soulseek: "a boogie drowning": 0 files')).toBeInTheDocument();

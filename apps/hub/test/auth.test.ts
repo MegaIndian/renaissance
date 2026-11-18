@@ -90,6 +90,25 @@ describe('tokenFrom and guards', () => {
     ).toBe('emby');
     expect((await app.inject({ url: '/t?token=q' })).json()).toEqual({ header: null, query: 'q' });
     expect((await app.inject({ url: '/t' })).json()).toEqual({ header: null, query: null });
+    expect(
+      (await app.inject({ url: '/t', headers: { authorization: 'Basic abc' } })).json().header,
+    ).toBeNull();
+    expect(
+      (await app.inject({ url: '/t', headers: { authorization: 'Bearer' } })).json().header,
+    ).toBeNull();
+    expect(
+      (
+        await app.inject({ url: '/t', headers: { authorization: `Bearer ${'a'.repeat(2000)}` } })
+      ).json().header,
+    ).toBeNull();
+    expect(
+      (
+        await app.inject({
+          url: '/t',
+          headers: { authorization: 'mediabrowser Client="x", Token="' },
+        })
+      ).json().header,
+    ).toBe('Client="x", Token="');
     await app.close();
   });
 

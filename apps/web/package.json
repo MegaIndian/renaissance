@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "screenshots:phase-2": "node scripts/screenshots.mjs --phase-2"
   },
   "dependencies": {
     "@renaissance/core": "workspace:*",

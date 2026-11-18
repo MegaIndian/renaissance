@@ -366,6 +366,22 @@ for i in 1 2 3; do curl -s -o /dev/null -w '%{http_code}\n' http://localhost:878
 | 415  | A content type the hub has no parser for (anything but JSON or plain text) |
 | 429  | More requests than the per-address limit in a minute                       |
 
+## The web app
+
+`apps/web` talks to the hub through `createHubClient` (`packages/core/src/hub-client.ts`) from one
+`HubProvider` (`apps/web/src/lib/hub.ts`). The hub's address is `VITE_HUB_URL` at build time, else
+this host on port 8787. The token is the signed-in Jellyfin session's; the phase 0 shell, which has no
+sign-in yet, reads `?hubToken=<jellyfin token>` once and keeps it under `renaissance.hubToken`:
+
+```sh
+pnpm dev
+open "http://localhost:5173/requests?hubToken=$TOKEN"
+```
+
+The Requests tab lists the caller's requests live over `GET /events`, with cancel and retry and an
+admin "Whole house" switch; Library's "Mine" is `GET /collection`; the Ask bar sends Enter to
+`POST /ask?stream=1` and shows the library hits, then the action cards with undo and the one-line why.
+
 ## The request CLI and dry runs
 
 `pnpm --filter hub request "<title>" "<artist>"` runs one request through the pipeline from the
