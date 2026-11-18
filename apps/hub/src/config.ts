@@ -19,6 +19,28 @@ const secret = z
   .optional()
   .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.trim()));
 
+const optionalText = z
+  .string()
+  .optional()
+  .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.trim()));
+
+const list = z
+  .string()
+  .trim()
+  .default('')
+  .transform((v) =>
+    v
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+
+const flag = z
+  .string()
+  .trim()
+  .default('false')
+  .transform((v) => ['1', 'true', 'yes', 'on'].includes(v.toLowerCase()));
+
 /** The web app's Vite dev server; allowed by default outside production so a fresh clone just works. */
 export const DEV_CORS_ORIGINS = ['http://localhost:5173'] as const;
 
@@ -28,16 +50,21 @@ const schema = z.object({
   RENAISSANCE_HUB_PORT: z.coerce.number().int().min(1).max(65535).default(8787),
   /** Requests per minute per client address; 0 turns the limit off. */
   RENAISSANCE_HUB_RATE_LIMIT: z.coerce.number().int().min(0).default(120),
-  RENAISSANCE_HUB_CORS_ORIGINS: z
-    .string()
-    .trim()
-    .default('')
-    .transform((v) =>
-      v
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
+  RENAISSANCE_HUB_CORS_ORIGINS: list,
+  /** Behind a reverse proxy: trust `x-forwarded-for` so the rate limit sees the client, not the proxy. */
+  RENAISSANCE_HUB_TRUST_PROXY: flag,
+  /** SQLite file for the household database; `:memory:` keeps nothing. */
+  RENAISSANCE_HUB_DB: z.string().trim().min(1).default('./data/hub.sqlite'),
+  /** Jellyfin user names or ids that may see the whole house. Empty: Jellyfin administrators. */
+  RENAISSANCE_HUB_ADMINS: list,
+  /** Monthly model spend in US dollars; the model turns off when reached. 0 turns the model off. */
+  RENAISSANCE_BUDGET_USD_MONTH: z.coerce.number().min(0).default(10),
+  /** Log every slskd and Lidarr write instead of doing it; searches still run. */
+  RENAISSANCE_HUB_DRY_RUN: flag,
+  /** The slskd completed-downloads folder as Lidarr's container sees it. */
+  RENAISSANCE_LIDARR_DOWNLOADS_DIR: z.string().trim().min(1).default('/downloads/complete'),
+  /** Lidarr root folder for new artists; empty takes Lidarr's first root folder. */
+  LIDARR_ROOT_FOLDER: optionalText,
   JELLYFIN_URL: optionalUrl,
   JELLYFIN_API_KEY: secret,
   ANTHROPIC_API_KEY: secret,
@@ -47,6 +74,11 @@ const schema = z.object({
   LIDARR_API_KEY: secret,
   SLSKD_URL: optionalUrl,
   SLSKD_API_KEY: secret,
+  NAVIDROME_URL: optionalUrl,
+  NAVIDROME_USER: optionalText,
+  NAVIDROME_PASSWORD: secret,
+  /** Sent to MusicBrainz as the User-Agent contact, as its etiquette asks. */
+  RENAISSANCE_CONTACT: optionalText,
 });
 
 export interface HubConfig {
@@ -58,10 +90,18 @@ export interface HubConfig {
   corsOrigins: string[];
   /** Requests per minute one client address may make; 0 means no limit. */
   rateLimitPerMinute: number;
+  trustProxy: boolean;
+  databasePath: string;
+  admins: string[];
+  budgetUsdPerMonth: number;
+  dryRun: boolean;
+  lidarrDownloadsDir: string;
+  contact: string | undefined;
   jellyfin: { url: string | undefined; apiKey: string | undefined };
   anthropic: { apiKey: string | undefined; intentModel: string; enrichmentModel: string };
-  lidarr: { url: string | undefined; apiKey: string | undefined };
+  lidarr: { url: string | undefined; apiKey: string | undefined; rootFolder: string | undefined };
   slskd: { url: string | undefined; apiKey: string | undefined };
+  navidrome: { url: string | undefined; user: string | undefined; password: string | undefined };
 }
 
 export class ConfigError extends Error {
@@ -89,14 +129,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     port: e.RENAISSANCE_HUB_PORT,
     corsOrigins,
     rateLimitPerMinute: e.RENAISSANCE_HUB_RATE_LIMIT,
+    trustProxy: e.RENAISSANCE_HUB_TRUST_PROXY,
+    databasePath: e.RENAISSANCE_HUB_DB,
+    admins: e.RENAISSANCE_HUB_ADMINS,
+    budgetUsdPerMonth: e.RENAISSANCE_BUDGET_USD_MONTH,
+    dryRun: e.RENAISSANCE_HUB_DRY_RUN,
+    lidarrDownloadsDir: e.RENAISSANCE_LIDARR_DOWNLOADS_DIR,
+    contact: e.RENAISSANCE_CONTACT,
     jellyfin: { url: e.JELLYFIN_URL, apiKey: e.JELLYFIN_API_KEY },
     anthropic: {
       apiKey: e.ANTHROPIC_API_KEY,
       intentModel: e.ANTHROPIC_INTENT_MODEL,
       enrichmentModel: e.ANTHROPIC_ENRICHMENT_MODEL,
     },
-    lidarr: { url: e.LIDARR_URL, apiKey: e.LIDARR_API_KEY },
+    lidarr: { url: e.LIDARR_URL, apiKey: e.LIDARR_API_KEY, rootFolder: e.LIDARR_ROOT_FOLDER },
     slskd: { url: e.SLSKD_URL, apiKey: e.SLSKD_API_KEY },
+    navidrome: { url: e.NAVIDROME_URL, user: e.NAVIDROME_USER, password: e.NAVIDROME_PASSWORD },
   };
 }
 
@@ -108,11 +156,20 @@ export function describe(config: HubConfig): Record<string, string | number | bo
     port: config.port,
     corsOrigins: config.corsOrigins.length,
     rateLimitPerMinute: config.rateLimitPerMinute,
+    trustProxy: config.trustProxy,
+    database: config.databasePath === ':memory:' ? 'memory' : 'file',
+    admins: config.admins.length,
+    budgetUsdPerMonth: config.budgetUsdPerMonth,
+    dryRun: config.dryRun,
     jellyfin: config.jellyfin.url !== undefined && config.jellyfin.apiKey !== undefined,
     anthropic: config.anthropic.apiKey !== undefined,
     intentModel: config.anthropic.intentModel,
     enrichmentModel: config.anthropic.enrichmentModel,
     lidarr: config.lidarr.url !== undefined && config.lidarr.apiKey !== undefined,
     slskd: config.slskd.url !== undefined && config.slskd.apiKey !== undefined,
+    navidrome:
+      config.navidrome.url !== undefined &&
+      config.navidrome.user !== undefined &&
+      config.navidrome.password !== undefined,
   };
 }

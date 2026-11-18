@@ -6,6 +6,11 @@ async function main(): Promise<void> {
   const app = await buildApp({ config, logger: true });
   app.log.info({ integrations: describe(config) }, 'renaissance-hub starting');
   await app.listen({ host: config.host, port: config.port });
+  const stop = (): void => {
+    void app.close().then(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
 }
 
 main().catch((error: unknown) => {

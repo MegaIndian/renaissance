@@ -79,5 +79,25 @@
   "error": {
     "title": "Something went wrong on this page",
     "body": "Nothing was changed. Go home and try again."
+  },
+  "hub": {
+    "summary": {
+      "searchLibrary": "Searched the library for \"{{query}}\": {{count}} results",
+      "lookupCatalogue": "Looked up \"{{query}}\" in the catalogue: {{count}} results",
+      "alreadyHere": "{{title}} by {{artist}} is already on the server. Added to your music",
+      "requested": "Requested {{title}} by {{artist}}",
+      "ruleSaved": "Rule saved: \"{{text}}\"",
+      "explain": "About {{title}}",
+      "play": "Playing {{title}}",
+      "queue": "Added {{count}} songs to the queue",
+      "playlist": "Made the playlist {{name}} with {{count}} songs"
+    },
+    "why": {
+      "exact": "{{title}} is in your library",
+      "budget": "This month's model budget is used up. Library search still works",
+      "error": "The model did not answer. Library search still works",
+      "refusal": "The model declined that one",
+      "nothing": "Nothing in your library or the catalogue matches that"
+    }
   }
 }
