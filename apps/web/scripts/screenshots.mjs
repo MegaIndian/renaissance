@@ -24,6 +24,8 @@ const port = 4174;
 const base = `http://127.0.0.1:${port}`;
 const hub = process.env.HUB_URL ?? 'http://127.0.0.1:8787';
 const hubToken = process.env.HUB_TOKEN;
+/** The title the Library captures wait for: the song the dry pipeline brought to ready, else the one the server already had. */
+let libraryTitle = 'Fireman';
 
 const viewports = {
   phone: { width: 390, height: 844 },
@@ -52,6 +54,9 @@ if (phase2) {
     ['requests-tablet-en-light', '/requests', 'tablet', 'en', 'light'],
     ['requests-desktop-en-dark', '/requests', 'desktop', 'en', 'dark'],
     ['requests-desktop-gu-dark', '/requests', 'desktop', 'gu', 'dark'],
+    // Before the Add captures: an Add the dry pipeline finishes at once cannot be undone and
+    // would sit on the list.
+    ['requests-advanced-desktop-en-dark', '/requests?mode=advanced', 'desktop', 'en', 'dark'],
     ['library-mine-phone-en-dark', '/library', 'phone', 'en', 'dark'],
     ['library-mine-desktop-gu-light', '/library', 'desktop', 'gu', 'light'],
     ['ask-answer-phone-en-dark', '/', 'phone', 'en', 'dark'],
@@ -64,7 +69,6 @@ if (phase2) {
     ['ask-add-tapped-phone-en-dark', '/', 'phone', 'en', 'dark'],
     ['ask-sentence-phone-en-dark', '/', 'phone', 'en', 'dark'],
     ['ask-sentence-phone-gu-light', '/', 'phone', 'gu', 'light'],
-    ['requests-advanced-desktop-en-dark', '/requests?mode=advanced', 'desktop', 'en', 'dark'],
   ];
 }
 
@@ -111,6 +115,7 @@ async function seedHub() {
   const existing = (await hubCall('GET', '/requests')).body ?? [];
   if (existing.length > 0) {
     console.log(`hub already holds ${existing.length} requests; reusing them`);
+    noteLibraryTitle(existing);
     return;
   }
   const failed = await hubCall('POST', '/requests', {
@@ -147,10 +152,22 @@ async function seedHub() {
   await waitForStatus(failed.body.id, ['failed']);
   await waitForStatus(album.body.id, ['finding', 'ready', 'failed']);
   await waitForStatus(song.body.id, ['ready', 'failed']);
-  for (const r of (await hubCall('GET', '/requests')).body)
+  const all = (await hubCall('GET', '/requests')).body;
+  for (const r of all)
     console.log(
       `  ${r.status.padEnd(10)} ${r.title} by ${r.artist}${r.reason ? ` (${r.reason})` : ''}`,
     );
+  noteLibraryTitle(all);
+}
+
+/** When slskd was away and the song failed, "Mine" still holds the song the server already had. */
+function noteLibraryTitle(requests) {
+  const song = requests.find((r) => r.title === 'Fireman');
+  if (song?.status === 'ready') return;
+  libraryTitle = 'Carefree';
+  console.log(
+    `Fireman is ${song?.status ?? 'missing'}${song?.detail ? ` (${song.detail})` : ''}: the Library captures wait for Carefree instead`,
+  );
 }
 
 const preview = spawn(
@@ -225,14 +242,18 @@ try {
     if (phase2 && file.startsWith('requests-advanced')) {
       await page.getByText('What happened').first().click();
     }
-    if (phase2 && file.startsWith('library')) await page.getByText('Fireman').first().waitFor();
+    if (phase2 && file.startsWith('library')) await page.getByText(libraryTitle).first().waitFor();
     await page.screenshot({ path: `${out}${file}.png` });
     if (phase2 && file.startsWith('ask-add-tapped')) {
       // Leave the hub as it was: undo the add when the row offers it.
       const undo = page.getByRole('button', { name: undoName });
       if ((await undo.count()) > 0) {
         await undo.first().click();
-        await page.getByText(lang === 'gu' ? 'પાછું વાળ્યું' : 'Undone').waitFor();
+        // "Undone", or the truthful line when the dry pipeline already finished the request.
+        await page
+          .getByText(lang === 'gu' ? /પાછું વાળ્યું|પાછું વાળી શકાયું નહીં/ : /Undone|Couldn't undo that/)
+          .first()
+          .waitFor();
       }
     }
     if (!phase2 && file === 'home-phone-en-dark') {
