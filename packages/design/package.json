@@ -1,6 +1,6 @@
 {
   "name": "@renaissance/design",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Renaissance design tokens (TypeScript and CSS variables) and DESIGN.md, shared by web and mobile.",
   "license": "GPL-3.0-or-later",
