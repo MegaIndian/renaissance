@@ -135,9 +135,17 @@ try {
   }
   for (const [file, route, device, lang, theme, mode = 'simple', action] of shots) {
     if (action === 'signedOut' && signedIn) {
-      // Sign out for the sign-in shots, then back in afterwards.
+      // Sign out for the sign-in shots, then back in afterwards. Wait for the sign-in screen and
+      // for the vault and this user's database to be gone, so a reload cannot come back signed in.
       await page.goto(`${base}/settings?lang=en&theme=dark`);
       await page.getByRole('button', { name: 'Sign out' }).click();
+      await page.getByRole('heading', { level: 1, name: 'Sign in to your server' }).waitFor();
+      await page.waitForFunction(async () => {
+        const names = (await indexedDB.databases()).map((d) => d.name ?? '');
+        return !names.some((n) => n.startsWith('renaissance-library'));
+      });
+      // The shot shows an example address, not the demo's LAN address the form remembers.
+      await page.evaluate(() => localStorage.removeItem('renaissance.lastServer'));
     }
     await page.setViewportSize(viewports[device]);
     await page.emulateMedia({ colorScheme: theme });
@@ -155,6 +163,11 @@ try {
     }
     await page.goto(url);
     await page.waitForLoadState('networkidle');
+    if (action === 'signedOut') {
+      await page
+        .getByRole('textbox', { name: /Server address|સર્વરનું સરનામું/ })
+        .fill('https://music.example.com');
+    }
     if (action === 'play' && signedIn) {
       // The saved queue comes back from storage after the vault is read; wait for it.
       await page
