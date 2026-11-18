@@ -1,5 +1,6 @@
 import type { MusicRequest, RequestProgress, RequestStep } from '@renaissance/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { HubClientError } from '@renaissance/core';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -16,8 +17,10 @@ type Scope = 'mine' | 'house';
  * The Requests tab (F61, F63, F87): the caller's own requests from the hub, live through the hub's
  * event stream, with cancel while nothing has been downloaded and retry after a failure. An admin
  * can switch to the whole house and sees who asked. Every card speaks plainly (DESIGN.md rule 9):
- * the pill, a sentence for a failure everyone can act on, and progress in words. The pipeline's own
- * words sit behind a collapsed "What happened" in advanced mode and for admins only (design B).
+ * the pill, a sentence for a failure everyone can act on, progress in words, and the song that will
+ * actually arrive when the catalogue matched something other than the words typed. The pipeline's
+ * own words sit behind a collapsed "What happened" in advanced mode only (design B, W); those
+ * detail lines are the hub's English and the panel says so in Gujarati.
  */
 export function Requests() {
   const { t } = useTranslation();
@@ -59,8 +62,15 @@ export function Requests() {
         (current ?? []).map((r) => (r.id === updated.id ? updated : r)),
       );
       setNotice(t('requests.cancelledNotice', { title: request.title }));
-    } catch {
-      setNotice(t('requests.tooLate', { title: request.title }));
+    } catch (error) {
+      // `too_late`: it is downloading. Anything else (finished meanwhile, hub away): say it plainly.
+      const tooLate = error instanceof HubClientError && error.code === 'too_late';
+      setNotice(
+        tooLate
+          ? t('requests.tooLate', { title: request.title })
+          : t('requests.cancelFailed', { title: request.title }),
+      );
+      void queryClient.invalidateQueries({ queryKey: ['requests', effectiveScope] });
     }
   }
 
@@ -204,6 +214,11 @@ function RequestRow({
         </div>
       ) : null}
       {reason ? <p className="text-caption text-danger">{reason}</p> : null}
+      {request.matched ? (
+        <p className="truncate text-caption text-muted-foreground">
+          {t('requests.matched', { title: request.matched.title, artist: request.matched.artist })}
+        </p>
+      ) : null}
       {showDetail && request.steps.length > 0 ? (
         <WhatHappened steps={request.steps} reason={request.reason} />
       ) : null}
@@ -217,14 +232,15 @@ function RequestRow({
   );
 }
 
-/** The pipeline's own step log, collapsed: advanced mode and admins only (design B). */
+/** The pipeline's own step log, collapsed: advanced mode only (design B, W). */
 function WhatHappened({ steps, reason }: { steps: RequestStep[]; reason: string | undefined }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const withDetail = steps.filter((s) => s.detail || s.reason);
   if (withDetail.length === 0 && !reason) return null;
   return (
     <details className="text-caption text-muted-foreground">
       <summary className="cursor-pointer">{t('requests.whatHappened')}</summary>
+      {i18n.language === 'gu' ? <p className="mt-1">{t('requests.detailEnglish')}</p> : null}
       {reason ? <p className="mt-1 font-mono">{t('requests.code', { reason })}</p> : null}
       <ol className="mt-1 flex flex-col gap-1">
         {withDetail.map((step, index) => (

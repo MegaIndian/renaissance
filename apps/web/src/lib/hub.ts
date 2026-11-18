@@ -118,14 +118,14 @@ export function useHub(): HubState {
 }
 
 /**
- * How much of the machinery a person sees (design B): simple mode shows plain sentences only;
- * advanced mode (the profile's choice, or `?mode=advanced` on the web) and admins also get the
- * collapsed "what happened" list with the pipeline's own words.
+ * How much of the machinery a person sees (design B, W): simple mode shows plain sentences only;
+ * advanced mode (the profile's choice, or `?mode=advanced` on the web) also gets the collapsed
+ * "what happened" list with the pipeline's own words. An admin switches modes like anyone else.
  */
 export function useDetailLevel(): { advanced: boolean; admin: boolean; showDetail: boolean } {
   const { profile } = useHub();
   const advanced =
     profile?.mode === 'advanced' || document.documentElement.dataset['mode'] === 'advanced';
   const admin = profile?.role === 'admin';
-  return { advanced, admin, showDetail: advanced || admin };
+  return { advanced, admin, showDetail: advanced };
 }

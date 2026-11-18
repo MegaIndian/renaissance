@@ -107,8 +107,10 @@ export function AskBar({
     try {
       const result = await client.askStreaming({ text, language }, setInstant, controller.signal);
       if (!controller.signal.aborted) {
+        // The answer replaces the typeahead: a deterministic "Play X" carries no rows, and the
+        // rows for the letters typed must not stay under (or above) it (design R).
         setAnswer(result);
-        if (result.catalogue) setTypeahead(null);
+        setTypeahead(null);
       }
     } catch {
       if (!controller.signal.aborted) setFailed(true);

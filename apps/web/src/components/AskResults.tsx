@@ -1,3 +1,4 @@
+import { HubClientError } from '@renaissance/core';
 import type {
   AskAction,
   AskResponse,
@@ -18,11 +19,13 @@ import { PlaceholderArt } from './PlaceholderArt';
 import { focusRing } from './focus';
 
 /**
- * What the Ask bar shows under the box (F61, F75, ADR 0007 point 1): the rows of the mockup, with
- * 34 px art, title, artist · album · duration, a primary Add on songs the server does not have, a
- * ghost Play on ones it does, and the 30-second preview; then, once the hub has answered, the
- * model's cards with what each action did (or, for the app's own actions, what tapping will do)
- * and an undo. None of the rows needs the model: they come from the library and the catalogue.
+ * What the Ask bar shows under the box (F61, F75, ADR 0007 point 1). First the answer: the model's
+ * cards with what each action did (or, for the app's own actions, what tapping will do) and an undo,
+ * then the one line that says why. Under them the rows of the mockup, with 34 px art, title,
+ * artist · album · duration, an Add on songs the server does not have (the first one primary, DESIGN.md
+ * rule 1), a ghost Play on ones it does, and the 30-second preview. None of the rows needs the model:
+ * they come from the library and the catalogue, and the hub has already pruned the ones that do not
+ * answer the words typed.
  */
 export function AskResults({
   instant,
@@ -50,12 +53,17 @@ export function AskResults({
   const albums = rows?.albums ?? [];
   const artists = (rows?.artists ?? []).slice(0, 2);
   const count = hits.length + songs.length + albums.length + artists.length;
+  const firstAdd = songs.findIndex((s) => !s.libraryId);
   const off = answer?.model === 'off';
   const nothing = answer && count === 0 && answer.actions.length === 0;
+  // Nothing to show: the hub's own line when it gave one (a sentence with the model off), else
+  // "nothing matches"; otherwise the model-off, budget or deterministic line, or the model's why.
   const line = !answer
     ? ''
     : nothing
-      ? t('ask.noResults')
+      ? off && answer.why
+        ? answer.why
+        : t('ask.noResults')
       : off
         ? answer.reason === 'budget'
           ? t('ask.budgetOff')
@@ -65,6 +73,20 @@ export function AskResults({
         : answer.why;
   return (
     <div className="flex flex-col gap-3" aria-live="polite">
+      {pending ? <Waiting /> : null}
+      {answer ? (
+        <section className="flex flex-col gap-2">
+          {answer.actions.map((action, index) => (
+            <ActionCard key={`${action.tool}-${index}`} action={action} />
+          ))}
+          {line ? <p className="text-caption text-muted-foreground">{line}</p> : null}
+          {answer.rejected.length > 0 ? (
+            <p className="text-caption text-muted-foreground">
+              {t('ask.rejected', { count: answer.rejected.length })}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
       {count > 0 ? (
         <section className="flex flex-col gap-1">
           <h2 className="sr-only">{t('ask.results')}</h2>
@@ -73,7 +95,12 @@ export function AskResults({
               <LibraryRow key={hit.id} hit={hit} index={index} />
             ))}
             {songs.map((song, index) => (
-              <SongRow key={song.id} song={song} index={hits.length + index} />
+              <SongRow
+                key={song.id}
+                song={song}
+                index={hits.length + index}
+                primary={index === firstAdd}
+              />
             ))}
             {albums.map((album, index) => (
               <AlbumRow key={album.id} album={album} index={hits.length + songs.length + index} />
@@ -90,20 +117,22 @@ export function AskResults({
           </ul>
         </section>
       ) : null}
-      {pending ? <p className="text-caption text-muted-foreground">{t('ask.thinking')}</p> : null}
-      {answer ? (
-        <section className="flex flex-col gap-2">
-          {answer.actions.map((action, index) => (
-            <ActionCard key={`${action.tool}-${index}`} action={action} />
-          ))}
-          {line ? <p className="text-caption text-muted-foreground">{line}</p> : null}
-          {answer.rejected.length > 0 ? (
-            <p className="text-caption text-muted-foreground">
-              {t('ask.rejected', { count: answer.rejected.length })}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+    </div>
+  );
+}
+
+/** The Enter path waiting on the hub: a quiet bar (DESIGN.md rule 9) and the word for screen readers. */
+function Waiting() {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="progressbar"
+      aria-label={t('ask.thinking')}
+      aria-valuetext={t('ask.thinking')}
+      className="h-1 w-full overflow-hidden rounded-pill bg-muted"
+    >
+      <div className="h-full w-1/3 animate-pulse rounded-pill bg-info" />
+      <span className="sr-only">{t('ask.thinking')}</span>
     </div>
   );
 }
@@ -115,9 +144,23 @@ export function formatDuration(seconds: number | undefined): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-/** 34 px art (DESIGN.md rule 8): the picture when there is one, else a placeholder square. */
+/**
+ * 34 px art (DESIGN.md rule 8): the picture when there is one and it loads, else a placeholder
+ * square (a Cover Art Archive URL exists for every release group whether or not the archive has
+ * a picture, so the broken-image glyph must never show).
+ */
 function Art({ src, index }: { src: string | undefined; index: number }) {
-  if (src) return <img src={src} alt={''} className="size-8.5 shrink-0 rounded-sm object-cover" />;
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+  if (src && brokenSrc !== src) {
+    return (
+      <img
+        src={src}
+        alt={''}
+        className="size-8.5 shrink-0 rounded-sm object-cover"
+        onError={() => setBrokenSrc(src)}
+      />
+    );
+  }
   return (
     <div className="size-8.5 shrink-0">
       <PlaceholderArt index={index} />
@@ -184,14 +227,18 @@ type AddState =
   | { kind: 'idle' }
   | { kind: 'adding' }
   | { kind: 'requested'; id: string }
+  /** Someone in the house already asked; the caller watches that request now. Nothing to undo. */
+  | { kind: 'duplicate'; name: string; mine: boolean }
   | { kind: 'already'; itemId: number }
   | { kind: 'undoing' }
   | { kind: 'undone' }
-  | { kind: 'failed' };
+  | { kind: 'failed' }
+  /** The add stood; the undo did not. `why` is the hub's code when it gave one. */
+  | { kind: 'undoFailed'; was: 'requested' | 'already'; why?: string };
 
 /** The add path: one tap sends the catalogue entry to the hub; the row says what happened and undoes it. */
 function useAdd(input: NewRequest) {
-  const { client } = useHub();
+  const { client, profile } = useHub();
   const [state, setState] = useState<AddState>({ kind: 'idle' });
   async function add(): Promise<void> {
     if (!client) return;
@@ -199,7 +246,13 @@ function useAdd(input: NewRequest) {
     try {
       const result = await client.createRequest(input);
       if ('alreadyHere' in result) setState({ kind: 'already', itemId: result.item.id });
-      else setState({ kind: 'requested', id: result.id });
+      else if ('alreadyRequested' in result) {
+        setState({
+          kind: 'duplicate',
+          name: result.request.requestedByName,
+          mine: result.request.requestedBy === profile?.id,
+        });
+      } else setState({ kind: 'requested', id: result.id });
     } catch {
       setState({ kind: 'failed' });
     }
@@ -207,18 +260,33 @@ function useAdd(input: NewRequest) {
   async function undo(): Promise<void> {
     if (!client) return;
     const previous = state;
+    if (previous.kind !== 'requested' && previous.kind !== 'already') return;
     setState({ kind: 'undoing' });
     try {
       if (previous.kind === 'requested') await client.cancelRequest(previous.id);
-      else if (previous.kind === 'already') await client.removeFromCollection(previous.itemId);
+      else await client.removeFromCollection(previous.itemId);
       setState({ kind: 'undone' });
-    } catch {
-      setState({ kind: 'failed' });
+    } catch (error) {
+      const next: AddState = { kind: 'undoFailed', was: previous.kind };
+      if (error instanceof HubClientError) next.why = error.code;
+      setState(next);
     }
   }
   return { state, add, undo, ready: client !== null };
 }
 
+/** The words for an undo that did not take: the add stood, and the line says where it is. */
+export function undoFailureKey(
+  was: 'requested' | 'already' | 'hub',
+  why: string | undefined,
+): string {
+  if (why === 'too_late') return 'ask.undoTooLate';
+  if (was === 'already') return 'ask.undoFailedCollection';
+  if (was === 'requested') return 'ask.undoFailedRequest';
+  return 'ask.undoFailed';
+}
+
+/** What the add did, on its own line under the title, so the title and the Undo both stay visible. */
 function AddOutcome({ state, onUndo }: { state: AddState; onUndo: () => void }) {
   const { t } = useTranslation();
   const text =
@@ -226,16 +294,22 @@ function AddOutcome({ state, onUndo }: { state: AddState; onUndo: () => void }) 
       ? t('ask.adding')
       : state.kind === 'requested'
         ? t('ask.requested')
-        : state.kind === 'already'
-          ? t('ask.alreadyHere')
-          : state.kind === 'undoing'
-            ? t('ask.undo')
-            : state.kind === 'undone'
-              ? t('ask.undone')
-              : t('ask.addFailed');
+        : state.kind === 'duplicate'
+          ? state.mine
+            ? t('ask.alreadyRequestedMine')
+            : t('ask.alreadyRequested', { name: state.name })
+          : state.kind === 'already'
+            ? t('ask.alreadyHere')
+            : state.kind === 'undoing'
+              ? t('ask.undo')
+              : state.kind === 'undone'
+                ? t('ask.undone')
+                : state.kind === 'undoFailed'
+                  ? t(undoFailureKey(state.was, state.why))
+                  : t('ask.addFailed');
   return (
-    <span className="flex shrink-0 items-center gap-2">
-      <span className="max-w-32 text-caption text-muted-foreground">{text}</span>
+    <span className="flex basis-full flex-wrap items-center justify-between gap-2 pl-11.5">
+      <span className="min-w-0 text-caption text-muted-foreground">{text}</span>
       {state.kind === 'requested' || state.kind === 'already' ? (
         <Button onClick={onUndo} className="shrink-0">
           {t('ask.undo')}
@@ -245,7 +319,16 @@ function AddOutcome({ state, onUndo }: { state: AddState; onUndo: () => void }) 
   );
 }
 
-function SongRow({ song, index }: { song: CatalogueSong; index: number }) {
+function SongRow({
+  song,
+  index,
+  primary,
+}: {
+  song: CatalogueSong;
+  index: number;
+  /** The one blue on the panel: the first song that can be added (DESIGN.md rule 1). */
+  primary: boolean;
+}) {
   const { t } = useTranslation();
   const input: NewRequest = { kind: 'track', title: song.title, artist: song.artist };
   if (song.album) input.album = song.album;
@@ -256,7 +339,7 @@ function SongRow({ song, index }: { song: CatalogueSong; index: number }) {
   if (song.duration !== undefined) input.duration = song.duration;
   const { state, add, undo, ready } = useAdd(input);
   return (
-    <li className="flex items-center gap-3 px-3 py-2">
+    <li className="flex flex-wrap items-center gap-3 px-3 py-2">
       <Art src={song.art} index={index} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body font-medium">{song.title}</span>
@@ -273,7 +356,12 @@ function SongRow({ song, index }: { song: CatalogueSong; index: number }) {
       {song.libraryId ? (
         <PlayButton itemId={song.libraryId} kind="track" />
       ) : state.kind === 'idle' ? (
-        <Button tone="primary" className="shrink-0" disabled={!ready} onClick={() => void add()}>
+        <Button
+          tone={primary ? 'primary' : 'secondary'}
+          className="shrink-0"
+          disabled={!ready}
+          onClick={() => void add()}
+        >
           {t('ask.add')}
         </Button>
       ) : (
@@ -290,7 +378,7 @@ function AlbumRow({ album, index }: { album: CatalogueAlbum; index: number }) {
   if (album.artistId) input.artistId = album.artistId;
   const { state, add, undo, ready } = useAdd(input);
   return (
-    <li className="flex items-center gap-3 px-3 py-2">
+    <li className="flex flex-wrap items-center gap-3 px-3 py-2">
       <Art src={album.art} index={index} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body font-medium">{album.title}</span>
@@ -351,51 +439,68 @@ function Preview({ src, title }: { src: string; title: string }) {
   );
 }
 
-type CardState = 'ready' | 'doing' | 'done' | 'undoing' | 'undone' | 'failed';
+type CardState =
+  | { kind: 'ready' | 'doing' | 'done' | 'undoing' | 'undone' | 'failed' }
+  | { kind: 'undoFailed'; why?: string };
 
 /**
  * One action. Hub actions arrive done (past tense) with an undo route. App actions arrive as an
  * instruction ("Play Carefree") with a button; once the app has performed it the card is rewritten
- * in the past tense with the app's own undo (design G).
+ * in the past tense with the app's own undo (design G). An undo that does not take says so truthfully:
+ * the action stood, and where it is.
  */
 function ActionCard({ action }: { action: AskAction }) {
   const { t } = useTranslation();
   const { client, perform } = useHub();
   const app = action.ranBy === 'app';
-  const [state, setState] = useState<CardState>(app ? 'ready' : 'done');
+  const [state, setState] = useState<CardState>({ kind: app ? 'ready' : 'done' });
   const canUndoHub = !app && action.undoable && action.undo !== undefined && client !== null;
   async function run(direction: 'do' | 'undo'): Promise<void> {
-    setState(direction === 'do' ? 'doing' : 'undoing');
+    setState({ kind: direction === 'do' ? 'doing' : 'undoing' });
     try {
       if (app) await perform?.(action, direction);
       else if (client) await client.undo(action);
-      setState(direction === 'do' ? 'done' : 'undone');
-    } catch {
-      setState('failed');
+      setState({ kind: direction === 'do' ? 'done' : 'undone' });
+    } catch (error) {
+      if (direction === 'do') {
+        setState({ kind: 'failed' });
+        return;
+      }
+      const next: CardState = { kind: 'undoFailed' };
+      if (error instanceof HubClientError) next.why = error.code;
+      setState(next);
     }
   }
-  const summary = app && (state === 'done' || state === 'undoing') ? action.doneSummary : undefined;
+  const summary =
+    app && (state.kind === 'done' || state.kind === 'undoing') ? action.doneSummary : undefined;
+  const was = action.undo?.path.startsWith('/requests/')
+    ? 'requested'
+    : action.undo?.path.startsWith('/collection/')
+      ? 'already'
+      : 'hub';
   const caption =
-    state === 'undone'
+    state.kind === 'undone'
       ? t('ask.undone')
-      : state === 'failed'
-        ? t('ask.undoFailed')
-        : app && !perform
-          ? t('ask.playerUnavailable')
-          : undefined;
+      : state.kind === 'undoFailed'
+        ? t(undoFailureKey(was, state.why))
+        : state.kind === 'failed'
+          ? t('ask.addFailed')
+          : app && !perform
+            ? t('ask.playerUnavailable')
+            : undefined;
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-4 py-3">
       <div className="flex min-w-0 flex-col">
         <span className="text-body">{summary ?? action.summary}</span>
         {caption ? <span className="text-caption text-muted-foreground">{caption}</span> : null}
       </div>
-      {app && state === 'ready' ? (
+      {app && state.kind === 'ready' ? (
         <Button className="shrink-0" disabled={!perform} onClick={() => void run('do')}>
           {t(`ask.do.${action.tool}`)}
         </Button>
       ) : null}
-      {(app && state === 'done' && action.undoable && perform) ||
-      (canUndoHub && state === 'done') ? (
+      {(app && state.kind === 'done' && action.undoable && perform) ||
+      (canUndoHub && state.kind === 'done') ? (
         <Button onClick={() => void run('undo')} className="shrink-0">
           {t('ask.undo')}
         </Button>

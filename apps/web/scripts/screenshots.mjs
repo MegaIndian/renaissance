@@ -2,9 +2,12 @@
 /**
  * Retakes docs/screens/phase-0 from the built web app (`pnpm --filter web build` first) with
  * Playwright's Chromium at exact viewports and device scale 2. Starts `vite preview` itself.
- * `--phase-2` retakes docs/screens/phase-2 instead: the Requests tab, "My music" and the Ask bar's
- * answer, against a hub played by Playwright's route interception (the canned answers below), so
- * the pictures show the screens with data and nothing real is contacted.
+ * `--phase-2` retakes docs/screens/phase-2 instead: the Requests tab, "My music" and the Ask bar
+ * against a real hub (`HUB_URL`, default http://127.0.0.1:8787) started by hand in dry-run mode
+ * (`RENAISSANCE_HUB_DRY_RUN=true`, CORS origin http://127.0.0.1:4174) with a token in `HUB_TOKEN`.
+ * The script seeds the requests through the hub's own API (a song that reaches ready through the
+ * dry pipeline, an album Lidarr is looking for, a cancelled one, a failed one) and the pictures
+ * show what the hub really answers; nothing is mocked and nothing is downloaded.
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -19,7 +22,8 @@ const out = fileURLToPath(
 mkdirSync(out, { recursive: true });
 const port = 4174;
 const base = `http://127.0.0.1:${port}`;
-const hub = 'http://127.0.0.1:8787';
+const hub = process.env.HUB_URL ?? 'http://127.0.0.1:8787';
+const hubToken = process.env.HUB_TOKEN;
 
 const viewports = {
   phone: { width: 390, height: 844 },
@@ -56,284 +60,97 @@ if (phase2) {
     ['ask-typeahead-phone-en-dark', '/', 'phone', 'en', 'dark'],
     ['ask-typeahead-phone-gu-light', '/', 'phone', 'gu', 'light'],
     ['ask-typeahead-desktop-en-dark', '/', 'desktop', 'en', 'dark'],
+    ['ask-add-tapped-phone-gu-light', '/', 'phone', 'gu', 'light'],
+    ['ask-add-tapped-phone-en-dark', '/', 'phone', 'en', 'dark'],
+    ['ask-sentence-phone-en-dark', '/', 'phone', 'en', 'dark'],
+    ['ask-sentence-phone-gu-light', '/', 'phone', 'gu', 'light'],
     ['requests-advanced-desktop-en-dark', '/requests?mode=advanced', 'desktop', 'en', 'dark'],
   ];
 }
 
-const at = '2026-11-18T05:30:00.000Z';
-const request = (over) => ({
-  id: '11111111-1111-4111-8111-111111111111',
-  kind: 'track',
-  title: 'Fireman',
-  artist: 'Lil Wayne',
-  album: 'Tha Carter II',
-  requestedBy: 'u-sahil',
-  requestedByName: 'Sahil',
-  status: 'requested',
-  createdAt: at,
-  updatedAt: at,
-  steps: [{ at, status: 'requested' }],
-  ...over,
-});
-const cannedRequests = [
-  request({
-    id: '11111111-1111-4111-8111-111111111111',
-    status: 'downloading',
-    progress: { unit: 'percent', done: 42, total: 100, etaSeconds: 70 },
-    steps: [
-      { at, status: 'finding', detail: '"lil wayne fireman": 0 files, 0 usable' },
-      {
-        at,
-        status: 'downloading',
-        detail:
-          '04 Fireman.flac from a sharer (score 108: title 100% in name, duration matches, flac, free slot, artist in path)',
-      },
-    ],
-  }),
-  request({
-    id: '55555555-5555-4555-8555-555555555555',
-    title: 'Red (Taylor’s Version)',
-    artist: 'Taylor Swift',
-    album: 'Red (Taylor’s Version)',
+/** The hub's API with the screenshot token. */
+async function hubCall(method, path, body) {
+  const res = await fetch(`${hub}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${hubToken}`,
+      accept: 'application/json',
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : undefined };
+}
+
+async function waitForStatus(id, wanted, timeoutMs = 240_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { body } = await hubCall('GET', `/requests/${id}`);
+    if (body && wanted.includes(body.status)) return body;
+    if (Date.now() > deadline)
+      throw new Error(`request ${id} is ${body?.status}, wanted ${wanted.join('/')}`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+/**
+ * What the Requests tab and "Mine" show: created through the real hub in dry-run mode. The song
+ * goes through the real slskd search and a logged import (ready); the album is handed to Lidarr
+ * (finding, with whatever soularr already fetched filed); one request is cancelled, one fails;
+ * a song the demo server has lands in "Mine" as an add.
+ */
+async function seedHub() {
+  if (!hubToken)
+    throw new Error('HUB_TOKEN is needed for --phase-2 (a Jellyfin token the hub accepts)');
+  const health = await fetch(`${hub}/health`).then((r) => r.json());
+  console.log(`hub ${hub}: ${health.status} ${health.version}`);
+  const me = await hubCall('GET', '/me');
+  if (me.status !== 200) throw new Error(`hub refused the token: ${me.status}`);
+  console.log(`signed in as ${me.body.name} (${me.body.role})`);
+  const existing = (await hubCall('GET', '/requests')).body ?? [];
+  if (existing.length > 0) {
+    console.log(`hub already holds ${existing.length} requests; reusing them`);
+    return;
+  }
+  const failed = await hubCall('POST', '/requests', {
+    kind: 'track',
+    title: 'Zzqqxxv Blorp',
+    artist: 'Nobody Known',
+  });
+  // Cancelled before the runner reaches it: the first request holds the queue for a moment.
+  const cancelled = await hubCall('POST', '/requests', {
+    kind: 'track',
+    title: 'Why This Kolaveri Di',
+    artist: 'Dhanush',
+  });
+  const stop = await hubCall('DELETE', `/requests/${cancelled.body.id}`);
+  console.log(`cancel answered ${stop.status} ${stop.body?.status ?? stop.body?.error ?? ''}`);
+  const album = await hubCall('POST', '/requests', {
     kind: 'album',
-    requestedByName: 'Sahil',
-    status: 'finding',
-    progress: { unit: 'songs', done: 14, total: 30 },
-    steps: [
-      {
-        at,
-        status: 'finding',
-        detail:
-          'Lidarr is looking for Red (Taylor’s Version) (album 91); the hub checks every minute for up to 7 days',
-      },
-    ],
-  }),
-  request({
-    id: '66666666-6666-4666-8666-666666666666',
-    title: 'Monkeys Spinning Monkeys',
-    artist: 'Kevin MacLeod',
-    requestedByName: 'Mom',
-    status: 'cancelled',
-    steps: [{ at, status: 'cancelled', detail: 'Cancelled by Mom' }],
-  }),
-  request({
-    id: '22222222-2222-4222-8222-222222222222',
-    title: 'Red (Taylor’s Version)',
-    artist: 'Taylor Swift',
-    album: 'Red (Taylor’s Version)',
-    kind: 'album',
-    requestedByName: 'Kevin',
-    status: 'ready',
-    steps: [{ at, status: 'ready', detail: 'Lidarr imported 30 of 30 tracks' }],
-  }),
-  request({
-    id: '33333333-3333-4333-8333-333333333333',
-    title: 'Drowning',
+    title: 'Look Back at It',
     artist: 'A Boogie Wit da Hoodie',
-    album: 'The Bigger Artist',
-    requestedByName: 'Mom',
-    status: 'failed',
-    reason: 'no_results',
-    steps: [
-      {
-        at,
-        status: 'failed',
-        reason: 'no_results',
-        detail: 'Soulseek: "a boogie wit da hoodie drowning": 0 files; "drowning": 0 files',
-      },
-    ],
-  }),
-];
-const cannedCollection = [
-  {
-    id: 1,
-    profile: 'u-sahil',
-    item: 'mb:recording:1',
+  });
+  const song = await hubCall('POST', '/requests', {
     kind: 'track',
     title: 'Fireman',
     artist: 'Lil Wayne',
-    album: 'Tha Carter II',
-    addedBy: 'u-sahil',
-    addedAt: at,
-    source: 'request',
-  },
-  {
-    id: 2,
-    profile: 'u-sahil',
-    item: 'jf-1',
-    kind: 'album',
-    title: 'Red (Taylor’s Version)',
-    artist: 'Taylor Swift',
-    addedBy: 'u-sahil',
-    addedAt: at,
-    source: 'add',
-  },
-  {
-    id: 3,
-    profile: 'u-sahil',
-    item: 'jf-2',
+  });
+  const already = await hubCall('POST', '/requests', {
     kind: 'track',
-    title: 'Kabhi Kabhie Mere Dil Mein',
-    artist: 'Mukesh',
-    album: 'Kabhi Kabhie',
-    addedBy: 'u-sahil',
-    addedAt: at,
-    source: 'import',
-  },
-];
-const cannedCatalogue = {
-  query: 'fireman',
-  songs: [
-    {
-      id: 'mb:recording:da9023df-cd6b-48dc-b82c-2c43ad9a89dc',
-      recordingId: 'da9023df-cd6b-48dc-b82c-2c43ad9a89dc',
-      title: 'Fireman',
-      artist: 'Lil Wayne',
-      album: 'Tha Carter II',
-      duration: 264,
-      year: 2005,
-      preview: 'https://cdn.deezer.test/fireman.mp3',
-    },
-    {
-      id: 'mb:recording:9c1a7a4e-0000-4000-8000-000000000002',
-      recordingId: '9c1a7a4e-0000-4000-8000-000000000002',
-      title: 'Drowning',
-      artist: 'A Boogie Wit da Hoodie',
-      album: 'The Bigger Artist',
-      duration: 209,
-      libraryId: 'jf-drowning',
-    },
-    {
-      id: 'mb:recording:9c1a7a4e-0000-4000-8000-000000000003',
-      recordingId: '9c1a7a4e-0000-4000-8000-000000000003',
-      title: 'Fireman',
-      artist: 'Elliphant',
-      album: 'Living Life Golden',
-      duration: 211,
-    },
-  ],
-  albums: [
-    {
-      id: 'mb:release-group:d97d9f3b-3dc1-3330-a240-b84b74e62044',
-      releaseGroupId: 'd97d9f3b-3dc1-3330-a240-b84b74e62044',
-      title: 'Tha Carter II',
-      artist: 'Lil Wayne',
-      type: 'Album',
-      year: 2005,
-    },
-  ],
-  artists: [
-    {
-      id: 'mb:artist:ac9a487a-d9d2-4f27-bb23-0f4686488345',
-      artistId: 'ac9a487a-d9d2-4f27-bb23-0f4686488345',
-      name: 'Lil Wayne',
-    },
-  ],
-  cached: false,
-};
-const answerFor = (lang) => ({
-  model: 'claude-opus-5-5',
-  language: lang,
-  instant: {
-    tracks: [
-      {
-        id: 't1',
-        kind: 'track',
-        title: 'Fireman',
-        artist: 'Lil Wayne',
-        album: 'Tha Carter II',
-        duration: 264,
-      },
-    ],
-    albums: [],
-    artists: [],
-  },
-  catalogue: { ...cannedCatalogue, songs: cannedCatalogue.songs.slice(2) },
-  actions: [
-    {
-      tool: 'request',
-      input: { kind: 'album', title: 'Tha Carter II', artist: 'Lil Wayne' },
-      summary:
-        lang === 'gu' ? 'Lil Wayneનું Tha Carter II માગ્યું' : 'Requested Tha Carter II by Lil Wayne',
-      ranBy: 'hub',
-      undoable: true,
-      undo: { method: 'DELETE', path: '/requests/44444444-4444-4444-8444-444444444444' },
-    },
-    {
-      tool: 'queue',
-      input: { trackIds: ['t1'] },
-      summary: lang === 'gu' ? '1 ગીત કતારમાં મૂકો' : 'Queue 1 song',
-      doneSummary: lang === 'gu' ? 'કતારમાં 1 ગીત ઉમેર્યું' : 'Added 1 song to the queue',
-      ranBy: 'app',
-      undoable: true,
-    },
-  ],
-  why:
-    lang === 'gu'
-      ? 'Fireman તમારી લાઇબ્રેરીમાં છે; બાકીનું આલ્બમ માગ્યું.'
-      : 'Fireman is in your library; the rest of the album is on its way.',
-  rejected: [],
-  usage: { inputTokens: 2100, outputTokens: 140, cacheReadTokens: 1800, costUsd: 0.0117 },
-  tools: [
-    'search_library',
-    'lookup_catalogue',
-    'play',
-    'queue',
-    'make_playlist',
-    'request',
-    'set_rule',
-    'explain',
-  ],
-});
-
-/** The hub as the screenshots see it: every route answered from the canned data above. */
-async function playHub(context, lang) {
-  const json = (body, status = 200) => ({
-    status,
-    contentType: 'application/json',
-    headers: { 'access-control-allow-origin': '*' },
-    body: JSON.stringify(body),
+    title: 'Carefree',
+    artist: 'Kevin MacLeod',
   });
-  await context.route(`${hub}/**`, async (route) => {
-    const url = new URL(route.request().url());
-    const path = url.pathname;
-    if (route.request().method() === 'OPTIONS') {
-      return route.fulfill({
-        status: 204,
-        headers: {
-          'access-control-allow-origin': '*',
-          'access-control-allow-headers': 'authorization,content-type,accept',
-          'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
-        },
-      });
-    }
-    if (path === '/me') {
-      return route.fulfill(
-        json({ id: 'u-sahil', name: 'Sahil', role: 'admin', mode: 'simple', language: lang }),
-      );
-    }
-    if (path === '/requests') return route.fulfill(json(cannedRequests));
-    if (path === '/catalogue/search') return route.fulfill(json(cannedCatalogue));
-    if (path === '/collection') return route.fulfill(json(cannedCollection));
-    if (path === '/events') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        headers: { 'access-control-allow-origin': '*' },
-        body: `event: ping\ndata: ${JSON.stringify({ type: 'ping', at })}\n\n`,
-      });
-    }
-    if (path === '/ask') {
-      const answer = answerFor(lang);
-      return route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        headers: { 'access-control-allow-origin': '*' },
-        body: `event: instant\ndata: ${JSON.stringify(answer.instant)}\n\nevent: answer\ndata: ${JSON.stringify(answer)}\n\n`,
-      });
-    }
-    return route.fulfill(json({ error: 'not_found' }, 404));
-  });
+  console.log(
+    `seeded: ${failed.status} ${album.status} ${cancelled.status} ${song.status}; Carefree ${already.body?.alreadyHere ? 'already here' : already.status}`,
+  );
+  await waitForStatus(failed.body.id, ['failed']);
+  await waitForStatus(album.body.id, ['finding', 'ready', 'failed']);
+  await waitForStatus(song.body.id, ['ready', 'failed']);
+  for (const r of (await hubCall('GET', '/requests')).body)
+    console.log(
+      `  ${r.status.padEnd(10)} ${r.title} by ${r.artist}${r.reason ? ` (${r.reason})` : ''}`,
+    );
 }
 
 const preview = spawn(
@@ -352,6 +169,7 @@ try {
       await new Promise((r) => setTimeout(r, 250));
     }
   }
+  if (phase2) await seedHub();
   const browser = await chromium.launch();
   for (const [file, route, device, lang, theme] of shots) {
     const context = await browser.newContext({
@@ -367,28 +185,41 @@ try {
         `${file}: request failed ${request.url()} ${request.failure()?.errorText ?? ''}`,
       ),
     );
-    if (phase2) await playHub(context, lang);
-    await page.goto(
-      `${base}${route}?lang=${lang}&theme=${theme}${phase2 ? '&hubToken=screenshot' : ''}`,
-    );
-    await page.waitForLoadState('networkidle');
+    const join = route.includes('?') ? '&' : '?';
+    const token = phase2 ? `&hubToken=${encodeURIComponent(hubToken)}` : '';
+    await page.goto(`${base}${route}${join}lang=${lang}&theme=${theme}${token}`);
+    // Not `networkidle`: the hub's event stream stays open. Each shot waits for its own content.
+    await page.waitForLoadState('load');
+    await page.getByRole('searchbox').first().waitFor();
+    const box = page.getByRole('searchbox').first();
+    const add = lang === 'gu' ? 'ઉમેરો' : 'Add';
+    const undoName = lang === 'gu' ? 'પાછું વાળો' : 'Undo';
     if (phase2 && file.startsWith('ask-answer')) {
-      const box = page.getByRole('searchbox').first();
-      await box.fill(
-        lang === 'gu'
-          ? 'fireman vagad ane aakhu album lavo'
-          : 'play fireman and get the whole album',
-      );
+      // Deterministic: an exact library title (the demo server has Carefree) plays without the model.
+      await box.fill(lang === 'gu' ? 'Carefree વગાડો' : 'play carefree');
       await box.press('Enter');
       await page
-        .getByText(lang === 'gu' ? 'Tha Carter II' : 'Requested Tha Carter II by Lil Wayne')
+        .getByText(lang === 'gu' ? 'Carefree વગાડો' : 'Play Carefree', { exact: true })
         .first()
         .waitFor();
     }
     if (phase2 && file.startsWith('ask-typeahead')) {
-      const box = page.getByRole('searchbox').first();
-      await box.fill('fireman');
-      await page.getByRole('button', { name: lang === 'gu' ? 'આલ્બમ ઉમેરો' : 'Add album' }).waitFor();
+      await box.fill('fireman lil wayne');
+      await page.getByRole('button', { name: add, exact: true }).first().waitFor();
+    }
+    if (phase2 && file.startsWith('ask-add-tapped')) {
+      await box.fill('fireman lil wayne');
+      await page.getByRole('button', { name: add, exact: true }).first().click();
+      await page
+        .getByText(lang === 'gu' ? /વિનંતીઓમાં/ : /in Requests/)
+        .first()
+        .waitFor();
+    }
+    if (phase2 && file.startsWith('ask-sentence')) {
+      // The model is off on this hub: a sentence shows the model-off line and nothing to add.
+      await box.fill(lang === 'gu' ? 'રસોઈ માટે શાંત ગીત વગાડ' : 'play something calm for cooking');
+      await box.press('Enter');
+      await page.getByText(lang === 'gu' ? /સ્માર્ટ જવાબ/ : /Smart answers are off/).waitFor();
     }
     if (phase2 && file.startsWith('requests')) await page.getByText('Fireman').first().waitFor();
     if (phase2 && file.startsWith('requests-advanced')) {
@@ -396,6 +227,14 @@ try {
     }
     if (phase2 && file.startsWith('library')) await page.getByText('Fireman').first().waitFor();
     await page.screenshot({ path: `${out}${file}.png` });
+    if (phase2 && file.startsWith('ask-add-tapped')) {
+      // Leave the hub as it was: undo the add when the row offers it.
+      const undo = page.getByRole('button', { name: undoName });
+      if ((await undo.count()) > 0) {
+        await undo.first().click();
+        await page.getByText(lang === 'gu' ? 'પાછું વાળ્યું' : 'Undone').waitFor();
+      }
+    }
     if (!phase2 && file === 'home-phone-en-dark') {
       await page.getByRole('heading', { name: 'Made for you' }).scrollIntoViewIfNeeded();
       await page.screenshot({ path: `${out}home-phone-en-dark-scrolled.png` });

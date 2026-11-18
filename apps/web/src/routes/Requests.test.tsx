@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { setLanguage } from '../lib/i18n';
-import { fakeHub, member, request } from '../test/hub';
+import { admin, fakeHub, member, request } from '../test/hub';
 import { renderWithI18n } from '../test/render';
 import { Requests } from './Requests';
 
@@ -16,51 +16,55 @@ describe('Requests', () => {
     expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
   });
 
-  it("lists the caller's requests with status, a plain reason, progress in words and the collapsed detail for admins, and lets an admin see the house", async () => {
+  it("lists the caller's requests with status, a plain reason, progress in words and the collapsed detail in advanced mode, and lets an admin see the house", async () => {
     setLanguage('en');
-    const hub = fakeHub({
-      requests: vi.fn(async (scope?: 'mine' | 'house') =>
-        scope === 'house'
-          ? [
-              request({
-                id: '22222222-2222-4222-8222-222222222222',
-                title: 'Red',
-                artist: 'Taylor Swift',
-                requestedByName: 'Kevin',
-                status: 'ready',
-              }),
-            ]
-          : [
-              request({
-                status: 'downloading',
-                progress: { unit: 'percent', done: 42, total: 100, etaSeconds: 130 },
-              }),
-              request({
-                id: '55555555-5555-4555-8555-555555555555',
-                title: 'Red',
-                artist: 'Taylor Swift',
-                kind: 'album',
-                status: 'finding',
-                progress: { unit: 'songs', done: 14, total: 18 },
-              }),
-              request({
-                id: '33333333-3333-4333-8333-333333333333',
-                title: 'Drowning',
-                artist: 'A Boogie',
-                status: 'failed',
-                reason: 'no_results',
-                steps: [
-                  {
-                    at: '2026-11-18T00:00:00.000Z',
-                    status: 'failed',
-                    reason: 'no_results',
-                    detail: 'Soulseek: "a boogie drowning": 0 files',
-                  },
-                ],
-              }),
-            ],
-      ),
-    });
+    const hub = fakeHub(
+      {
+        requests: vi.fn(async (scope?: 'mine' | 'house') =>
+          scope === 'house'
+            ? [
+                request({
+                  id: '22222222-2222-4222-8222-222222222222',
+                  title: 'Red',
+                  artist: 'Taylor Swift',
+                  requestedByName: 'Kevin',
+                  status: 'ready',
+                }),
+              ]
+            : [
+                request({
+                  status: 'downloading',
+                  progress: { unit: 'percent', done: 42, total: 100, etaSeconds: 130 },
+                }),
+                request({
+                  id: '55555555-5555-4555-8555-555555555555',
+                  title: 'Red',
+                  artist: 'Taylor Swift',
+                  kind: 'album',
+                  status: 'finding',
+                  progress: { unit: 'songs', done: 14, total: 18 },
+                }),
+                request({
+                  id: '33333333-3333-4333-8333-333333333333',
+                  title: 'Drowning',
+                  artist: 'A Boogie',
+                  status: 'failed',
+                  reason: 'no_results',
+                  steps: [
+                    {
+                      at: '2026-11-18T00:00:00.000Z',
+                      status: 'failed',
+                      reason: 'no_results',
+                      detail: 'Soulseek: "a boogie drowning": 0 files',
+                    },
+                  ],
+                }),
+              ],
+        ),
+      },
+      // An admin in advanced mode: the pipeline's words are available, collapsed.
+      { ...admin, mode: 'advanced' },
+    );
     renderWithI18n(<Requests />, hub);
     expect(await screen.findByText('Fireman')).toBeInTheDocument();
     expect(screen.getByText('Downloading')).toBeInTheDocument();
@@ -74,7 +78,7 @@ describe('Requests', () => {
     expect(
       screen.getByText("We couldn't find this one anywhere right now. Try again later"),
     ).toBeInTheDocument();
-    // The pipeline's words are behind "What happened" (this profile is an admin), never inline.
+    // The pipeline's words are behind "What happened" (advanced mode), never inline.
     expect(screen.getByText(/Soulseek: "a boogie drowning"/)).not.toBeVisible();
     const details = screen.getAllByText('What happened');
     expect(details.length).toBeGreaterThan(0);

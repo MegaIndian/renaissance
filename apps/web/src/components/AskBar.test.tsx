@@ -242,3 +242,128 @@ describe('AskBar with the hub', () => {
     expect(await screen.findByText('Sign in to search your library')).toBeInTheDocument();
   });
 });
+
+describe('AskBar, round 2', () => {
+  it('puts the answer above the rows, clears the typeahead on a deterministic answer, and shows one primary Add', async () => {
+    setLanguage('en');
+    const { fakeHub, emptyAnswer } = await import('../test/hub');
+    const song = (id: string, title: string, artist: string) => ({
+      id: `dz:track:${id}`,
+      title,
+      artist,
+      album: 'Album',
+      duration: 200,
+      art: 'https://art.test/broken.jpg',
+    });
+    const catalogue = {
+      query: 'carefree',
+      songs: [song('1', 'Carefree Spa Days', 'Spa'), song('2', 'Big Guy', 'SpongeBob')],
+      albums: [],
+      artists: [],
+      cached: false,
+    };
+    const hub = fakeHub({
+      catalogueSearch: vi.fn(async () => catalogue),
+      askStreaming: vi.fn(
+        async (_input: unknown, onInstant: (i: typeof emptyAnswer.instant) => void) => {
+          onInstant(emptyAnswer.instant);
+          return {
+            ...emptyAnswer,
+            reason: 'deterministic',
+            why: 'Carefree is in your library',
+            actions: [
+              {
+                tool: 'play' as const,
+                input: { itemId: 'jf-c', kind: 'track' },
+                summary: 'Play Carefree',
+                doneSummary: 'Playing Carefree',
+                ranBy: 'app' as const,
+                undoable: true,
+              },
+            ],
+          };
+        },
+      ),
+    });
+    const view = renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = await screen.findByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'play carefree');
+    expect(await screen.findByText('Carefree Spa Days')).toBeInTheDocument();
+    // One blue Add (the first row); the second is secondary.
+    const adds = screen.getAllByRole('button', { name: 'Add' });
+    expect(adds).toHaveLength(2);
+    expect(adds[0]!.className).toContain('bg-primary');
+    expect(adds[1]!.className).not.toContain('bg-primary');
+    // Broken art falls back to the placeholder square, never the browser's broken-image glyph.
+    const img = view.container.querySelector('img')!;
+    img.dispatchEvent(new Event('error'));
+    await waitFor(() => expect(view.container.querySelectorAll('img')).toHaveLength(1));
+    await user.type(input, '{Enter}');
+    expect(await screen.findByText('Play Carefree')).toBeInTheDocument();
+    // The leftover rows are gone, and the card is the first thing in the panel.
+    expect(screen.queryByText('Carefree Spa Days')).not.toBeInTheDocument();
+    const panel = screen.getByLabelText('Results');
+    expect(panel.textContent?.indexOf('Play Carefree')).toBeLessThan(
+      panel.textContent?.indexOf('Carefree is in your library') ?? -1,
+    );
+  });
+
+  it('words a duplicate as already on its way with no undo, and a failed undo truthfully', async () => {
+    setLanguage('en');
+    const { fakeHub, request } = await import('../test/hub');
+    const { HubClientError } = await import('@renaissance/core');
+    const catalogue = {
+      query: 'fireman',
+      songs: [
+        {
+          id: 'dz:track:1',
+          title: 'Fireman',
+          artist: 'Lil Wayne',
+          album: 'Tha Carter II',
+          duration: 263,
+        },
+        { id: 'dz:track:2', title: 'Fireman', artist: 'Elliphant', album: 'Living', duration: 200 },
+      ],
+      albums: [],
+      artists: [],
+      cached: false,
+    };
+    let calls = 0;
+    const hub = fakeHub({
+      catalogueSearch: vi.fn(async () => catalogue),
+      createRequest: vi.fn(async () => {
+        calls += 1;
+        return calls === 1
+          ? {
+              alreadyRequested: true as const,
+              request: request({ requestedBy: 'u-mom', requestedByName: 'Mom' }),
+            }
+          : request({ id: '77777777-7777-4777-8777-777777777777' });
+      }),
+      cancelRequest: vi.fn(async () => {
+        throw new HubClientError(409, 'too_late');
+      }),
+    });
+    renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = await screen.findByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'fireman');
+    const adds = await screen.findAllByRole('button', { name: 'Add' });
+    await user.click(adds[0]!);
+    expect(
+      await screen.findByText('Already on its way, asked by Mom. You will see it in Requests too'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    // The second row: requested, then an undo the hub refuses because it is downloading.
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByText('Requested. Progress is in Requests')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(
+      await screen.findByText('Too late, it is already downloading. It stays in Requests'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Could not add that. Try again')).not.toBeInTheDocument();
+    // Both titles are still on screen: the outcome took its own line, not the title's.
+    expect(screen.getAllByText('Fireman')).toHaveLength(2);
+  });
+});

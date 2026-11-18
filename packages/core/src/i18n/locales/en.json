@@ -19,7 +19,7 @@
     "budgetOff": "This month's smart-answer allowance is used up until the 1st. Names still work",
     "undo": "Undo",
     "undone": "Undone",
-    "undoFailed": "Could not undo that",
+    "undoFailed": "Couldn't undo that",
     "rejected_other": "{{count}} suggestions were left out because they aren't in your library or the catalogue",
     "kind": {
       "track": "Song",
@@ -44,7 +44,12 @@
       "queue": "Queue",
       "make_playlist": "Make playlist"
     },
-    "done": "Done"
+    "done": "Done",
+    "undoFailedRequest": "Couldn't undo that. The request is still in Requests",
+    "undoTooLate": "Too late, it is already downloading. It stays in Requests",
+    "undoFailedCollection": "Couldn't undo that. It is still in your music",
+    "alreadyRequested": "Already on its way, asked by {{name}}. You will see it in Requests too",
+    "alreadyRequestedMine": "Already on its way. Progress is in Requests"
   },
   "home": {
     "mySongs": "My songs",
@@ -153,7 +158,10 @@
       "etaSoon": "less than a minute left"
     },
     "whatHappened": "What happened",
-    "code": "Code: {{reason}}"
+    "code": "Code: {{reason}}",
+    "matched": "Will arrive as {{title}} by {{artist}}",
+    "detailEnglish": "These details are in English",
+    "cancelFailed": "{{title}} could not be cancelled. It may have finished already"
   },
   "settings": {
     "language": "Language",
@@ -193,7 +201,9 @@
       "searchLibrary_one": "Searched the library for \"{{query}}\": {{count}} result",
       "searchLibrary_other": "Searched the library for \"{{query}}\": {{count}} results",
       "lookupCatalogue_one": "Looked up \"{{query}}\" in the catalogue: {{count}} result",
-      "lookupCatalogue_other": "Looked up \"{{query}}\" in the catalogue: {{count}} results"
+      "lookupCatalogue_other": "Looked up \"{{query}}\" in the catalogue: {{count}} results",
+      "alreadyRequested": "{{title}} by {{artist}} is already on its way, asked by {{name}}",
+      "alreadyRequestedMine": "{{title}} by {{artist}} is already on its way"
     },
     "why": {
       "exact": "{{title}} is in your library",
