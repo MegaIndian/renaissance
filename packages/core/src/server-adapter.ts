@@ -147,8 +147,6 @@ export interface Library {
   /** The items behind these ids, so the cache can fetch what a delta missed (tracks and albums). */
   byIds(kind: 'track', ids: readonly string[]): Promise<Track[]>;
   byIds(kind: 'album', ids: readonly string[]): Promise<Album[]>;
-  /** The server's clock as an ISO datetime, or null when it does not say; the delta syncs from it. */
-  serverTime(): Promise<string | null>;
 }
 
 export interface Favorites {

@@ -5,8 +5,14 @@
  *
  * Notes from the demo server (10.10.7), kept here because they shape the delta refresh (F14):
  * `MinDateLastSaved` answers 500, so new items are found by paging `SortBy=DateCreated` and edited
- * ones by paging `SortBy=DateLastSaved`; `MinDateLastSavedForUser` works and carries favourite and
- * play-count changes. Image endpoints are anonymous, so image URLs never carry the token.
+ * ones by paging `SortBy=DateLastSaved`; `MinDateLastSavedForUser` works and filters on the item's
+ * own `DateLastSaved` (a metadata save; measured on 10.10.7, a favourite or a play does not bump it,
+ * so those reach the cache through the `DateLastSaved` page and the socket's `UserDataChanged`).
+ * The delta needs no clock on either side: it reads from the newest `DateCreated` and
+ * `DateLastSaved` the previous sync saw, the server's own stamps, which a cross-origin page can read
+ * (the `Date` header it cannot). 10.10.7 leaves `DateLastSaved` out of the item DTO even when asked
+ * for, and `DateCreated` then stands in. Image endpoints are anonymous, so image URLs never carry
+ * the token.
  */
 import { z } from 'zod';
 
@@ -192,6 +198,7 @@ export function toTrack(item: JfItem): Track {
     genres: item.Genres ?? [],
     imageId: primaryImageId(item),
     dateAdded: isoDate(item.DateCreated),
+    lastSaved: isoDate(item.DateLastSaved),
     ...userData(item),
   });
 }
@@ -219,6 +226,7 @@ export function toAlbum(item: JfItem): Album {
     duration: item.RunTimeTicks ? ticksToSeconds(item.RunTimeTicks) : undefined,
     imageId: primaryImageId(item),
     dateAdded: isoDate(item.DateCreated),
+    lastSaved: isoDate(item.DateLastSaved),
     ...userData(item),
   });
 }
@@ -246,8 +254,8 @@ export function toPlaylist(item: JfItem): Playlist {
   });
 }
 
-const TRACK_FIELDS = 'DateCreated,Genres,MediaStreams,ParentId';
-const ALBUM_FIELDS = 'DateCreated,Genres,ChildCount';
+const TRACK_FIELDS = 'DateCreated,DateLastSaved,Genres,MediaStreams,ParentId';
+const ALBUM_FIELDS = 'DateCreated,DateLastSaved,Genres,ChildCount';
 const ARTIST_FIELDS = 'DateCreated,Overview';
 const PLAYLIST_FIELDS = 'DateCreated,ChildCount';
 
@@ -666,13 +674,6 @@ export class JellyfinAdapter implements ServerAdapter {
         }
         return out;
       }) as Library['byIds'],
-      serverTime: async () => {
-        // No endpoint returns the clock on 10.10; the `Date` header of any answer does (to the second).
-        const response = await this.fetchRaw('GET', '/System/Info/Public');
-        const date = response.headers.get('date');
-        const time = date ? Date.parse(date) : Number.NaN;
-        return Number.isNaN(time) ? null : new Date(time).toISOString();
-      },
     };
     return library;
   }
@@ -794,6 +795,9 @@ export class JellyfinAdapter implements ServerAdapter {
       }
       const landed = entries.findIndex((e) => e.entryId === entryId);
       if (entries.length !== n || landed !== landingIndex10_10(from, to, n)) {
+        // Neither model explains the landing (a concurrent edit, a server this code has not met):
+        // forget what was learned and measure again on the next move.
+        this.moveSemantics = 'unknown';
         return { entries, ok: false, calls };
       }
       this.moveSemantics = 'priorItem';
@@ -812,7 +816,12 @@ export class JellyfinAdapter implements ServerAdapter {
     }
     entries = await library.playlistTracks(playlistId);
     calls += 1;
-    return { entries, ok: same(entries), calls };
+    const ok = same(entries);
+    // A planned sequence that did not land means the model is wrong for this server now (a
+    // `standard` server whose first landing happened to match 10.10, or a concurrent edit): back
+    // to `unknown`, so the next move is measured instead of planned under the wrong model.
+    if (!ok) this.moveSemantics = 'unknown';
+    return { entries, ok, calls };
   }
 
   streamUrl(
@@ -903,11 +912,21 @@ export class JellyfinAdapter implements ServerAdapter {
     let closed = false;
     let retry = 1000;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The upgrade carries the token as `api_key` and a refusal never passes through `fetch`, so a
+    // revoked token would reconnect forever. Two closes in a row before any open ask `/Users/Me`
+    // once, through `fetch`, where a 401 ends the session (see `createAdapter` on the web).
+    let failedBeforeOpen = 0;
+    let probed = false;
+    let opened = false;
     const open = (): void => {
       if (closed) return;
+      opened = false;
       socket = new Socket(url.toString());
       socket.onopen = () => {
+        opened = true;
         retry = 1000;
+        failedBeforeOpen = 0;
+        probed = false;
         socket?.send(JSON.stringify({ MessageType: 'KeepAlive' }));
       };
       socket.onmessage = (message: { data: unknown }) => {
@@ -930,6 +949,10 @@ export class JellyfinAdapter implements ServerAdapter {
       };
       socket.onclose = () => {
         if (closed) return;
+        if (!opened && ++failedBeforeOpen >= 2 && !probed) {
+          probed = true;
+          void this.me(session).catch(() => undefined);
+        }
         timer = setTimeout(open, retry);
         retry = Math.min(retry * 2, 60_000);
       };

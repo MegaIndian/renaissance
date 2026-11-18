@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   JellyfinAdapter,
@@ -10,6 +10,7 @@ import {
   toAlbum,
   toTrack,
 } from '../src/adapters/jellyfin';
+import { MemoryLibraryStore, syncLibrary } from '../src/library-cache';
 import { Server as ServerSchema } from '../src/models';
 import type { Server } from '../src/models';
 import { reorder } from '../src/playlist-reorder';
@@ -125,6 +126,7 @@ describe('JellyfinAdapter mapping', () => {
     });
     expect(t.duration).toBeCloseTo(136.62, 2);
     expect(t.dateAdded).toBe('2026-11-18T03:08:05.676Z');
+    expect(t.lastSaved).toBe('2026-11-18T03:09:00.000Z');
   });
 
   it('falls back to the container as codec and names an untitled file', () => {
@@ -496,6 +498,56 @@ describe('JellyfinAdapter calls', () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it('a socket refused twice before it ever opened asks /Users/Me once, so a revoked token ends through fetch', async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      class FakeSocket {
+        onopen: (() => void) | null = null;
+        onmessage: ((m: { data: unknown }) => void) | null = null;
+        onclose: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor(readonly url: string) {
+          sockets.push(this);
+        }
+        send() {}
+        close() {
+          this.onclose?.();
+        }
+      }
+      const fake = fakeFetch({ 'GET /Users/Me': () => ({ Id: 'u1', Name: 'sahil' }) });
+      const adapter = new JellyfinAdapter(server, {
+        ...options,
+        fetch: fake.fetch,
+        WebSocket: FakeSocket as unknown as typeof WebSocket,
+      });
+      const probes = () => fake.calls.filter((c) => c.url.pathname === '/Users/Me').length;
+      const stop = adapter.subscribe(session, {});
+      sockets[0]?.onclose?.();
+      expect(probes()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      sockets[1]?.onclose?.();
+      expect(probes()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      sockets[2]?.onclose?.();
+      expect(probes()).toBe(1);
+      // A socket that opens resets the count; a close after an open is an ordinary drop.
+      await vi.advanceTimersByTimeAsync(4000);
+      sockets[3]?.onopen?.();
+      sockets[3]?.onclose?.();
+      await vi.advanceTimersByTimeAsync(1000);
+      sockets[4]?.onclose?.();
+      expect(probes()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      sockets[5]?.onclose?.();
+      expect(probes()).toBe(2);
+      stop();
+      expect(sockets).toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('ServerError carries the path', () => {
     const e = new ServerError(500, '/Items');
     expect(e.message).toContain('500');
@@ -553,7 +605,7 @@ describe('JellyfinAdapter calls', () => {
     await expect(revoked.adapter.me(session)).rejects.toMatchObject({ status: 401 });
   });
 
-  it('byIds fetches tracks and albums in chunks of 100 and serverTime reads the Date header', async () => {
+  it('byIds fetches tracks and albums in chunks of 100, asking for the save stamps', async () => {
     const asked: string[] = [];
     const { adapter } = make({
       'GET /Items': (url) => {
@@ -567,11 +619,6 @@ describe('JellyfinAdapter calls', () => {
           ),
         );
       },
-      'GET /System/Info/Public': () =>
-        new Response('{}', {
-          status: 200,
-          headers: { date: 'Wed, 18 Nov 2026 06:46:29 GMT', 'content-type': 'application/json' },
-        }),
     });
     const library = adapter.library(session);
     const tracks = await library.byIds(
@@ -584,9 +631,57 @@ describe('JellyfinAdapter calls', () => {
     expect(albums[0]).toMatchObject({ id: 'a1', title: 'Album a1' });
     expect(await library.byIds('track', [])).toEqual([]);
     expect(asked).toEqual(['Audio:100', 'Audio:50', 'MusicAlbum:1']);
-    expect(await library.serverTime()).toBe('2026-11-18T06:46:29.000Z');
-    const noDate = make({ 'GET /System/Info/Public': () => ({}) });
-    expect(await noDate.adapter.library(session).serverTime()).toBeNull();
+    expect(tracks[0]?.lastSaved).toBe('2026-11-18T03:09:00.000Z');
+  });
+
+  it('the delta reads from the stamps the items carry, with no Date header on any answer and no clock', async () => {
+    // Two tracks on the server; a later one appears before the second sync. Every fake Response
+    // here is built without a Date header, as a cross-origin page sees Jellyfin's answers.
+    const dated = (id: string, created: string, saved: string) =>
+      jfAudio(id, `Song ${id}`, { DateCreated: created, DateLastSaved: saved });
+    let onServer = [
+      dated('t1', '2026-11-01T10:00:00.000Z', '2026-11-05T09:00:00.000Z'),
+      dated('t2', '2026-11-03T10:00:00.000Z', '2026-11-03T10:00:00.000Z'),
+    ];
+    const { adapter, calls } = make({
+      'GET /Items': (url) => {
+        if (url.searchParams.get('IncludeItemTypes') === 'MusicAlbum') return items([]);
+        const list = [...onServer];
+        if (url.searchParams.get('SortBy')?.startsWith('DateCreated')) {
+          list.sort((a, b) => Date.parse(b.DateCreated) - Date.parse(a.DateCreated));
+        }
+        return items(list);
+      },
+      'GET /Artists': () => items([]),
+      'GET /Artists/AlbumArtists': () => items([]),
+    });
+    for (const call of calls) expect(call.url.pathname).not.toBe('/System/Info/Public');
+    const store = new MemoryLibraryStore();
+    const library = adapter.library(session);
+    const full = await syncLibrary(library, store, { now: () => new Date('2000-01-01T00:00:00Z') });
+    expect(full.mode).toBe('full');
+    expect((await store.readMeta())?.watermark).toEqual({
+      added: '2026-11-03T10:00:00.000Z',
+      saved: '2026-11-05T09:00:00.000Z',
+    });
+    onServer = [...onServer, dated('t3', '2026-11-10T10:00:00.000Z', '2026-11-10T10:00:00.000Z')];
+    calls.length = 0;
+    // The device clock is wildly wrong and it does not matter.
+    const delta = await syncLibrary(library, store, {
+      now: () => new Date('2099-01-01T00:00:00Z'),
+    });
+    expect(delta.mode).toBe('delta');
+    expect(delta.snapshot.tracks.map((t) => t.id).sort()).toEqual(['t1', 't2', 't3']);
+    const userData = calls.find((c) => c.url.searchParams.has('MinDateLastSavedForUser'));
+    expect(userData?.url.searchParams.get('MinDateLastSavedForUser')).toBe(
+      '2026-11-05T09:00:00.000Z',
+    );
+    expect(calls.map((c) => c.url.pathname)).not.toContain('/System/Info/Public');
+    expect((await store.readMeta())?.watermark).toEqual({
+      added: '2026-11-10T10:00:00.000Z',
+      saved: '2026-11-10T10:00:00.000Z',
+    });
+    expect(delta.snapshot.syncedAt).toBe('2099-01-01T00:00:00.000Z');
   });
 
   describe('playlist move with read-back', () => {
@@ -670,6 +765,28 @@ describe('JellyfinAdapter calls', () => {
       expect(result.entries.map((e) => e.entryId)).toEqual(['e0', 'e1', 'e2', 'e3']);
       expect(adapter.moveSemantics).toBe('unknown');
       expect(moves()).toBe(1);
+    });
+
+    it('a planned sequence that does not land resets the semantics to unknown, and the next move is measured again', async () => {
+      // The first Move lands as 10.10 would (a concurrent edit made it look so), the planned
+      // compensation is swallowed, and from then on the server is a standard one.
+      type Algorithm = (list: string[], entryId: string, index: number) => string[];
+      let calls = 0;
+      let behaviour: Algorithm = (list, entryId, index) =>
+        ++calls === 1 ? jellyfin10_10Move(list, entryId, index) : [...list];
+      const { adapter, order } = playlistServer(names, (list, entryId, index) =>
+        behaviour(list, entryId, index),
+      );
+      const wrong = await adapter.playlists.move(session, 'pl', 'e1', 0);
+      expect(wrong.ok).toBe(false);
+      expect(adapter.moveSemantics).toBe('unknown');
+      expect(wrong.entries.map((e) => e.entryId)).toEqual(order());
+      // Measured again on a server that now lands where asked: learned as standard, no planning.
+      behaviour = standard;
+      const next = await adapter.playlists.move(session, 'pl', 'e3', 0);
+      expect(next.ok).toBe(true);
+      expect(adapter.moveSemantics).toBe('standard');
+      expect(order()[0]).toBe('e3');
     });
 
     it('an unknown entry or a no-op target makes no server call', async () => {

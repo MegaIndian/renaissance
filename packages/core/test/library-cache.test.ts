@@ -17,7 +17,6 @@ function fakeLibrary(data: {
   albums: Album[];
   artists: Artist[];
   playlists: Playlist[];
-  serverTime?: string | null;
 }) {
   const calls: string[] = [];
   const page = <T>(list: T[], p: PageRequest = {}): Page<T> => {
@@ -73,10 +72,6 @@ function fakeLibrary(data: {
       const list: { id: string }[] = kind === 'track' ? data.tracks : data.albums;
       return Promise.resolve(list.filter((i) => ids.includes(i.id)));
     },
-    serverTime: () => {
-      calls.push('serverTime');
-      return Promise.resolve(data.serverTime ?? null);
-    },
   } as unknown as Library;
   return { lib, calls };
 }
@@ -85,7 +80,7 @@ const t = (id: string, day: number, extra: Partial<Track> = {}) =>
   track(id, { dateAdded: `2026-01-${String(day).padStart(2, '0')}T00:00:00.000Z`, ...extra });
 
 describe('syncLibrary', () => {
-  it('first run: pages every kind into the store, reports progress and records the time', async () => {
+  it('first run: pages every kind into the store, reports progress, records the time and the watermark', async () => {
     const tracks = Array.from({ length: 25 }, (_, i) =>
       t(`t${i}`, 1 + (i % 9), { genres: ['G' + (i % 3)], year: 2000 + (i % 2) }),
     );
@@ -113,6 +108,11 @@ describe('syncLibrary', () => {
     expect(progress).toContain('track 25/25');
     expect(calls.filter((c) => c.startsWith('tracks')).length).toBe(3);
     expect((await store.readMeta())?.syncedAt).toBe('2026-02-01T00:00:00.000Z');
+    // The watermark is the newest stamp the items carry, not a clock.
+    expect((await store.readMeta())?.watermark).toEqual({
+      added: '2026-01-09T00:00:00.000Z',
+      saved: '2026-01-09T00:00:00.000Z',
+    });
     expect((await loadSnapshot(store)).tracks).toHaveLength(25);
   });
 
@@ -139,9 +139,10 @@ describe('syncLibrary', () => {
     expect(ids).toEqual(['new1', 'new2', 'old1', 'old2']);
     expect(result.snapshot.tracks.find((x) => x.id === 'old1')?.isFavorite).toBe(true);
     expect(result.snapshot.syncedAt).toBe('2026-01-25T00:00:00.000Z');
-    // Paging by date stopped at the first old item: three pages of one (new1, new2, old1-stop).
+    // Paging by date stopped at the first item older than the watermark (day 3, the newest the
+    // full sync saw): three pages of one (new2, new1, old2-stop).
     expect(calls.filter((c) => c.startsWith('tracks dateAdded')).length).toBe(3);
-    expect(calls).toContain('userData 2026-01-10T00:00:00.000Z');
+    expect(calls).toContain('userData 2026-01-03T00:00:00.000Z');
     expect(calls).toContain('ids track');
     expect(calls).not.toContain('ids album');
   });
@@ -156,12 +157,12 @@ describe('syncLibrary', () => {
     const { lib, calls } = fakeLibrary(data);
     const store = new MemoryLibraryStore();
     await syncLibrary(lib, store, { now: () => new Date('2026-01-10T00:00:00.000Z') });
-    // A track whose DateCreated is older than the sync time (a slow import) appears on the server:
-    // the date paging never sees it, the count differs, so it is fetched by id.
-    data.tracks = [t('old1', 1), t('old2', 2), t('missed', 3)];
+    // A track whose DateCreated is older than the watermark (a slow import stamped in the past)
+    // appears on the server: the date paging never sees it, the count differs, so it is fetched by id.
+    data.tracks = [t('old1', 1), t('old2', 2), t('missed', 1)];
     data.albums = [
       album('al1', { dateAdded: '2026-01-01T00:00:00.000Z' }),
-      album('al2', { dateAdded: '2026-01-02T00:00:00.000Z' }),
+      album('al2', { dateAdded: '2026-01-01T00:00:00.000Z' }),
     ];
     calls.length = 0;
     const result = await syncLibrary(lib, store, {
@@ -183,30 +184,50 @@ describe('syncLibrary', () => {
     expect(calls.filter((c) => c.startsWith('ids') || c.startsWith('byIds'))).toEqual([]);
   });
 
-  it('the sync time is the server clock when it gives one, the local clock otherwise', async () => {
+  it('the watermark follows lastSaved when present, moves only forward, and a meta without one means a full sync', async () => {
     const data = {
-      tracks: [t('a', 1)],
-      albums: [],
+      tracks: [
+        t('a', 1, { lastSaved: '2026-01-15T00:00:00.000Z' }),
+        t('b', 2),
+        { ...t('c', 3), dateAdded: undefined } as Track,
+      ],
+      albums: [album('al1', { dateAdded: '2026-01-04T00:00:00.000Z' })],
       artists: [],
       playlists: [],
-      serverTime: '2026-03-01T12:00:00.000Z' as string | null,
     };
     const { lib, calls } = fakeLibrary(data);
     const store = new MemoryLibraryStore();
+    // A meta written by an older build: no watermark, so this run is a full one, whatever the clock says.
+    await store.writeMeta({ syncedAt: '2026-01-10T00:00:00.000Z', albumArtistIds: [] });
     const full = await syncLibrary(lib, store, { now: () => new Date('2026-03-01T12:05:00.000Z') });
-    expect(full.snapshot.syncedAt).toBe('2026-03-01T12:00:00.000Z');
-    expect(calls[0]).toBe('serverTime');
-    data.serverTime = null;
-    const delta = await syncLibrary(lib, store, {
+    expect(full.mode).toBe('full');
+    expect(full.snapshot.syncedAt).toBe('2026-03-01T12:05:00.000Z');
+    expect((await store.readMeta())?.watermark).toEqual({
+      added: '2026-01-04T00:00:00.000Z',
+      saved: '2026-01-15T00:00:00.000Z',
+    });
+    // A delta that sees nothing newer keeps the watermark; user data is asked from the save stamp.
+    calls.length = 0;
+    const quiet = await syncLibrary(lib, store, {
       now: () => new Date('2026-03-02T00:00:00.000Z'),
     });
-    expect(delta.snapshot.syncedAt).toBe('2026-03-02T00:00:00.000Z');
-    const failing = fakeLibrary(data);
-    failing.lib.serverTime = () => Promise.reject(new Error('down'));
-    const fallback = await syncLibrary(failing.lib, new MemoryLibraryStore(), {
-      now: () => new Date('2026-03-03T00:00:00.000Z'),
+    expect(quiet.mode).toBe('delta');
+    expect(calls).toContain('userData 2026-01-15T00:00:00.000Z');
+    expect((await store.readMeta())?.watermark).toEqual({
+      added: '2026-01-04T00:00:00.000Z',
+      saved: '2026-01-15T00:00:00.000Z',
     });
-    expect(fallback.snapshot.syncedAt).toBe('2026-03-03T00:00:00.000Z');
+    // A server whose items carry no stamps at all gets a full sync every time.
+    const undated = fakeLibrary({
+      tracks: [{ ...track('x'), dateAdded: undefined } as Track],
+      albums: [],
+      artists: [],
+      playlists: [],
+    });
+    const bare = new MemoryLibraryStore();
+    expect((await syncLibrary(undated.lib, bare)).mode).toBe('full');
+    expect((await bare.readMeta())?.watermark).toBeUndefined();
+    expect((await syncLibrary(undated.lib, bare)).mode).toBe('full');
   });
 
   it('a corrupt record in the store is skipped, not fatal', async () => {

@@ -10,8 +10,10 @@
  *   `userDataChangedSince`; artists and playlists refetched whole (they are small); deletions and
  *   misses found by comparing the server's total with the cache's count and reconciling ids when
  *   they differ: ids the server no longer has are dropped, ids the cache lacks are fetched.
- * - the sync time is the server's clock (its `Date` header), not the client's, so an item whose
- *   `DateCreated` sits between the two clocks is never skipped.
+ * - the delta reads from a watermark the server itself stamped, not from a clock: the newest
+ *   `dateAdded` and the newest `lastSaved` the previous sync saw. Neither side's clock matters, and
+ *   nothing is read from response headers (Jellyfin does not expose `Date` to another origin).
+ *   `syncedAt` is this device's own clock and only says "last refreshed" on screen.
  */
 import { z } from 'zod';
 
@@ -28,9 +30,22 @@ import type { Library, Page, PageRequest } from './server-adapter';
 export type CacheKind = 'track' | 'album' | 'artist' | 'playlist';
 export type CacheItem = Track | Album | Artist | Playlist;
 
+/**
+ * Where the last sync got to, in the server's own stamps: the delta pages `dateAdded` down to
+ * `added` and asks for user data saved since `saved`. A full sync that saw no dated item leaves it
+ * unset, and the next sync is full again.
+ */
+export const SyncWatermark = z.object({
+  added: z.iso.datetime({ offset: true }),
+  saved: z.iso.datetime({ offset: true }),
+});
+export type SyncWatermark = z.infer<typeof SyncWatermark>;
+
 export const LibraryMeta = z.object({
-  /** ISO time the last successful sync started; the next delta reads from here. */
+  /** When this device last finished a sync, by its own clock. Shown as "last refreshed"; never compared with server dates. */
   syncedAt: z.iso.datetime(),
+  /** The server-side watermark the next delta reads from. */
+  watermark: SyncWatermark.optional(),
   /** Ids of artists that are album artists, from the server's own list. */
   albumArtistIds: z.array(z.string()).default([]),
 });
@@ -144,7 +159,7 @@ export interface SyncOptions {
   /** Items per request. */
   pageSize?: number;
   onProgress?: (progress: SyncProgress) => void;
-  /** The fallback clock when the server does not say the time. */
+  /** This device's clock, for `syncedAt` ("last refreshed" on screen); nothing else reads it. */
   now?: () => Date;
   /** Force the first-run path even when a sync time exists. */
   full?: boolean;
@@ -158,15 +173,40 @@ export interface SyncResult {
   healed: number;
 }
 
-/** The server's clock when it gives one, else the local clock. */
-async function syncStart(library: Library, now: () => Date): Promise<string> {
-  try {
-    const time = await library.serverTime();
-    if (time) return time;
-  } catch {
-    /* no clock from the server: the local one will do */
+type Dated = { dateAdded?: string | undefined; lastSaved?: string | undefined };
+
+/** The newest `dateAdded` and `lastSaved` across items, starting from a previous watermark. */
+class Watermark {
+  private added = Number.NaN;
+  private saved = Number.NaN;
+
+  constructor(previous?: SyncWatermark) {
+    if (previous) {
+      this.added = Date.parse(previous.added);
+      this.saved = Date.parse(previous.saved);
+    }
   }
-  return now().toISOString();
+
+  see(items: readonly Dated[]): void {
+    for (const item of items) {
+      if (item.dateAdded) this.added = later(this.added, Date.parse(item.dateAdded));
+      // An item with no save stamp counts its creation as its last save.
+      const saved = item.lastSaved ?? item.dateAdded;
+      if (saved) this.saved = later(this.saved, Date.parse(saved));
+    }
+  }
+
+  value(): SyncWatermark | undefined {
+    if (Number.isNaN(this.added)) return undefined;
+    const saved = Number.isNaN(this.saved) ? this.added : this.saved;
+    return { added: new Date(this.added).toISOString(), saved: new Date(saved).toISOString() };
+  }
+}
+
+function later(a: number, b: number): number {
+  if (Number.isNaN(b)) return a;
+  if (Number.isNaN(a)) return b;
+  return Math.max(a, b);
 }
 
 async function allPages<T>(
@@ -200,8 +240,9 @@ function dedupe<T extends { id: string }>(items: T[]): T[] {
 
 /**
  * Bring the store up to date and return the snapshot to show. Runs a full sync the first time (or
- * when asked), a delta afterwards. Writes happen per kind and the sync time is recorded last, so a
- * failure half-way leaves the previous sync time and the next run picks the changes up again.
+ * when asked, or when the stored meta carries no watermark), a delta afterwards. Writes happen per
+ * kind and the meta is recorded last, so a failure half-way leaves the previous watermark and the
+ * next run picks the changes up again.
  */
 export async function syncLibrary(
   library: Library,
@@ -210,8 +251,8 @@ export async function syncLibrary(
 ): Promise<SyncResult> {
   const pageSize = options.pageSize ?? 1000;
   const now = options.now ?? (() => new Date());
-  const startedAt = await syncStart(library, now);
-  const meta = options.full ? null : await store.readMeta();
+  const stored = options.full ? null : await store.readMeta();
+  const meta = stored?.watermark ? stored : null;
   const progress = (kind: CacheKind) => (total: number, done: number) =>
     options.onProgress?.({ kind, done, total });
 
@@ -228,7 +269,15 @@ export async function syncLibrary(
     pageSize,
     progress('playlist'),
   );
-  const newMeta: LibraryMeta = { syncedAt: startedAt, albumArtistIds };
+  const watermark = new Watermark(meta?.watermark);
+  const finish = (): LibraryMeta => {
+    const value = watermark.value();
+    return {
+      syncedAt: now().toISOString(),
+      ...(value ? { watermark: value } : {}),
+      albumArtistIds,
+    };
+  };
 
   if (!meta) {
     const tracks = await allPages(
@@ -241,6 +290,9 @@ export async function syncLibrary(
       pageSize,
       progress('album'),
     );
+    watermark.see(tracks);
+    watermark.see(albums);
+    const newMeta = finish();
     await store.replace('track', tracks);
     await store.replace('album', albums);
     await store.replace('artist', artists);
@@ -259,9 +311,13 @@ export async function syncLibrary(
     };
   }
 
-  const since = Date.parse(meta.syncedAt);
+  // `meta.watermark` is set: that is what made this a delta.
+  const mark = meta.watermark as SyncWatermark;
+  const since = Date.parse(mark.added);
+  // Strictly older stops the paging; an item stamped exactly at the watermark is fetched again,
+  // which is harmless, rather than skipped, which is not.
   const isOld = (item: { dateAdded?: string | undefined }) =>
-    item.dateAdded !== undefined && Date.parse(item.dateAdded) <= since;
+    item.dateAdded !== undefined && Date.parse(item.dateAdded) < since;
   const [newTracks, newAlbums, changedUserData, editedTracks, editedAlbums] = await Promise.all([
     allPages(
       (p) => library.tracks(p, { sort: 'dateAdded', order: 'desc' }),
@@ -275,12 +331,14 @@ export async function syncLibrary(
       undefined,
       isOld,
     ),
-    allPages((p) => library.userDataChangedSince(meta.syncedAt, p), pageSize),
+    allPages((p) => library.userDataChangedSince(mark.saved, p), pageSize),
     library.tracks({ start: 0, limit: 200 }, { sort: 'lastSaved', order: 'desc' }),
     library.albums({ start: 0, limit: 200 }, { sort: 'lastSaved', order: 'desc' }),
   ]);
   const trackUpdates = dedupe([...newTracks, ...changedUserData, ...editedTracks.items]);
   const albumUpdates = dedupe([...newAlbums, ...editedAlbums.items]);
+  watermark.see(trackUpdates);
+  watermark.see(albumUpdates);
   await store.write('track', trackUpdates);
   await store.write('album', albumUpdates);
   await store.replace('artist', artists);
@@ -310,6 +368,7 @@ export async function syncLibrary(
         kind === 'track'
           ? await library.byIds('track', missing)
           : await library.byIds('album', missing);
+      watermark.see(fetched);
       await store.write(kind, fetched);
       healed += fetched.length;
     }
@@ -321,6 +380,7 @@ export async function syncLibrary(
     else albums = cached;
   }
 
+  const newMeta = finish();
   await store.writeMeta(newMeta);
   tracks ??= await store.read('track');
   albums ??= await store.read('album');

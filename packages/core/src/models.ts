@@ -72,6 +72,8 @@ export const Album = z.object({
   duration: z.number().nonnegative().optional(),
   imageId: z.string().optional(),
   dateAdded: z.iso.datetime({ offset: true }).optional(),
+  /** When the server last saved this item (Jellyfin `DateLastSaved`); the delta refresh's watermark. */
+  lastSaved: z.iso.datetime({ offset: true }).optional(),
   ...userFields,
 });
 export type Album = z.infer<typeof Album>;
@@ -100,6 +102,8 @@ export const Track = z.object({
   genres: z.array(z.string()).default([]),
   imageId: z.string().optional(),
   dateAdded: z.iso.datetime({ offset: true }).optional(),
+  /** When the server last saved this item (Jellyfin `DateLastSaved`); the delta refresh's watermark. */
+  lastSaved: z.iso.datetime({ offset: true }).optional(),
   ...userFields,
 });
 export type Track = z.infer<typeof Track>;
@@ -116,7 +120,12 @@ export const Playlist = z.object({
 });
 export type Playlist = z.infer<typeof Playlist>;
 
-/** A track inside a playlist; `entryId` is what reorder and remove address, since a track can be in a playlist twice. */
+/**
+ * A track inside a playlist; `entryId` is what reorder and remove address, since a track can be in a
+ * playlist twice. On Jellyfin 10.10.7 the controller sets `PlaylistItemId` to the track's own id (and
+ * dedupes adds), so there `entryId` equals the track id; 10.11 mints one per entry. Code never relies
+ * on either: it addresses entries by whatever the server returned.
+ */
 export const PlaylistEntry = Track.extend({ entryId: z.string().min(1) });
 export type PlaylistEntry = z.infer<typeof PlaylistEntry>;
 

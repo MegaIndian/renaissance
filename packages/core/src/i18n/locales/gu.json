@@ -34,7 +34,7 @@
     "mySongsEmptyBody": "કોઈ પણ ગીત પર હૃદય દબાવો, તે આ હારમાં આવી જશે.",
     "recentEmpty": "તમે જે વગાડો તે અહીં દેખાશે",
     "mixesEmpty": "તમે જે વગાડો તેના પરથી બનેલાં મિક્સ અહીં દેખાશે, દરેકનું નામ શબ્દોમાં",
-    "mixesPhase": "મિક્સ તબક્કો 4 માં આવશે.",
+    "mixesPhase": "મિક્સ તબક્કા 4માં આવશે.",
     "recentlyAddedEmpty": "સર્વર પર નવું સંગીત અહીં દેખાશે",
     "mostPlayedEmpty": "તમે વારંવાર વગાડતાં ગીતો અહીં દેખાશે",
     "playAll": "બધાં વગાડો",
@@ -100,9 +100,9 @@
     "openNowPlaying": "હમણાં વાગે છે તે ખોલો",
     "queue": "કતાર",
     "lyrics": "ગીતના શબ્દો",
-    "lyricsLater": "ગીતના શબ્દો તબક્કો 6 માં આવશે",
+    "lyricsLater": "ગીતના શબ્દો તબક્કા 6માં આવશે",
     "cast": "કાસ્ટ",
-    "castLater": "કાસ્ટિંગ તબક્કો 8 માં આવશે",
+    "castLater": "કાસ્ટિંગ તબક્કા 8માં આવશે",
     "direct": "સીધું વગાડે છે",
     "transcode": "સર્વર રૂપાંતર કરીને મોકલે છે",
     "loading": "લોડ થઈ રહ્યું છે…",
@@ -124,17 +124,17 @@
     "moveUp": "ઉપર લો",
     "moveDown": "નીચે લો",
     "dragHandle": "ક્રમ બદલવા ખેંચો",
-    "count": "{{count}} ગીતો",
-    "count_one": "{{count}} ગીત",
+    "count": "{{count, number}} ગીતો",
+    "count_one": "{{count, number}} ગીત",
     "playNext": "હવે પછી વગાડો",
     "addToQueue": "કતારમાં ઉમેરો",
     "addedNext": "{{title}} હવે પછી વાગશે",
     "addedToEnd": "{{title}} કતારમાં ઉમેર્યું",
-    "addedCountNext": "{{count}} ગીતો હવે પછી વાગશે",
-    "addedCountEnd": "{{count}} ગીતો કતારમાં ઉમેર્યાં"
+    "addedCountNext": "{{count, number}} ગીતો હવે પછી વાગશે",
+    "addedCountEnd": "{{count, number}} ગીતો કતારમાં ઉમેર્યાં"
   },
   "status": {
-    "preAlpha": "Pre-alpha, તબક્કો 1: વેબ પર વગાડવાનું ચાલુ છે; મોબાઇલ સ્ક્રીન તબક્કો 3 માં આવશે."
+    "preAlpha": "Pre-alpha, તબક્કો 1: વેબ પર વગાડવાનું ચાલુ છે; મોબાઇલ સ્ક્રીન તબક્કા 3માં આવશે."
   },
   "library": {
     "title": "લાઇબ્રેરી",
@@ -168,25 +168,25 @@
     "clearFilters": "ગાળણ સાફ કરો",
     "nothingHere": "અહીં હજી કંઈ નથી",
     "nothingMatches": "આ ગાળણ સાથે કંઈ મળતું નથી",
-    "syncing": "તમારી લાઇબ્રેરી લોડ થાય છે: {{total}} માંથી {{done}} {{kind}}",
+    "syncing": "તમારી લાઇબ્રેરી લોડ થાય છે: {{total, number}} માંથી {{done, number}} {{kind}}",
     "syncingFirst": "તમારી લાઇબ્રેરી પહેલી વાર લોડ થાય છે. થોડી વાર લાગશે અને એક જ વાર થાય છે.",
     "syncFailed": "લાઇબ્રેરી તાજી કરી શકાઈ નહીં. જે દેખાય છે તે છેલ્લી વારનું છે.",
     "refresh": "લાઇબ્રેરી તાજી કરો",
     "refreshed": "લાઇબ્રેરી તાજી થઈ",
     "syncedAt": "છેલ્લે તાજી કરેલી {{when}}",
-    "tracksCount": "{{count}} ગીતો",
-    "tracksCount_one": "{{count}} ગીત",
-    "albumsCount": "{{count}} આલ્બમ",
-    "albumsCount_one": "{{count}} આલ્બમ",
-    "artistsCount": "{{count}} કલાકારો",
-    "artistsCount_one": "{{count}} કલાકાર",
+    "tracksCount": "{{count, number}} ગીતો",
+    "tracksCount_one": "{{count, number}} ગીત",
+    "albumsCount": "{{count, number}} આલ્બમ",
+    "albumsCount_one": "{{count, number}} આલ્બમ",
+    "artistsCount": "{{count, number}} કલાકારો",
+    "artistsCount_one": "{{count, number}} કલાકાર",
     "kindTrack": "ગીતો",
     "kindAlbum": "આલ્બમ",
     "kindArtist": "કલાકારો",
     "kindPlaylist": "પ્લેલિસ્ટ",
     "unknownArtist": "અજાણ્યો કલાકાર",
     "noAlbum": "સિંગલ",
-    "minutes": "{{count}} મિનિટ",
+    "minutes": "{{count, number}} મિનિટ",
     "everythingOnServer": "સર્વર પરનું બધું",
     "genreTracks": "{{genre}} પ્રકારનાં ગીતો",
     "yearTracks": "{{year}} નાં ગીતો"
@@ -195,10 +195,10 @@
     "play": "વગાડો",
     "shuffle": "શફલ",
     "disc": "ડિસ્ક {{number}}",
-    "tracks": "{{count}} ગીતો",
-    "tracks_one": "{{count}} ગીત",
+    "tracks": "{{count, number}} ગીતો",
+    "tracks_one": "{{count, number}} ગીત",
     "download": "ડાઉનલોડ",
-    "downloadLater": "ડાઉનલોડ તબક્કો 5 માં આવશે",
+    "downloadLater": "ડાઉનલોડ તબક્કા 5માં આવશે",
     "notFound": "આ આલ્બમ હવે સર્વર પર નથી",
     "label": "લેબલ"
   },
@@ -228,7 +228,7 @@
     "deleteConfirm": "{{name}} કાઢી નાખવી છે? આ પાછું વાળી શકાશે નહીં.",
     "addTo": "પ્લેલિસ્ટમાં ઉમેરો",
     "added": "{{name}} માં ઉમેર્યું",
-    "addedCount": "{{name}} માં {{count}} ગીતો ઉમેર્યાં",
+    "addedCount": "{{name}} માં {{count, number}} ગીતો ઉમેર્યાં",
     "removeFrom": "પ્લેલિસ્ટમાંથી કાઢો",
     "removed": "{{title}} ને {{name}} માંથી કાઢ્યું",
     "empty": "હજી કોઈ પ્લેલિસ્ટ નથી",
@@ -257,7 +257,7 @@
     "goToAlbum": "આલ્બમ પર જાઓ",
     "goToArtist": "કલાકાર પર જાઓ",
     "duration": "લંબાઈ",
-    "playCount": "{{count}} વાર વગાડ્યું",
+    "playCount": "{{count, number}} વાર વગાડ્યું",
     "playCount_one": "એક વાર વગાડ્યું",
     "neverPlayed": "કદી વગાડ્યું નથી",
     "quality": "{{codec}} {{bitrate}} kbps"
@@ -311,7 +311,7 @@
     "version": "આવૃત્તિ {{version}}",
     "licence": "GPL-3.0-or-later હેઠળ ઓપન સોર્સ",
     "saved": "સાચવ્યું",
-    "diagnosticsLater": "નિદાન તબક્કો 9 માં આવશે"
+    "diagnosticsLater": "નિદાન તબક્કા 9માં આવશે"
   },
   "language": {
     "en": "English",
@@ -332,7 +332,7 @@
   "requests": {
     "empty": "હજી કોઈ વિનંતી નથી",
     "emptyBody": "ગીત કે આલ્બમ માગો, તે અહીં તેની પ્રગતિ સાથે દેખાશે.",
-    "later": "વિનંતીઓ તબક્કો 2 માં હબ સાથે આવશે."
+    "later": "વિનંતીઓ તબક્કા 2માં હબ સાથે આવશે."
   },
   "notFound": {
     "title": "આ સરનામે કોઈ પેજ નથી",
@@ -347,11 +347,11 @@
   },
   "time": {
     "justNow": "હમણાં જ",
-    "minutesAgo": "{{count}} મિનિટ પહેલાં",
+    "minutesAgo": "{{count, number}} મિનિટ પહેલાં",
     "minutesAgo_one": "એક મિનિટ પહેલાં",
-    "hoursAgo": "{{count}} કલાક પહેલાં",
+    "hoursAgo": "{{count, number}} કલાક પહેલાં",
     "hoursAgo_one": "એક કલાક પહેલાં",
-    "daysAgo": "{{count}} દિવસ પહેલાં",
+    "daysAgo": "{{count, number}} દિવસ પહેલાં",
     "daysAgo_one": "ગઈકાલે"
   }
 }

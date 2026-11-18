@@ -35,6 +35,7 @@ export const JfItem = z.object({
   ProductionYear: nullable(z.number()),
   Genres: nullable(z.array(z.string())),
   DateCreated: nullable(z.string()),
+  DateLastSaved: nullable(z.string()),
   Overview: nullable(z.string()),
   ChildCount: nullable(z.number()),
   AlbumId: nullable(z.string()),
