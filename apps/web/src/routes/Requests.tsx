@@ -1,20 +1,23 @@
-import type { MusicRequest } from '@renaissance/core';
+import type { MusicRequest, RequestProgress, RequestStep } from '@renaissance/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusPill } from '../components/StatusPill';
-import { useHub } from '../lib/hub';
+import { useDetailLevel, useHub } from '../lib/hub';
 
 type Scope = 'mine' | 'house';
 
 /**
  * The Requests tab (F61, F63, F87): the caller's own requests from the hub, live through the hub's
  * event stream, with cancel while nothing has been downloaded and retry after a failure. An admin
- * can switch to the whole house and sees who asked.
+ * can switch to the whole house and sees who asked. Every card speaks plainly (DESIGN.md rule 9):
+ * the pill, a sentence for a failure everyone can act on, and progress in words. The pipeline's own
+ * words sit behind a collapsed "What happened" in advanced mode and for admins only (design B).
  */
 export function Requests() {
   const { t } = useTranslation();
@@ -120,6 +123,26 @@ function percent(done: number, total: number): number {
   return total > 0 ? Math.min(100, Math.max(0, Math.round((done / total) * 100))) : 0;
 }
 
+/** "42% downloaded · about a minute left" or "14 of 18 songs": the shape, in words (rule 9). */
+export function progressWords(progress: RequestProgress, t: TFunction): string {
+  const parts: string[] = [];
+  if (progress.unit === 'songs') {
+    if (progress.total > 0)
+      parts.push(t('requests.progress.songs', { done: progress.done, total: progress.total }));
+  } else {
+    parts.push(t('requests.progress.percent', { percent: percent(progress.done, progress.total) }));
+  }
+  if (progress.etaSeconds !== undefined) {
+    const minutes = Math.round(progress.etaSeconds / 60);
+    parts.push(
+      minutes < 1
+        ? t('requests.progress.etaSoon')
+        : t('requests.progress.etaMinutes', { count: minutes }),
+    );
+  }
+  return parts.join(' · ');
+}
+
 function RequestRow({
   request,
   showWho,
@@ -132,19 +155,28 @@ function RequestRow({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
-  const last = request.steps[request.steps.length - 1];
+  const { showDetail } = useDetailLevel();
   const canCancel = request.status === 'requested' || request.status === 'finding';
-  const canRetry = request.status === 'failed' && request.reason !== 'cancelled';
+  const canRetry = request.status === 'failed';
   const reason =
-    request.status === 'failed' && request.reason
-      ? t(`requests.reason.${request.reason}`, { defaultValue: request.reason })
+    request.status === 'failed'
+      ? t(`requests.reason.${request.reason ?? 'error'}`, {
+          defaultValue: t('requests.reason.error'),
+        })
       : null;
+  const progress =
+    request.progress &&
+    (request.status === 'downloading' ||
+      (request.status === 'finding' && request.progress.unit === 'songs'))
+      ? request.progress
+      : null;
+  const words = progress ? progressWords(progress, t) : '';
   return (
     <li className="flex flex-col gap-2 rounded-md border border-border bg-card p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-col">
-          <span className="text-body font-medium">{request.title}</span>
-          <span className="text-caption text-muted-foreground">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-body font-medium">{request.title}</span>
+          <span className="truncate text-caption text-muted-foreground">
             {request.artist}
             {request.album ? ` · ${request.album}` : ''}
             {showWho ? ` · ${t('requests.requestedBy', { name: request.requestedByName })}` : ''}
@@ -152,23 +184,29 @@ function RequestRow({
         </div>
         <StatusPill status={request.status} />
       </div>
-      {request.status === 'downloading' && request.progress ? (
-        <div
-          role="progressbar"
-          aria-label={t('requests.status.downloading')}
-          aria-valuenow={request.progress.done}
-          aria-valuemin={0}
-          aria-valuemax={request.progress.total}
-          className="h-1 w-full overflow-hidden rounded-pill bg-muted"
-        >
+      {progress && words ? (
+        <div className="flex flex-col gap-1">
           <div
-            className="h-full rounded-pill bg-primary"
-            style={{ width: `${percent(request.progress.done, request.progress.total)}%` }}
-          />
+            role="progressbar"
+            aria-label={t(`requests.status.${request.status}`)}
+            aria-valuenow={progress.done}
+            aria-valuemin={0}
+            aria-valuemax={progress.total}
+            aria-valuetext={words}
+            className="h-1 w-full overflow-hidden rounded-pill bg-muted"
+          >
+            <div
+              className="h-full rounded-pill bg-info"
+              style={{ width: `${percent(progress.done, progress.total)}%` }}
+            />
+          </div>
+          <p className="text-caption text-muted-foreground">{words}</p>
         </div>
       ) : null}
       {reason ? <p className="text-caption text-danger">{reason}</p> : null}
-      {last?.detail ? <p className="text-caption text-muted-foreground">{last.detail}</p> : null}
+      {showDetail && request.steps.length > 0 ? (
+        <WhatHappened steps={request.steps} reason={request.reason} />
+      ) : null}
       {canCancel || canRetry ? (
         <div className="flex gap-2">
           {canCancel ? <Button onClick={onCancel}>{t('requests.cancel')}</Button> : null}
@@ -176,5 +214,31 @@ function RequestRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** The pipeline's own step log, collapsed: advanced mode and admins only (design B). */
+function WhatHappened({ steps, reason }: { steps: RequestStep[]; reason: string | undefined }) {
+  const { t } = useTranslation();
+  const withDetail = steps.filter((s) => s.detail || s.reason);
+  if (withDetail.length === 0 && !reason) return null;
+  return (
+    <details className="text-caption text-muted-foreground">
+      <summary className="cursor-pointer">{t('requests.whatHappened')}</summary>
+      {reason ? <p className="mt-1 font-mono">{t('requests.code', { reason })}</p> : null}
+      <ol className="mt-1 flex flex-col gap-1">
+        {withDetail.map((step, index) => (
+          <li key={`${step.at}-${index}`} className="flex gap-2">
+            <time dateTime={step.at} className="shrink-0 font-mono">
+              {step.at.slice(11, 16)}
+            </time>
+            <span className="min-w-0 break-words">
+              {t(`requests.status.${step.status}`)}
+              {step.detail ? ` · ${step.detail}` : ''}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

@@ -1,4 +1,5 @@
-import type { AskResponse, InstantResults } from '@renaissance/core';
+import { HubClientError } from '@renaissance/core';
+import type { AskResponse, CatalogueSearch, InstantResults } from '@renaissance/core';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -8,10 +9,17 @@ import { AskResults } from './AskResults';
 import { Icon } from './Icon';
 import { focusWithin } from './focus';
 
+/** How long the typing must pause before the catalogue is asked (F61: under 300 ms to rows). */
+export const TYPEAHEAD_DEBOUNCE_MS = 250;
+export const TYPEAHEAD_MIN_CHARS = 2;
+
 /**
- * The one box on every screen (F75), rendered by the shell. Enter sends the words to the hub
- * (`POST /ask` as a stream): the library hits arrive first, the model's answer under them. Without
- * a hub session the box is still the search box and the hint says to sign in.
+ * The one box on every screen (F75), rendered by the shell. As the user types, the catalogue is
+ * asked (debounced, abortable) and the rows appear with Add and Play: the deterministic path, no
+ * model. Enter sends the words to the hub (`POST /ask` as a stream): the library hits arrive first,
+ * the model's answer under them. The results panel is capped at 60 % of the screen with its own
+ * scroll and closes on Escape, a tap outside or an empty box. Without a hub session the box is
+ * still the search box and the hint says to sign in.
  */
 export function AskBar({
   autoFocus = false,
@@ -24,12 +32,16 @@ export function AskBar({
   const { t, i18n } = useTranslation();
   const { client, status } = useHub();
   const [value, setValue] = useState('');
+  const [typeahead, setTypeahead] = useState<CatalogueSearch | null>(null);
   const [instant, setInstant] = useState<InstantResults | null>(null);
   const [answer, setAnswer] = useState<AskResponse | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(true);
+  const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const abort = useRef<AbortController | null>(null);
+  const abortTypeahead = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -43,12 +55,50 @@ export function AskBar({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // A tap outside the bar closes the panel; typing again reopens it.
+  useEffect(() => {
+    const onPointer = (event: PointerEvent): void => {
+      if (form.current && !form.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    return () => document.removeEventListener('pointerdown', onPointer);
+  }, []);
+
+  // Typeahead: the catalogue for the letters so far, once typing pauses; older answers are dropped
+  // (the box's own change handler clears the rows when the words get too short).
+  const ready = status === 'ready' && client !== null;
+  useEffect(() => {
+    abortTypeahead.current?.abort();
+    const q = value.trim();
+    if (!ready || q.length < TYPEAHEAD_MIN_CHARS) return;
+    const controller = new AbortController();
+    abortTypeahead.current = controller;
+    const timer = setTimeout(() => {
+      client.catalogueSearch(q, controller.signal).then(
+        (result) => {
+          if (!controller.signal.aborted) setTypeahead(result);
+        },
+        (error: unknown) => {
+          // Aborted (newer letters), busy or superseded (503): the rows already shown stay.
+          if (controller.signal.aborted) return;
+          if (error instanceof HubClientError && error.status === 503) return;
+          setTypeahead(null);
+        },
+      );
+    }, TYPEAHEAD_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [value, ready, client]);
+
   async function submit(): Promise<void> {
     const text = value.trim();
     if (!text || !client || status !== 'ready') return;
     abort.current?.abort();
     const controller = new AbortController();
     abort.current = controller;
+    setOpen(true);
     setPending(true);
     setFailed(false);
     setAnswer(null);
@@ -56,12 +106,23 @@ export function AskBar({
     const language = i18n.language === 'gu' ? 'gu' : 'en';
     try {
       const result = await client.askStreaming({ text, language }, setInstant, controller.signal);
-      if (!controller.signal.aborted) setAnswer(result);
+      if (!controller.signal.aborted) {
+        setAnswer(result);
+        if (result.catalogue) setTypeahead(null);
+      }
     } catch {
       if (!controller.signal.aborted) setFailed(true);
     } finally {
       if (!controller.signal.aborted) setPending(false);
     }
+  }
+
+  function clear(): void {
+    abort.current?.abort();
+    setAnswer(null);
+    setInstant(null);
+    setTypeahead(null);
+    setPending(false);
   }
 
   const hint = failed
@@ -77,14 +138,22 @@ export function AskBar({
           : value
             ? t('ask.noResults')
             : t('ask.hint');
-  const showResults = instant !== null || answer !== null || pending;
+  const hasResults = instant !== null || answer !== null || pending || typeahead !== null;
+  const showResults = open && hasResults;
   return (
     <form
+      ref={form}
       className="flex flex-col gap-2"
       role="search"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && hasResults) {
+          e.preventDefault();
+          setOpen(false);
+        }
       }}
     >
       <label className="sr-only" htmlFor="ask">
@@ -104,13 +173,15 @@ export function AskBar({
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
-            if (e.target.value === '') {
-              setAnswer(null);
-              setInstant(null);
-            }
+            setOpen(true);
+            if (e.target.value === '') clear();
+            else if (e.target.value.trim().length < TYPEAHEAD_MIN_CHARS) setTypeahead(null);
           }}
+          onFocus={() => setOpen(true)}
           autoComplete="off"
           enterKeyHint="search"
+          aria-expanded={showResults}
+          aria-controls="ask-results"
         />
         <kbd
           aria-hidden
@@ -119,12 +190,21 @@ export function AskBar({
           {shortcutKey() === 'mac' ? t('ask.shortcutMac') : t('ask.shortcut')}
         </kbd>
       </div>
-      {(compact && !value && !showResults) || answer ? null : (
+      {(compact && !value && !hasResults) || answer || typeahead ? null : (
         <p className="truncate text-caption text-muted-foreground" aria-live="polite">
           {hint}
         </p>
       )}
-      {showResults ? <AskResults instant={instant} answer={answer} pending={pending} /> : null}
+      {showResults ? (
+        <div
+          id="ask-results"
+          className="overflow-y-auto"
+          style={{ maxHeight: '60vh' }}
+          aria-label={t('ask.results')}
+        >
+          <AskResults instant={instant} catalogue={typeahead} answer={answer} pending={pending} />
+        </div>
+      ) : null}
     </form>
   );
 }

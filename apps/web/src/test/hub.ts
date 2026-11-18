@@ -90,9 +90,7 @@ export function fakeHub(over: Partial<HubClient> = {}, profile: Profile = admin)
     requests: vi.fn(async () => [] as MusicRequest[]),
     request: vi.fn(async () => request()),
     createRequest: vi.fn(async () => request()),
-    cancelRequest: vi.fn(async (id: string) =>
-      request({ id, status: 'failed', reason: 'cancelled' }),
-    ),
+    cancelRequest: vi.fn(async (id: string) => request({ id, status: 'cancelled' })),
     retryRequest: vi.fn(async (id: string) => request({ id, status: 'requested' })),
     collection: vi.fn(async () => [] as CollectionItem[]),
     removeFromCollection: vi.fn(async () => collectionItem()),

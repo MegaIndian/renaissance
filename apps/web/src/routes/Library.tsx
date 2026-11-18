@@ -11,7 +11,9 @@ type View = 'mine' | 'everything';
 /**
  * Library (F86 rule 3): "Mine" (default) is the caller's collection from the hub, what they asked
  * for, added or imported; "Everything on the server" is the whole Jellyfin library (phase 1 fills
- * it; here the empty state stays).
+ * it; here the empty state stays). The "Mine" rows are a holder built on the phase 0 shell: once
+ * phase 1's `TrackRow` lands they become that row, with 34 px art from the media server and a play
+ * (design judge, round 1, N); a collection item carries the Jellyfin item id for exactly that.
  */
 export function Library() {
   const { t } = useTranslation();
