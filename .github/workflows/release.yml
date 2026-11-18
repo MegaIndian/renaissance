@@ -12,10 +12,10 @@ on:
         required: true
         default: 'preview'
 
+# Workflow-wide: what the version PR needs. The image job alone adds `packages: write`.
 permissions:
   contents: write
   pull-requests: write
-  packages: write
 
 env:
   HUSKY: 0
@@ -79,9 +79,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Image tags
         id: tags
+        # The dispatch input reaches the shell through the environment, never by interpolation.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          case "${{ github.event_name }}" in
-            workflow_dispatch) tag="${{ inputs.image_tag }}" ;;
+          case "$EVENT_NAME" in
+            workflow_dispatch) tag="$IMAGE_TAG" ;;
             *) if [[ "${GITHUB_REF}" == refs/tags/* ]]; then tag="${GITHUB_REF_NAME}"; else tag="edge"; fi ;;
           esac
           if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then echo "bad tag: $tag" >&2; exit 1; fi
@@ -99,9 +103,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # A software bill of materials and full build provenance ride with every image.
+          sbom: true
+          provenance: mode=max
       - name: Smoke test the pushed image
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
         run: |
-          first="$(echo '${{ steps.tags.outputs.tags }}' | cut -d, -f1)"
+          first="$(echo "$TAGS" | cut -d, -f1)"
           docker run -d --name hub -p 8788:8787 "$first"
           expected="$(node -p "require('./apps/hub/package.json').version")"
           for i in $(seq 1 30); do
