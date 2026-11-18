@@ -60,6 +60,20 @@ export function createRequestService(deps: {
       return req.requestedBy === profile.id || profile.role === 'admin' ? req : undefined;
     },
 
+    /** Runs a failed request again; one that already downloaded its file resumes at the import. */
+    retry(profile: Profile, id: string): MusicRequest | 'not_found' | 'not_failed' {
+      const req = this.get(profile, id);
+      if (!req) return 'not_found';
+      if (req.status !== 'failed' || req.reason === 'cancelled') return 'not_failed';
+      const next = stores.requests.update(id, {
+        status: 'requested',
+        detail: `Retried by ${profile.name}`,
+      })!;
+      bus.publish(next.requestedBy, { type: 'request', request: next });
+      deps.enqueue(next.id);
+      return next;
+    },
+
     /** Stops a request that has not started downloading; the undo of a request action. */
     cancel(profile: Profile, id: string): MusicRequest | 'not_found' | 'too_late' {
       const req = this.get(profile, id);

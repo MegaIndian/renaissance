@@ -2,7 +2,7 @@
  * MusicBrainz web service: recordings, release groups and artists by search, releases by id.
  * One request a second with a User-Agent that names the app and a contact, as MusicBrainz asks.
  */
-import { httpJson } from '../http.js';
+import { HttpError, httpJson, sleep } from '../http.js';
 import type { Fetch } from '../http.js';
 import { luceneEscape } from '../text.js';
 import { createRateLimiter } from './rate-limiter.js';
@@ -32,7 +32,13 @@ export interface MbReleaseRef {
   media?: {
     format?: string;
     'track-count'?: number;
-    track?: { id: string; number: string; title: string; length?: number }[];
+    tracks?: {
+      id: string;
+      number: string;
+      title: string;
+      length?: number;
+      recording?: { id: string; title: string; length?: number };
+    }[];
   }[];
 }
 export interface MbRecording {
@@ -73,24 +79,35 @@ export function musicBrainzClient(options: {
   fetch?: Fetch;
   limiter?: RateLimiter;
   baseUrl?: string;
+  sleep?: (ms: number) => Promise<void>;
 }) {
   const doFetch = options.fetch ?? fetch;
   const limiter = options.limiter ?? createRateLimiter(1_000);
   const base = options.baseUrl ?? MUSICBRAINZ_URL;
+  const wait = options.sleep ?? sleep;
   const headers = { 'user-agent': userAgent(options.version, options.contact) };
 
   function get<T>(path: string, params: Record<string, string>): Promise<T> {
     const url = new URL(`${base}/${path}`);
     url.searchParams.set('fmt', 'json');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    // MusicBrainz answers 503 when a client is over its share; wait and try again, twice.
     return limiter.schedule(async () => {
-      const res = await httpJson<T>(
-        'musicbrainz',
-        url.toString(),
-        { headers, timeoutMs: 12_000 },
-        doFetch,
-      );
-      return res.body;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await httpJson<T>(
+            'musicbrainz',
+            url.toString(),
+            { headers, timeoutMs: 12_000 },
+            doFetch,
+          );
+          return res.body;
+        } catch (error) {
+          const retry = error instanceof HttpError && error.status === 503 && attempt < 2;
+          if (!retry) throw error;
+          await wait(2_000 * (attempt + 1));
+        }
+      }
     });
   }
 

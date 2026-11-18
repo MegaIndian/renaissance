@@ -58,6 +58,8 @@ export interface PipelineDeps {
   tracksTimeoutMs?: number;
   /** How many ranked files to try before giving up on a download. */
   maxAttempts?: number;
+  /** Writes are logged, not sent (the clients do that); the mapping step uses MusicBrainz tracks. */
+  dryRun?: boolean;
 }
 
 export const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
@@ -210,6 +212,32 @@ export function createPipeline(deps: PipelineDeps) {
     }
   }
 
+  async function musicBrainzTracks(releaseId: string): Promise<LidarrTrack[]> {
+    const release = await deps.catalogue.release(releaseId);
+    return (release.media ?? []).flatMap((m) =>
+      (m.tracks ?? []).map((t, i) => ({
+        id: -1 - i,
+        title: t.title,
+        trackNumber: t.number,
+        absoluteTrackNumber: i + 1,
+        duration: t.length ?? 0,
+        hasFile: false,
+        foreignRecordingId: t.recording?.id ?? '',
+      })),
+    );
+  }
+
+  /** Lidarr fills an album's releases in its own refresh, which may still be running. */
+  async function waitForReleases(lidarr: LidarrClient, album: LidarrAlbum): Promise<LidarrAlbum> {
+    const deadline = Date.now() + (deps.tracksTimeoutMs ?? TRACKS_TIMEOUT_MS);
+    let full = album;
+    while ((full.releases ?? []).length === 0 && Date.now() < deadline) {
+      await sleep(3_000);
+      full = await lidarr.album(album.id);
+    }
+    return full;
+  }
+
   async function waitForTracks(
     lidarr: LidarrClient,
     albumId: number,
@@ -245,7 +273,10 @@ export function createPipeline(deps: PipelineDeps) {
         const transfers = await slskd.transfers(username);
         const t = transfers.find((x) => x.filename === filename);
         const state = t?.state ?? (transfers.length === 0 ? 'Completed, Succeeded' : 'Requested');
-        if (state.includes('Succeeded')) return pick;
+        if (state.includes('Succeeded')) {
+          stores.requests.update(req.id, { status: 'downloading', ids: { sourceFile: filename } });
+          return pick;
+        }
         if (state.startsWith('Completed')) {
           lastFailure = `${baseName(filename)} from ${username}: ${state}${t?.exception ? ` (${t.exception})` : ''}`;
           break;
@@ -272,12 +303,16 @@ export function createPipeline(deps: PipelineDeps) {
     throw new PipelineError('download_failed', lastFailure);
   }
 
-  async function importTrack(req: MusicRequest, lidarr: LidarrClient, pick: Scored): Promise<void> {
+  async function importTrack(
+    req: MusicRequest,
+    lidarr: LidarrClient,
+    remoteFilename: string,
+  ): Promise<void> {
     if (!req.artistId || !req.releaseGroupId)
       throw new PipelineError('catalogue_miss', 'No MusicBrainz ids');
     const artist = await ensureArtist(lidarr, req.artistId);
     const album = await ensureAlbum(lidarr, artist, req.releaseGroupId, false);
-    const full = album.releases ? album : await lidarr.album(album.id);
+    const full = await waitForReleases(lidarr, album);
     const release = pickRelease(full, req.releaseId);
     if (!release)
       throw new PipelineError('lidarr_album', `Lidarr album ${full.title} has no releases`);
@@ -287,7 +322,11 @@ export function createPipeline(deps: PipelineDeps) {
         releases: (full.releases ?? []).map((r) => ({ ...r, monitored: r.id === release.id })),
       });
     }
-    const tracks = await waitForTracks(lidarr, full.id, release.id);
+    let tracks = await waitForTracks(lidarr, full.id, release.id);
+    if (tracks.length === 0 && deps.dryRun) {
+      // Nothing was added to Lidarr, so map against MusicBrainz's own track list to show the pick.
+      tracks = await musicBrainzTracks(release.foreignReleaseId);
+    }
     const want: { title: string; recordingId?: string; duration?: number } = { title: req.title };
     if (req.recordingId) want.recordingId = req.recordingId;
     if (req.duration !== undefined) want.duration = req.duration;
@@ -298,7 +337,7 @@ export function createPipeline(deps: PipelineDeps) {
         `None of the ${tracks.length} tracks on ${full.title} (release ${release.foreignReleaseId}) is "${req.title}"`,
       );
     }
-    const path = lidarrPathFor(deps.lidarrDownloadsDir, pick.candidate.filename);
+    const path = lidarrPathFor(deps.lidarrDownloadsDir, remoteFilename);
     const folder = posix.dirname(path);
     let candidate = (await lidarr.importCandidates(folder)).find(
       (c) => baseName(c.path) === baseName(path),
@@ -308,6 +347,10 @@ export function createPipeline(deps: PipelineDeps) {
       candidate = (await lidarr.importCandidates(folder)).find(
         (c) => baseName(c.path) === baseName(path),
       );
+    }
+    if (!candidate && deps.dryRun) {
+      log.info({ dryRun: true, path }, 'would import this file once downloaded');
+      candidate = { path, quality: { quality: { id: 0, name: 'Unknown' } } };
     }
     if (!candidate)
       throw new PipelineError('import_failed', `Lidarr cannot see the file at ${path}`);
@@ -395,6 +438,18 @@ export function createPipeline(deps: PipelineDeps) {
         'SLSKD_URL and LIDARR_URL are needed to fetch songs',
       );
     const resolved = await resolveIds(req);
+    if (resolved.sourceFile) {
+      // A retry after a failed import: the file is already in the downloads folder.
+      update(resolved.id, {
+        status: 'importing',
+        detail: `Importing the file downloaded earlier: ${baseName(resolved.sourceFile)}`,
+      });
+      await importTrack(resolved, lidarr, resolved.sourceFile);
+      return finish(
+        stores.requests.get(resolved.id) ?? resolved,
+        `Imported ${baseName(resolved.sourceFile)}`,
+      );
+    }
     const policy = parseRules(stores.rules.list(resolved.requestedBy).map((r) => r.text));
     const want: Parameters<typeof rank>[1] = {
       title: resolved.title,
@@ -438,7 +493,7 @@ export function createPipeline(deps: PipelineDeps) {
       status: 'importing',
       detail: `Downloaded ${baseName(pick.candidate.filename)}`,
     });
-    await importTrack(current, lidarr, pick);
+    await importTrack(current, lidarr, pick.candidate.filename);
     return finish(
       stores.requests.get(current.id) ?? current,
       `Imported ${baseName(pick.candidate.filename)}`,

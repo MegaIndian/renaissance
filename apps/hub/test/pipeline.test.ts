@@ -571,3 +571,108 @@ describe('runner', () => {
     expect(t.log.lines.some((l) => l.includes('requests resumed'))).toBe(true);
   });
 });
+
+describe('pipeline: retries and releases', () => {
+  it('resumes at the import when the request already has its downloaded file', async () => {
+    const t = setup();
+    const req = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    t.stores.requests.update(req.id, {
+      status: 'failed',
+      reason: 'lidarr_album',
+      ids: { sourceFile: FLAC },
+    });
+    const service = createRequestService({
+      stores: t.stores,
+      library: t.lib.library,
+      bus: t.bus,
+      enqueue: () => {},
+    });
+    expect(service.retry(sahil, req.id)).toMatchObject({ status: 'requested' });
+    expect(service.retry(sahil, req.id)).toBe('not_failed');
+    expect(service.retry(sahil, 'nope')).toBe('not_found');
+    const result = await t.pipeline.run(req.id);
+    expect(result?.status).toBe('ready');
+    expect(t.slskd.searches).toEqual([]);
+    expect(t.slskd.enqueued).toEqual([]);
+    expect(result?.steps.some((s) => s.detail?.includes('downloaded earlier'))).toBe(true);
+    const cancelled = t.stores.requests.create({ kind: 'track', ...firemanSong }, sahil.id);
+    t.stores.requests.update(cancelled.id, { status: 'failed', reason: 'cancelled' });
+    expect(service.retry(sahil, cancelled.id)).toBe('not_failed');
+  });
+
+  it('records the downloaded file on the request and waits for Lidarr to fill the releases', async () => {
+    const t = setup();
+    let albumReads = 0;
+    const realAlbum = t.lidarr.client.album;
+    const realAdd = t.lidarr.client.addAlbum;
+    t.lidarr.client.addAlbum = async (a) => {
+      const created = await realAdd(a);
+      const stored = t.lidarr.albums.find((x) => x.id === created.id)!;
+      const releases = stored.releases ?? [];
+      stored.releases = [];
+      t.lidarr.client.album = async (id) => {
+        albumReads += 1;
+        if (albumReads >= 2) stored.releases = releases;
+        return realAlbum(id);
+      };
+      return { ...created, releases: [] };
+    };
+    const req = t.stores.requests.create(
+      { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
+      sahil.id,
+    );
+    const result = await t.pipeline.run(req.id);
+    expect(result?.status).toBe('ready');
+    expect(result?.sourceFile).toBe(FLAC);
+    expect(albumReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it('in dry-run, maps against MusicBrainz tracks and logs the import it would send', async () => {
+    const t = setup({ dryRun: true, lidarrOptions: { tracks: [], candidateVisible: false } });
+    t.lidarr.client.tracks = async () => [];
+    const catalogue = fakeCatalogue();
+    catalogue.release = async () => ({
+      id: ids.release,
+      title: 'Tha Carter II',
+      media: [
+        {
+          tracks: [
+            {
+              id: 'mt1',
+              number: '4',
+              title: 'Fireman',
+              recording: { id: ids.recording, title: 'Fireman' },
+            },
+          ],
+        },
+      ],
+    });
+    const dry = createPipeline({
+      stores: t.stores,
+      bus: t.bus,
+      catalogue,
+      library: t.lib.library,
+      slskd: t.slskd.client,
+      lidarr: t.lidarr.client,
+      lidarrDownloadsDir: '/files/downloads/music/complete',
+      log: t.log,
+      sleep: instantSleep,
+      tracksTimeoutMs: 1,
+      dryRun: true,
+    });
+    const req = t.stores.requests.create(
+      { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
+      sahil.id,
+    );
+    const result = await dry.run(req.id);
+    expect(result?.status).toBe('ready');
+    expect(t.log.lines.some((l) => l.includes('would import this file once downloaded'))).toBe(
+      true,
+    );
+    const importCmd = t.lidarr.writes.find(
+      (w) => (w.body as { name: string }).name === 'ManualImport',
+    )!.body as { files: { trackIds: number[]; quality: { quality: { name: string } } }[] };
+    expect(importCmd.files[0]!.trackIds).toEqual([-1]);
+    expect(importCmd.files[0]!.quality.quality.name).toBe('Unknown');
+  });
+});

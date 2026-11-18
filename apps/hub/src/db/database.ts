@@ -76,6 +76,8 @@ export const migrations: readonly string[] = [
     expires_at INTEGER NOT NULL
   );
   `,
+  // 2: the downloaded file's Soulseek path, so a failed import can be retried without a new download.
+  `ALTER TABLE requests ADD COLUMN source_file TEXT;`,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

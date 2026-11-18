@@ -331,6 +331,28 @@ describe('/requests', () => {
       headers: auth(),
     });
     expect(cancelled.json()).toMatchObject({ status: 'failed', reason: 'cancelled' });
+    expect(
+      (await app.inject({ method: 'POST', url: `/requests/${second.id}/retry`, headers: auth() }))
+        .statusCode,
+    ).toBe(409);
+    expect(
+      (await app.inject({ method: 'POST', url: '/requests/nope/retry', headers: auth() }))
+        .statusCode,
+    ).toBe(404);
+    const failed = stores.requests.create(
+      { kind: 'track', title: 'Fireman', artist: 'Lil Wayne' },
+      sahil.id,
+    );
+    stores.requests.update(failed.id, { status: 'failed', reason: 'no_results' });
+    const retried = await app.inject({
+      method: 'POST',
+      url: `/requests/${failed.id}/retry`,
+      headers: auth(),
+    });
+    expect(retried.statusCode).toBe(202);
+    expect(retried.json().status).toBe('requested');
+    await app.hub.runner.idle();
+    expect(stores.requests.get(failed.id)?.status).toBe('ready');
     await app.close();
   });
 });

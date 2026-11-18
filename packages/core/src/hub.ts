@@ -128,6 +128,8 @@ export const MusicRequest = NewRequest.extend({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   progress: z.object({ done: z.number().int(), total: z.number().int() }).optional(),
+  /** The Soulseek path of the file that was downloaded; a retry imports it without a new download. */
+  sourceFile: z.string().optional(),
   steps: z.array(RequestStep),
 });
 export type MusicRequest = z.infer<typeof MusicRequest>;

@@ -43,21 +43,35 @@ const yearOf = (date: string | undefined): number | undefined => {
   return Number.isInteger(y) && y > 0 ? y : undefined;
 };
 
+/** How canonical a release is: official studio albums and singles first, mixtapes and bootlegs last. */
+export function releaseScore(r: NonNullable<MbRecording['releases']>[number]): number {
+  let s = 0;
+  if (r.status === 'Official') s += 10;
+  else if (r.status === 'Bootleg') s -= 10;
+  const type = r['release-group']?.['primary-type'];
+  if (type === 'Album') s += 5;
+  if (type === 'Single') s += 4;
+  if (type === 'EP') s += 3;
+  const secondary = r['release-group']?.['secondary-types'] ?? [];
+  if (secondary.length > 0) s -= 6;
+  if (secondary.some((t) => /mixtape|bootleg|demo/i.test(t))) s -= 10;
+  if (r.date) s += 1;
+  return s;
+}
+
 /** Prefer an official release that is an album or single over compilations and bootlegs. */
 export function pickRelease(rec: MbRecording) {
+  return [...(rec.releases ?? [])].sort((a, b) => releaseScore(b) - releaseScore(a))[0];
+}
+
+/**
+ * Which recording of a title is the one people mean: the one on the best release, then the one on
+ * the most releases. MusicBrainz lists every mixtape version first as often as not.
+ */
+export function recordingScore(rec: MbRecording): number {
   const releases = rec.releases ?? [];
-  const score = (r: NonNullable<MbRecording['releases']>[number]): number => {
-    let s = 0;
-    if (r.status === 'Official') s += 10;
-    const type = r['release-group']?.['primary-type'];
-    if (type === 'Album') s += 5;
-    if (type === 'Single') s += 4;
-    if (type === 'EP') s += 3;
-    if ((r['release-group']?.['secondary-types'] ?? []).length > 0) s -= 6;
-    if (r.date) s += 1;
-    return s;
-  };
-  return [...releases].sort((a, b) => score(b) - score(a))[0];
+  const best = releases.length > 0 ? Math.max(...releases.map(releaseScore)) : -20;
+  return best * 10 + Math.min(releases.length, 9);
 }
 
 export function songFromRecording(
@@ -200,17 +214,19 @@ export function catalogueService(options: {
       const key = `catalogue:song:${normalize(title)}|${normalize(artist)}`;
       const cached = cache.get<CatalogueSong | null>(key);
       if (cached !== undefined) return cached ?? undefined;
-      const recordings = await musicBrainz.searchRecordings(recordingQuery(title, artist), 10);
-      const best = recordings
-        .filter((r) => !r.video)
+      const recordings = (
+        await musicBrainz.searchRecordings(recordingQuery(title, artist), 15)
+      ).filter((r) => !r.video);
+      const exact = recordings.filter(
+        (r) =>
+          normalize(r.title) === normalize(title) &&
+          tokenOverlap(artist, creditName(r['artist-credit'])) >= 0.5,
+      );
+      const pool = exact.length > 0 ? exact : recordings;
+      const ordered = [...pool].sort((a, b) => recordingScore(b) - recordingScore(a));
+      const song = ordered
         .map((r) => songFromRecording(r, []))
-        .filter((s): s is CatalogueSong => !!s)
-        .find(
-          (s) => normalize(s.title) === normalize(title) && tokenOverlap(artist, s.artist) >= 0.5,
-        );
-      const song =
-        best ??
-        recordings.map((r) => songFromRecording(r, [])).find((s): s is CatalogueSong => !!s);
+        .find((s): s is CatalogueSong => !!s);
       cache.set(key, song ?? null, LOOKUP_TTL_MS);
       return song;
     },

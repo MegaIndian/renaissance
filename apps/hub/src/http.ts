@@ -50,7 +50,12 @@ export async function httpJson<T = unknown>(
     }
     const res = await doFetch(url, init);
     if (!res.ok && !(options.okStatuses ?? []).includes(res.status)) {
-      throw new HttpError(service, res.status);
+      // The path names the call; the query string (which may carry a token) is never included.
+      throw new HttpError(
+        service,
+        res.status,
+        `${service} answered ${res.status} on ${new URL(url).pathname}`,
+      );
     }
     const text = await res.text();
     const body = (text.length > 0 ? JSON.parse(text) : undefined) as T;

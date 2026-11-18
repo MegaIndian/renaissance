@@ -250,7 +250,7 @@ describe('catalogueService', () => {
       'musicbrainz.org/ws/2/release/': () => ({
         id: 'c0ffee00-0000-4000-8000-000000000003',
         title: 'Tha Carter II',
-        media: [{ track: [{ id: 't1', number: '3', title: 'Fireman' }] }],
+        media: [{ tracks: [{ id: 't1', number: '3', title: 'Fireman' }] }],
       }),
     });
     const mb = musicBrainzClient({
@@ -323,5 +323,106 @@ describe('catalogueService', () => {
     expect(await svc.findSong('Nothing', 'Nobody')).toBeUndefined();
     expect(await svc.findSong('Nothing', 'Nobody')).toBeUndefined();
     expect(await svc.findAlbum('Nothing', 'Nobody')).toBeUndefined();
+  });
+});
+
+describe('recording choice', () => {
+  const mixtape: MbRecording = {
+    id: 'mix',
+    title: 'Fireman',
+    length: 247_000,
+    'artist-credit': [wayne],
+    releases: [
+      {
+        id: 'r-mix',
+        title: 'The Suffix: Remastered',
+        status: 'Official',
+        date: '2005-11-20',
+        'release-group': {
+          id: 'rg-mix',
+          title: 'The Suffix',
+          'primary-type': 'Album',
+          'secondary-types': ['Mixtape/Street'],
+        },
+      },
+    ],
+  };
+  const bootleg: MbRecording = {
+    id: 'boot',
+    title: 'Fireman',
+    'artist-credit': [wayne],
+    releases: [
+      {
+        id: 'r-boot',
+        title: 'Gold',
+        status: 'Bootleg',
+        'release-group': { id: 'rg-boot', title: 'Gold', 'primary-type': 'Album' },
+      },
+    ],
+  };
+
+  it('scores official albums above mixtapes and bootlegs', async () => {
+    const { releaseScore, recordingScore } = await import('../src/catalogue/service.js');
+    expect(releaseScore(fireman.releases![1]!)).toBeGreaterThan(
+      releaseScore(mixtape.releases![0]!),
+    );
+    expect(releaseScore(mixtape.releases![0]!)).toBeGreaterThan(
+      releaseScore(bootleg.releases![0]!),
+    );
+    expect(recordingScore(fireman)).toBeGreaterThan(recordingScore(mixtape));
+    expect(recordingScore({ id: 'none', title: 'x' })).toBeLessThan(recordingScore(bootleg));
+  });
+
+  it('findSong picks the canonical recording even when MusicBrainz lists a mixtape first', async () => {
+    const stores = memoryStores();
+    const { fetch } = fakeFetch({
+      '/recording?': () => ({ recordings: [mixtape, bootleg, fireman] }),
+    });
+    const mb = musicBrainzClient({
+      version: '1',
+      contact: undefined,
+      fetch,
+      limiter: createRateLimiter(0),
+    });
+    const svc = catalogueService({
+      musicBrainz: mb,
+      deezer: deezerClient({ fetch }),
+      cache: stores.cache,
+    });
+    const song = await svc.findSong('Fireman', 'Lil Wayne');
+    expect(song?.recordingId).toBe(fireman.id);
+    expect(song?.album).toBe('Tha Carter II');
+  });
+
+  it('retries a MusicBrainz 503 twice, then gives up', async () => {
+    let calls = 0;
+    const { fetch } = fakeFetch({
+      '/recording?': () => (++calls < 3 ? { __status: 503 } : { recordings: [fireman] }),
+    });
+    const mb = musicBrainzClient({
+      version: '1',
+      contact: undefined,
+      fetch,
+      limiter: createRateLimiter(0),
+      sleep: async () => {},
+    });
+    expect((await mb.searchRecordings('fireman')).length).toBe(1);
+    expect(calls).toBe(3);
+    const always = musicBrainzClient({
+      version: '1',
+      contact: undefined,
+      fetch: fakeFetch({ '/recording?': () => ({ __status: 503 }) }).fetch,
+      limiter: createRateLimiter(0),
+      sleep: async () => {},
+    });
+    await expect(always.searchRecordings('x')).rejects.toThrow('503');
+    const other = musicBrainzClient({
+      version: '1',
+      contact: undefined,
+      fetch: fakeFetch({ '/recording?': () => ({ __status: 400 }) }).fetch,
+      limiter: createRateLimiter(0),
+      sleep: async () => {},
+    });
+    await expect(other.searchRecordings('x')).rejects.toThrow('400');
   });
 });

@@ -4,7 +4,7 @@
  * sent with `albumReleaseId` and `disableReleaseSwitching`, so Lidarr's edition matching never
  * refuses a good file. Writes are logged instead of sent when `dryRun` is on.
  */
-import { httpJson, sleep } from '../http.js';
+import { HttpError, httpJson, sleep } from '../http.js';
 import type { Fetch } from '../http.js';
 import type { Logger } from '../log.js';
 
@@ -132,17 +132,32 @@ export function lidarrClient(options: {
   dryRun?: boolean;
   log: Logger;
   fetch?: Fetch;
+  sleep?: (ms: number) => Promise<void>;
 }): LidarrClient {
   const doFetch = options.fetch ?? fetch;
   const headers = { 'x-api-key': options.apiKey };
   const api = `${options.url}/api/v1`;
   let dryIds = 90_000;
 
+  const wait = options.sleep ?? sleep;
+  // Lidarr's own metadata service (api.lidarr.audio) answers 503 now and then on a first lookup;
+  // a read is retried twice before the request fails.
   const get = async <T>(path: string, params: Record<string, string> = {}): Promise<T> => {
     const url = new URL(`${api}/${path}`);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    return (await httpJson<T>('lidarr', url.toString(), { headers, timeoutMs: 60_000 }, doFetch))
-      .body;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (
+          await httpJson<T>('lidarr', url.toString(), { headers, timeoutMs: 60_000 }, doFetch)
+        ).body;
+      } catch (error) {
+        const retry =
+          error instanceof HttpError && (error.status >= 500 || error.status === 0) && attempt < 2;
+        if (!retry) throw error;
+        options.log.warn({ path, status: error.status, attempt }, 'lidarr read failed, retrying');
+        await wait(3_000);
+      }
+    }
   };
   const write = async <T>(
     method: 'POST' | 'PUT',

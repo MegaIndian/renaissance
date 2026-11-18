@@ -50,6 +50,21 @@ export async function requestRoutes(
     return reply.code(201).send(result.request);
   });
 
+  app.post<{ Params: { id: string } }>(
+    '/requests/:id/retry',
+    { preHandler: guard },
+    async (request, reply) => {
+      const result = deps.requests.retry(request.profile!, request.params.id);
+      if (result === 'not_found') return reply.code(404).send({ error: 'not_found' });
+      if (result === 'not_failed') {
+        return reply
+          .code(409)
+          .send({ error: 'not_failed', message: 'Only a failed request can be retried.' });
+      }
+      return reply.code(202).send(result);
+    },
+  );
+
   app.delete<{ Params: { id: string } }>(
     '/requests/:id',
     { preHandler: guard },

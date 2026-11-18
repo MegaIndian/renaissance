@@ -21,6 +21,7 @@ interface Row {
   detail: string | null;
   progress_done: number | null;
   progress_total: number | null;
+  source_file: string | null;
   steps: string;
   created_at: string;
   updated_at: string;
@@ -50,6 +51,7 @@ function toRequest(r: Row): MusicRequest {
   if (r.duration !== null) out.duration = r.duration;
   if (r.reason !== null) out.reason = r.reason;
   if (r.detail !== null) out.detail = r.detail;
+  if (r.source_file !== null) out.sourceFile = r.source_file;
   if (r.progress_done !== null && r.progress_total !== null) {
     out.progress = { done: r.progress_done, total: r.progress_total };
   }
@@ -61,13 +63,13 @@ export interface RequestUpdate {
   reason?: string;
   detail?: string;
   progress?: { done: number; total: number };
-  /** Catalogue ids learnt while finding. */
+  /** Catalogue ids learnt while finding, and the downloaded file once there is one. */
   ids?: Partial<
     Pick<
       NewRequest,
       'recordingId' | 'releaseGroupId' | 'releaseId' | 'artistId' | 'duration' | 'album'
     >
-  >;
+  > & { sourceFile?: string };
 }
 
 export function requestStore(db: DatabaseSync) {
@@ -84,7 +86,8 @@ export function requestStore(db: DatabaseSync) {
     UPDATE requests SET status = ?, reason = ?, detail = ?, progress_done = ?, progress_total = ?, steps = ?,
       recording_id = COALESCE(?, recording_id), release_group_id = COALESCE(?, release_group_id),
       release_id = COALESCE(?, release_id), artist_id = COALESCE(?, artist_id),
-      duration = COALESCE(?, duration), album = COALESCE(?, album), updated_at = ?
+      duration = COALESCE(?, duration), album = COALESCE(?, album), source_file = COALESCE(?, source_file),
+      updated_at = ?
     WHERE id = ?
   `);
   const remove = db.prepare('DELETE FROM requests WHERE id = ? RETURNING id');
@@ -149,6 +152,7 @@ export function requestStore(db: DatabaseSync) {
         ids.artistId ?? null,
         ids.duration ?? null,
         ids.album ?? null,
+        ids.sourceFile ?? null,
         iso,
         id,
       );

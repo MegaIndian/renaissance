@@ -164,3 +164,20 @@ describe('rank', () => {
     });
   });
 });
+
+describe('dj folders and remixes', () => {
+  it('penalises a DJ edit pack folder and a remix in the name more than other versions', () => {
+    const pack = {
+      ...base,
+      filename: 'DJTools\\NETGATE - Edit Pack Vol. 3\\Lil Wayne x 4B - Fireman (NETGATE Edit).mp3',
+      extension: 'mp3',
+      bitRate: 320,
+    };
+    const r = score(pack, want).scored!;
+    expect(r.reasons).toContain('remix in name');
+    expect(r.reasons).toContain('dj folder');
+    expect(r.score).toBe(15 + 40 + 20 + 15 + 3 + 10 - 45 - 25);
+    const plain = score({ ...base, extension: 'mp3', bitRate: 320 }, want).scored!;
+    expect(plain.score).toBeGreaterThan(r.score + 60);
+  });
+});

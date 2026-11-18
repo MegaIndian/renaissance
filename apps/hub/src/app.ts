@@ -142,6 +142,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     ...(lidarr ? { lidarr } : {}),
     ...(navidrome ? { navidrome } : {}),
     lidarrDownloadsDir: config.lidarrDownloadsDir,
+    dryRun: config.dryRun,
     ...(config.lidarr.rootFolder ? { rootFolder: config.lidarr.rootFolder } : {}),
     log,
   });

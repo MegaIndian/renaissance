@@ -52,6 +52,9 @@ export interface Scored {
   reasons: string[];
 }
 
+export const DJ_FOLDER =
+  /\b(dj|edit|edits|remix|remixes|mashup|mashups|bootleg|pack|transition|intro|acapella|instrumentals?)\b/i;
+
 export const DURATION_TOLERANCE_S = 3;
 export const DURATION_REJECT_S = 10;
 
@@ -95,9 +98,14 @@ export function score(c: Candidate, want: Want): { scored?: Scored; excluded?: s
     if (!inName || askedFor) continue;
     if (want.policy.exclude.includes(key)) return { excluded: `rule: no ${key}` };
     if (key !== 'explicit' && key !== 'clean') {
-      s -= 30;
+      s -= key === 'remix' ? 45 : 30;
       reasons.push(`${key} in name`);
     }
+  }
+  // DJ edit packs and remix folders: the file is a version even when its name looks plain.
+  if (DJ_FOLDER.test(parentName(path).replace(/[_-]/g, ' '))) {
+    s -= 25;
+    reasons.push('dj folder');
   }
 
   if (want.duration !== undefined && c.length !== undefined && c.length > 0) {

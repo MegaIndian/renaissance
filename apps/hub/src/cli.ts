@@ -21,15 +21,24 @@ import { jellyfinLibrary } from './jellyfin/library.js';
 import { recordingLogger } from './log.js';
 import { version } from './version.js';
 
-export function parseArgs(
-  argv: string[],
-): { dryRun: boolean; kind: 'track' | 'album'; title: string; artist: string } | string {
+export type CliArgs =
+  | { dryRun: boolean; kind: 'track' | 'album'; title: string; artist: string }
+  | { dryRun: boolean; retry: string };
+
+export function parseArgs(argv: string[]): CliArgs | string {
   const args = [...argv];
   const dryRun = args.includes('--dry-run');
   const album = args.includes('--album');
+  const retryAt = args.indexOf('--retry');
+  if (retryAt !== -1) {
+    const id = args[retryAt + 1];
+    return id ? { dryRun, retry: id } : 'usage: request --retry <request id>';
+  }
   const rest = args.filter((a) => !a.startsWith('--'));
   const [title, artist] = rest;
-  if (!title || !artist) return 'usage: request [--dry-run] [--album] "<title>" "<artist>"';
+  if (!title || !artist) {
+    return 'usage: request [--dry-run] [--album] "<title>" "<artist>" | request --retry <request id>';
+  }
   return { dryRun, kind: album ? 'album' : 'track', title, artist };
 }
 
@@ -88,6 +97,7 @@ async function main(): Promise<number> {
     ...(lidarr ? { lidarr } : {}),
     ...(navidrome ? { navidrome } : {}),
     lidarrDownloadsDir: config.lidarrDownloadsDir,
+    dryRun: config.dryRun,
     ...(config.lidarr.rootFolder ? { rootFolder: config.lidarr.rootFolder } : {}),
     log,
   });
@@ -100,14 +110,29 @@ async function main(): Promise<number> {
       );
     }
   });
-  const request = stores.requests.create(
-    { kind: parsed.kind, title: parsed.title, artist: parsed.artist },
-    profile.id,
-  );
-  console.log(
-    `${parsed.dryRun ? 'dry run: ' : ''}request ${request.id} for "${parsed.title}" by ${parsed.artist}`,
-  );
-  const result = await pipeline.run(request.id);
+  let request: ReturnType<typeof stores.requests.get>;
+  if ('retry' in parsed) {
+    request = stores.requests.get(parsed.retry);
+    if (!request) {
+      console.error(`no request ${parsed.retry} in ${config.databasePath}`);
+      stores.close();
+      return 2;
+    }
+    request = stores.requests.update(request.id, {
+      status: 'requested',
+      detail: 'Retried from the CLI',
+    });
+    console.log(`retrying request ${parsed.retry} ("${request!.title}" by ${request!.artist})`);
+  } else {
+    request = stores.requests.create(
+      { kind: parsed.kind, title: parsed.title, artist: parsed.artist },
+      profile.id,
+    );
+    console.log(
+      `${parsed.dryRun ? 'dry run: ' : ''}request ${request.id} for "${parsed.title}" by ${parsed.artist}`,
+    );
+  }
+  const result = await pipeline.run(request!.id);
   stores.close();
   if (!result) return 1;
   console.log(
