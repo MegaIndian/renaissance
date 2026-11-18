@@ -68,3 +68,23 @@ tools on real data; this records how that is enforced in code rather than in a p
   and Wikipedia pages for F81 is phase 4+.
 - Phase 4 adds enrichment tags (`claude-haiku-5-5` through the Batch API) to the context, which is
   what makes "something calm" work; until then mood words fall back to what the library search finds.
+
+## Addendum, 2026-11-18 (phase 2 rework round 2)
+
+- **The catalogue rows answer the words, or are not shown.** Every catalogue list, in the typeahead
+  and in `/ask`, is ranked and pruned by token overlap (`apps/hub/src/catalogue/relevance.ts`): a
+  row must cover the content words of the query (command words and filler do not count; a prefix
+  and one typo match), the exact title and artist come first, and words that read as a sentence
+  (a command verb, or four or more words with filler among them) keep only a row that is the title
+  itself. With the model off a sentence therefore shows the model-off line and nothing to add,
+  and "Fireman Lil Wayne" never shows a DJ's "Lil Wayne Fireman" above Lil Wayne's Fireman. This is
+  deterministic text matching, not a model; the never-invent rule is untouched. (Design P, Q, X;
+  functionality B.)
+- **The catalogue is asked about the title inside the words** (`stripCommand`), with the caller as
+  the limiter's owner, and when the MusicBrainz queue is full the Deezer rows stand in rather than
+  none. The pipeline's own lookups are `vital`: never refused, next in line. (Functionality C.)
+- **A duplicate is worded as such.** A `request` the hub answers with `alreadyRequested` becomes
+  "Fireman by Lil Wayne is already on its way, asked by Mom" with `undoable: false`; the asker is a
+  watcher of that request (ADR 0009 addendum 9). (Production W.)
+- **Deezer is a source with a quota**, spaced through its own limiter; a failure or quota error is
+  never cached as "nothing found". (Production T; functionality F.)

@@ -61,3 +61,31 @@ folder, which would mean one folder per person and duplicate files.
 - The "House" profile for the living-room speaker (plan.md, Profiles rule 5) is a union query over
   `collection`; it is not built in phase 2.
 - Backups: the one file under `/data` in the container (docker/hub/compose.yml).
+
+## Addendum, 2026-11-18 (phase 2 rework round 2)
+
+9. **Watchers.** A request for a song or album someone else is already fetching does not start a
+   second one and does not leave the second asker out either: `POST /requests` answers
+   `{ alreadyRequested: true, request }` and records the caller in `request_watchers`. A watcher
+   sees the request in their own list, hears every change and `ready` on their event stream, and
+   gets the item in their collection when it lands; only the asker (or an admin) can cancel or
+   retry it. (Functionality D, production W.)
+10. **The cancel is one conditional statement** (`UPDATE … WHERE status IN ('requested',
+'finding')`), so a poll or a pipeline step that finished during the cancel's Lidarr call wins
+    and the caller hears `too_late` (downloading) or `not_active` (finished); cancelling a cancelled
+    request is idempotent. An album cancelled while the pipeline was still adding it to Lidarr is
+    unmonitored by the pipeline itself once the add lands. (Production Q, U; functionality I.)
+11. **`matched`.** When the catalogue resolves the words typed to a recording with another spelling
+    or credit, the request stores `matched_title` and `matched_artist` and the apps show what will
+    arrive; the pipeline searches for and maps that song. A caller's duration is never overwritten.
+    (Production V; functionality A.)
+12. **The album deadline runs from the last `requested` step**, so a retry gets a full window, and
+    the album poll also files what soularr fetched but Lidarr refused: Lidarr's import candidates
+    in the download folder (and `RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR`) that belong to the album
+    are mapped to the monitored release's tracks and imported with the explicit `ManualImport`;
+    files that match no track fail the request with `import_failed` within the hour. (Production S;
+    functionality E.)
+13. **Health reads the database.** The runner's minute tick is a write; when it fails `/health`
+    answers `503 degraded` so the container restarts and the fault is seen, and an authentication
+    failure caused by the hub's own database is a `500 storage_error`, not "Jellyfin unreachable".
+    (Functionality G.)
