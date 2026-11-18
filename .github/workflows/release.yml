@@ -25,6 +25,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # To dispatch CI on the version branch below.
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,11 +41,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: changesets/action@v2
+        id: changesets
         with:
           version-script: pnpm version-packages
           commit-message: 'chore(release): version packages'
           pr-title: 'chore(release): version packages'
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      # The version PR's own pull_request run is held for approval (its author is github-actions[bot]),
+      # so the required `CI` check never reports. workflow_dispatch is one of the events GITHUB_TOKEN may
+      # trigger; the dispatched run on the branch head reports `CI` and lets the PR merge.
+      - name: Run CI on the version PR
+        if: steps.changesets.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref changeset-release/main
 
   release:
     name: GitHub release with web build

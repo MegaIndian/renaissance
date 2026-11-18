@@ -1,8 +1,9 @@
 import type { ComponentProps } from 'react';
 import { Link } from 'react-router';
 
-const base =
-  'inline-flex items-center justify-center gap-2 rounded-sm px-3 py-2 text-body font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/25';
+import { focusRing } from './focus';
+
+const base = `inline-flex min-h-6 items-center justify-center gap-2 rounded-sm px-3 py-2 text-body font-medium ${focusRing}`;
 const tones = {
   /** The one blue on a screen (DESIGN.md rule 1). */
   primary: 'bg-primary text-primary-foreground hover:opacity-90',

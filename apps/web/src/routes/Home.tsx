@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next';
 
 import { LinkButton } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
-import { PlaceholderArt } from '../components/PlaceholderArt';
+import { Icon } from '../components/Icon';
 
 /**
  * Simple-mode home (F84): greeting and three rows. Signed out (all of phase 0), each row is one
- * EmptyState with a full sentence and the one primary on the screen is Sign in.
+ * EmptyState with a full sentence and the one primary on the screen is Sign in. The card's art is the
+ * person glyph, never a PlaceholderArt square, which only stands in for art that exists (rule 3).
  */
 export function Home({ now = new Date() }: { now?: Date }) {
   const { t } = useTranslation();
@@ -22,7 +23,14 @@ export function Home({ now = new Date() }: { now?: Date }) {
       <EmptyState
         title={t('home.empty')}
         description={t('home.emptyBody')}
-        art={<PlaceholderArt index={1} size="sm" />}
+        art={
+          <span
+            aria-hidden
+            className="grid size-12 shrink-0 place-items-center rounded-pill bg-muted text-muted-foreground"
+          >
+            <Icon name="person" className="size-6" />
+          </span>
+        }
         action={
           <LinkButton to="/sign-in" tone="primary" className="shrink-0">
             {t('signIn.submit')}

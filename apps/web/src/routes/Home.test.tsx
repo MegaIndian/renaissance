@@ -15,12 +15,12 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Good evening');
   });
 
-  it('shows full sentences, not truncated captions under coloured squares', () => {
+  it('shows full sentences, no placeholder art and no truncation while signed out', () => {
     setLanguage('en');
     renderWithI18n(<Home />);
     expect(screen.getByText('Sign in to a server to see your music here')).toBeInTheDocument();
     expect(screen.getByText('Your favourite songs appear here')).toBeInTheDocument();
-    expect(screen.getAllByTestId('placeholder-art')).toHaveLength(1);
+    expect(screen.queryAllByTestId('placeholder-art')).toHaveLength(0);
     expect(document.querySelectorAll('.truncate').length).toBe(0);
   });
 });

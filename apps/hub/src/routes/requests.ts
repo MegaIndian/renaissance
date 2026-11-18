@@ -44,7 +44,8 @@ export interface RequestStore {
 export function memoryRequestStore(cap: number = STORE_CAP): RequestStore {
   const items = new Map<string, MusicRequest>();
   return {
-    list: () => [...items.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    // Newest first by insertion order, not by timestamp: two requests in one millisecond keep their order.
+    list: () => [...items.values()].reverse(),
     get: (id) => items.get(id),
     add: (input) => {
       const now = new Date().toISOString();

@@ -11,7 +11,9 @@ below. Browser calls are allowed from `http://localhost:5173` outside production
 
 ## `GET /health`
 
-Liveness plus which integrations are configured. Never a value, only presence.
+Liveness plus which integrations are configured. Never a value, only presence. `version` is read
+from `apps/hub/package.json` beside the built code, so the container reports its real version. This
+route is never rate limited (container health checks poll it).
 
 ```sh
 curl -s http://localhost:8787/health
@@ -27,6 +29,7 @@ curl -s http://localhost:8787/health
     "host": "0.0.0.0",
     "port": 8787,
     "corsOrigins": 1,
+    "rateLimitPerMinute": 120,
     "jellyfin": false,
     "anthropic": false,
     "intentModel": "claude-opus-5-5",
@@ -124,13 +127,28 @@ One request, or `404 {"error":"not_found"}`.
 curl -s http://localhost:8787/requests/00000000-0000-0000-0000-000000000000
 ```
 
+## Rate limit
+
+Every route but `/health` is limited per client address: `RENAISSANCE_HUB_RATE_LIMIT` requests a
+minute (default 120; 0 turns it off). Each answer carries `x-ratelimit-limit`,
+`x-ratelimit-remaining` and `x-ratelimit-reset`; past the limit the hub answers `429` with
+`retry-after` in seconds and `{ "statusCode": 429, "error": "Too Many Requests", "message": "Rate limit exceeded, retry in 1 minute" }`.
+Behind a reverse proxy, set Fastify's `trustProxy` when the hub should see the client's address
+instead of the proxy's (phase 2, with the hub token).
+
+```sh
+# The third call within a minute answers 429 when RENAISSANCE_HUB_RATE_LIMIT=2
+for i in 1 2 3; do curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8787/requests; done
+```
+
 ## Errors the framework returns
 
-| Code | When                                            |
-| ---- | ----------------------------------------------- |
-| 404  | Unknown route, or an id that is not stored      |
-| 413  | Body over Fastify's 1 MiB default               |
-| 415  | A body without `content-type: application/json` |
+| Code | When                                                 |
+| ---- | ---------------------------------------------------- |
+| 404  | Unknown route, or an id that is not stored           |
+| 413  | Body over Fastify's 1 MiB default                    |
+| 415  | A body without `content-type: application/json`      |
+| 429  | More requests than the per-address limit in a minute |
 
 ## Configuration
 

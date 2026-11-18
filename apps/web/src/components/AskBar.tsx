@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { shortcutKey } from '../lib/platform';
 import { Icon } from './Icon';
+import { focusWithin } from './focus';
 
 /**
  * The one box on every screen (F75), rendered by the shell. Phase 0: the input, its hint and the
@@ -43,7 +45,9 @@ export function AskBar({
       <label className="sr-only" htmlFor="ask">
         {t('ask.placeholder')}
       </label>
-      <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 focus-within:ring-3 focus-within:ring-ring/25">
+      <div
+        className={`flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 ${focusWithin}`}
+      >
         <Icon name="search" className="size-4 text-muted-foreground" />
         <input
           id="ask"
@@ -61,7 +65,7 @@ export function AskBar({
           aria-hidden
           className="hidden rounded-sm border border-border px-1.5 py-0.5 font-mono text-caption text-muted-foreground md:inline"
         >
-          {t('ask.shortcut')}
+          {shortcutKey() === 'mac' ? t('ask.shortcutMac') : t('ask.shortcut')}
         </kbd>
       </div>
       {compact && !value ? null : (

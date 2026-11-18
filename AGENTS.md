@@ -12,13 +12,16 @@ pnpm --filter mobile start       # Expo
 pnpm lint                        # eslint on every package, then prettier --check
 pnpm typecheck                   # tsc --noEmit everywhere, including mobile
 pnpm test                        # vitest in core, design, web, hub
+pnpm --filter web e2e            # Playwright on Chromium against the built web app (once: pnpm --filter web exec playwright install chromium)
+pnpm --filter web screenshots    # retake docs/screens/phase-0 from the built web app
 pnpm build                       # web (dist/) and hub (dist/)
 pnpm --filter @renaissance/design build:css   # regenerate tokens.css after editing tokens.ts
 pnpm changeset                   # add a changeset for a user-visible change
 node docker/demo/start.mjs       # demo Jellyfin with Creative Commons music
 ```
 
-Run `pnpm lint`, `pnpm typecheck` and `pnpm test` before saying a change is done. CI runs the same.
+Run `pnpm lint`, `pnpm typecheck` and `pnpm test` before saying a change is done. CI runs the same,
+plus the build and the browser tests.
 
 ## Where things live
 

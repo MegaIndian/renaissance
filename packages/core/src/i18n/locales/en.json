@@ -4,11 +4,12 @@
     "tagline": "Your music. Any words. Any language."
   },
   "ask": {
-    "placeholder": "Ask for anything: a song, a mood, a chore, a request",
-    "hint": "Try \"play something calm for cooking\"",
+    "placeholder": "Ask for anything",
+    "hint": "A song, a mood, a chore, a request. Try \"play something calm for cooking\"",
     "listening": "Listening…",
     "noResults": "Nothing in your library matches yet",
-    "shortcut": "⌘K"
+    "shortcut": "Ctrl K",
+    "shortcutMac": "⌘K"
   },
   "home": {
     "mySongs": "My songs",
@@ -69,5 +70,14 @@
   "language": {
     "en": "English",
     "gu": "ગુજરાતી"
+  },
+  "notFound": {
+    "title": "There is no page at this address",
+    "body": "The address may be mistyped, or the page moved. Home has everything.",
+    "home": "Go home"
+  },
+  "error": {
+    "title": "Something went wrong on this page",
+    "body": "Nothing was changed. Go home and try again."
   }
 }

@@ -2,6 +2,7 @@ import { Link, Tabs } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { Icon } from '@/components/Icon';
 import { LanguageSwitch } from '@/components/LanguageSwitch';
 import { TabBar } from '@/components/TabBar';
 import { primaryNav } from '@/components/navigation';
@@ -37,15 +38,7 @@ export default function TabsLayout() {
                   },
                 ]}
               >
-                <View
-                  style={{
-                    width: space[3],
-                    height: space[3],
-                    borderRadius: radius.pill,
-                    borderWidth: 1.5,
-                    borderColor: colors.mutedForeground,
-                  }}
-                />
+                <Icon name="person" />
               </Pressable>
             </Link>
           </View>

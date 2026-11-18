@@ -50,12 +50,20 @@ export const textPairs: readonly ColorPair[] = [
   { foreground: 'danger', background: 'background', minimum: 4.5 },
 ];
 
-/** Control boundaries: the focus ring, the primary button's edge and form input borders. */
+/**
+ * Control boundaries: the primary button's edge, form input borders, and the focus outline as it is
+ * drawn. The outline is a 2 px solid `ring` 2 px outside the control, so it sits on the surface
+ * around the control (`background`, `card`, the `muted` track of a segmented control, a `secondary`
+ * button) and next to the `primary` button it marks; every one of those is measured here.
+ */
 export const controlPairs: readonly ColorPair[] = [
   { foreground: 'primary', background: 'background', minimum: 3 },
   { foreground: 'primary', background: 'card', minimum: 3 },
   { foreground: 'ring', background: 'background', minimum: 3 },
   { foreground: 'ring', background: 'card', minimum: 3 },
+  { foreground: 'ring', background: 'muted', minimum: 3 },
+  { foreground: 'ring', background: 'secondary', minimum: 3 },
+  { foreground: 'ring', background: 'primary', minimum: 3 },
   { foreground: 'inputBorder', background: 'background', minimum: 3 },
   { foreground: 'inputBorder', background: 'card', minimum: 3 },
 ];

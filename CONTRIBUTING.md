@@ -40,16 +40,25 @@ checkbox.
 - Branch from `main`; conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`),
   enforced by commitlint. Scope by package when it helps: `feat(web): ...`.
 - `pnpm lint`, `pnpm typecheck`, `pnpm test` green locally. CI runs the same plus `pnpm audit`
-  at the high level, the web and hub builds, the hub container image and a smoke test of `/health`.
-  Coverage on `packages/core` and `apps/hub` must stay at 80 % or more (the test command fails
-  under it).
+  at the high level, the web and hub builds, the web browser tests (`pnpm --filter web e2e`, Playwright
+  on Chromium: focus outline and control sizes measured on the built app), the hub container image and
+  a smoke test of `/health` that checks the reported version. Coverage on `packages/core` and
+  `apps/hub` must stay at 80 % or more (the test command fails under it).
 - Screens: no literal strings in JSX and no arbitrary Tailwind values (`text-[13px]`); the lint
   fails on both. Strings are catalog keys; sizes are token utilities (`text-body`, `p-4`).
 - Add a changeset (`pnpm changeset`) for anything a user would notice.
 - Fill the PR template: what, why, screenshots for any screen change (phone, tablet, desktop), tests.
-- CodeRabbit reviews every PR automatically; a maintainer reviews after. Answer each comment, fixed or why
-  not.
+- What reviews a PR today: CodeQL (GitHub's default setup, actions and JavaScript/TypeScript) on every
+  PR, then a maintainer. Answer each comment, fixed or why not. `.coderabbit.yaml` at the root is a
+  ready configuration for CodeRabbit; it takes effect only if that app is installed on the repository,
+  and it is not installed today.
 - Squash merge; the PR title becomes the commit message.
+- Releases: merging to `main` runs the Release workflow, which opens or updates the Changesets version
+  PR (`chore(release): version packages`, branch `changeset-release/main`). GitHub holds that PR's own
+  CI run for approval because its author is `github-actions[bot]`, so Release dispatches CI on the
+  branch itself and that run reports the required `CI` check. If it ever fails to appear, a maintainer
+  can open the held run under Actions and press "Approve and run", or `gh workflow run ci.yml --ref
+changeset-release/main`. Merging the version PR writes the package changelogs and versions.
 
 ## Licence
 

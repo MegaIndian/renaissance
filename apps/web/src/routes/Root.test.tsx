@@ -56,6 +56,42 @@ describe('Root shell', () => {
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
   });
 
+  it('wraps an unknown URL in the shell with a translated sentence and a link home', () => {
+    setViewport(390);
+    renderApp('/nope');
+    expect(screen.getByText('There is no page at this address')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('search')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Navigation' })).toBeInTheDocument();
+    expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
+  });
+
+  it('translates the not-found page', () => {
+    setViewport(1280);
+    setLanguage('gu');
+    renderApp('/nope');
+    expect(screen.getByText('આ સરનામે કોઈ પેજ નથી')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'હોમ પર જાઓ' })).toBeInTheDocument();
+  });
+
+  it('gives every control the solid focus outline (DESIGN.md rule 7)', () => {
+    for (const [width, path] of [
+      [390, '/'],
+      [1280, '/sign-in'],
+    ] as const) {
+      setViewport(width);
+      const view = renderApp(path);
+      const controls = document.querySelectorAll<HTMLElement>('a, button, input');
+      expect(controls.length).toBeGreaterThan(5);
+      for (const control of controls) {
+        const box = control.closest('.focus-within\\:outline-ring');
+        const own = control.className.includes('focus-visible:outline-ring');
+        expect(own || box !== null, `${control.tagName} ${control.textContent}`).toBe(true);
+      }
+      view.unmount();
+    }
+  });
+
   it('has exactly one primary action on the home screen and it is Sign in', () => {
     setViewport(390);
     renderApp('/');

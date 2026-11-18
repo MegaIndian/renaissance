@@ -4,10 +4,12 @@
 # Every setting is an environment variable (apps/hub/.env.example); there is nothing to mount.
 
 FROM node:22-alpine AS build
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HUSKY=0 TURBO_TELEMETRY_DISABLED=1
-RUN corepack enable
+ENV HUSKY=0 TURBO_TELEMETRY_DISABLED=1
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+# pnpm at exactly the version `packageManager` pins, from npm; corepack is not relied on (node images
+# past 24 ship without it).
+RUN npm install -g "$(node -p "require('./package.json').packageManager")"
 COPY apps/hub/package.json apps/hub/package.json
 COPY packages/core/package.json packages/core/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter hub...

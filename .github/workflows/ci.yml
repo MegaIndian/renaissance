@@ -2,11 +2,12 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
-    tags: ['v*', 'phase-*']
-  # Release calls this workflow so a tagged release is re-tested before anything is published.
+  # Release calls this workflow on every push to main and on tags, so a push trigger here would run
+  # it twice; the required `CI` check on a pull request comes from the pull_request run.
   workflow_call:
+  # Release dispatches this on the Changesets version branch, whose pull_request run GitHub holds for
+  # approval because its author is github-actions[bot]; the dispatched run reports the `CI` check.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -24,7 +25,7 @@ jobs:
   ci:
     name: CI
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,23 +51,32 @@ jobs:
         run: pnpm test
       - name: Build web
         run: pnpm --filter web build
+      - name: Browser tests (focus outline and target sizes measured in Chromium)
+        run: |
+          pnpm --filter web exec playwright install --with-deps chromium
+          pnpm --filter web e2e
       - name: Build hub
         run: pnpm --filter hub build
-      - name: Hub smoke test
+      - name: Hub smoke test (the version in /health is the manifest's)
         run: |
           node apps/hub/dist/server.js &
           sleep 2
-          curl --fail --silent http://127.0.0.1:8787/health
+          expected="$(node -p "require('./apps/hub/package.json').version")"
+          body="$(curl --fail --silent http://127.0.0.1:8787/health)"
+          echo "$body"
+          echo "$body" | grep -F "\"version\":\"$expected\""
           kill %1
       - name: Build hub image
         run: docker build -f apps/hub/Dockerfile -t renaissance-hub:ci .
-      - name: Hub image smoke test
+      - name: Hub image smoke test (same version check inside the image)
         run: |
           docker run -d --name hub -p 8788:8787 renaissance-hub:ci
+          expected="$(node -p "require('./apps/hub/package.json').version")"
           for i in $(seq 1 15); do
-            if curl --fail --silent http://127.0.0.1:8788/health; then ok=1; break; fi
+            if body="$(curl --fail --silent http://127.0.0.1:8788/health)"; then ok=1; break; fi
             sleep 1
           done
           docker logs hub
           docker rm -f hub
           test "${ok:-0}" = 1
+          echo "$body" | grep -F "\"version\":\"$expected\""
