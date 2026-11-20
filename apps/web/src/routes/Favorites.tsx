@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { playNow } from '../lib/actions';
-import { useSnapshot } from '../lib/queries';
+import { useLibrary } from '../lib/queries';
 import { Button } from '../components/Button';
 import { AlbumCard, ArtistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
@@ -14,7 +14,7 @@ import { TrackList } from './Library';
 /** Favourites (F12): this user's hearts on songs, albums and artists, synced with Jellyfin. */
 export function Favorites() {
   const { t } = useTranslation();
-  const snapshot = useSnapshot();
+  const { snapshot, ready } = useLibrary();
   const tracks = useMemo(
     () =>
       sortItems(
@@ -61,7 +61,7 @@ export function Favorites() {
           </>
         ) : null}
       </div>
-      {empty ? (
+      {empty && ready ? (
         <EmptyState title={t('favorites.empty')} description={t('favorites.emptyBody')} />
       ) : null}
       {albums.length ? (

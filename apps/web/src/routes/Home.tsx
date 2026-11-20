@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { playNow } from '../lib/actions';
 import { useMode } from '../lib/mode';
-import { useRecentlyPlayed, useSession, useSnapshot } from '../lib/queries';
+import { useLibrary, useRecentlyPlayed, useSession } from '../lib/queries';
 import { Button, LinkButton } from '../components/Button';
 import { AlbumCard, TrackCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
@@ -22,7 +22,7 @@ export function Home({ now = new Date() }: { now?: Date }) {
   const { t } = useTranslation();
   const session = useSession();
   const mode = useMode();
-  const snapshot = useSnapshot();
+  const { snapshot, ready } = useLibrary();
   const recent = useRecentlyPlayed(12);
   const favorites = useMemo(
     () =>
@@ -113,10 +113,16 @@ export function Home({ now = new Date() }: { now?: Date }) {
         empty={t('home.mySongsEmpty')}
         emptyBody={t('home.mySongsEmptyBody')}
         count={favorites.length}
+        pending={!ready}
       >
         {trackRow(favorites)}
       </Row>
-      <Row title={t('home.recent')} empty={t('home.recentEmpty')} count={recent.length}>
+      <Row
+        title={t('home.recent')}
+        empty={t('home.recentEmpty')}
+        count={recent.length}
+        pending={!ready}
+      >
         {trackRow(recent)}
       </Row>
       {mode === 'advanced' ? (
@@ -127,6 +133,7 @@ export function Home({ now = new Date() }: { now?: Date }) {
             toLabel={t('library.albums')}
             empty={t('home.recentlyAddedEmpty')}
             count={recentlyAdded.albums.length + recentlyAdded.tracks.length}
+            pending={!ready}
           >
             {recentlyAdded.albums.map((album) => (
               <RowItem key={album.id}>
@@ -139,6 +146,7 @@ export function Home({ now = new Date() }: { now?: Date }) {
             title={t('home.mostPlayed')}
             empty={t('home.mostPlayedEmpty')}
             count={mostPlayed.length}
+            pending={!ready}
           >
             {trackRow(mostPlayed)}
           </Row>

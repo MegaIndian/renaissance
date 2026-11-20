@@ -38,6 +38,9 @@ describe('Settings', () => {
     expect(screen.getByText('Signed in as Sahil')).toBeInTheDocument();
     expect(screen.getByText(/Encrypted in this browser/)).toBeInTheDocument();
     expect(screen.getByText(/Version \d/)).toBeInTheDocument();
+    // Two library buttons, two names: the full rebuild and the quick refresh.
+    expect(screen.getByRole('button', { name: 'Rebuild library' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Refresh library' })).toHaveLength(1);
   });
 
   it('the avatar goes to Settings when signed in and to Sign in when not; language persists in settings', async () => {

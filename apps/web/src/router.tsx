@@ -1,13 +1,15 @@
 import { createBrowserRouter } from 'react-router';
 import type { RouteObject } from 'react-router';
 
+import { lazyRoute } from './lib/lazy';
 import { Home } from './routes/Home';
 import { NotFound } from './routes/NotFound';
 import { Root } from './routes/Root';
 
 /**
  * Home and the shell load with the page; every other screen is its own chunk so the first load stays
- * under the 200 kB budget (vite.config.ts, scripts/check-bundle-size.mjs).
+ * under the 200 kB budget (vite.config.ts, scripts/check-bundle-size.mjs). A chunk that fails to load
+ * offline raises `OfflineError`, which the error page names and retries when the connection returns.
  */
 export const routes: RouteObject[] = [
   {
@@ -19,44 +21,80 @@ export const routes: RouteObject[] = [
       { index: true, Component: Home },
       {
         path: 'library',
-        lazy: () => import('./routes/Library').then((m) => ({ Component: m.Library })),
+        lazy: lazyRoute(
+          () => import('./routes/Library'),
+          (m) => m.Library,
+        ),
       },
       {
         path: 'album/:id',
-        lazy: () => import('./routes/Album').then((m) => ({ Component: m.AlbumPage })),
+        lazy: lazyRoute(
+          () => import('./routes/Album'),
+          (m) => m.AlbumPage,
+        ),
       },
       {
         path: 'artist/:id',
-        lazy: () => import('./routes/Artist').then((m) => ({ Component: m.ArtistPage })),
+        lazy: lazyRoute(
+          () => import('./routes/Artist'),
+          (m) => m.ArtistPage,
+        ),
       },
       {
         path: 'playlist/:id',
-        lazy: () => import('./routes/Playlist').then((m) => ({ Component: m.PlaylistPage })),
+        lazy: lazyRoute(
+          () => import('./routes/Playlist'),
+          (m) => m.PlaylistPage,
+        ),
       },
       {
         path: 'favorites',
-        lazy: () => import('./routes/Favorites').then((m) => ({ Component: m.Favorites })),
+        lazy: lazyRoute(
+          () => import('./routes/Favorites'),
+          (m) => m.Favorites,
+        ),
       },
       {
         path: 'search',
-        lazy: () => import('./routes/Search').then((m) => ({ Component: m.Search })),
+        lazy: lazyRoute(
+          () => import('./routes/Search'),
+          (m) => m.Search,
+        ),
       },
-      { path: 'queue', lazy: () => import('./routes/Queue').then((m) => ({ Component: m.Queue })) },
+      {
+        path: 'queue',
+        lazy: lazyRoute(
+          () => import('./routes/Queue'),
+          (m) => m.Queue,
+        ),
+      },
       {
         path: 'now-playing',
-        lazy: () => import('./routes/NowPlaying').then((m) => ({ Component: m.NowPlaying })),
+        lazy: lazyRoute(
+          () => import('./routes/NowPlaying'),
+          (m) => m.NowPlaying,
+        ),
       },
       {
         path: 'settings',
-        lazy: () => import('./routes/Settings').then((m) => ({ Component: m.Settings })),
+        lazy: lazyRoute(
+          () => import('./routes/Settings'),
+          (m) => m.Settings,
+        ),
       },
       {
         path: 'requests',
-        lazy: () => import('./routes/Requests').then((m) => ({ Component: m.Requests })),
+        lazy: lazyRoute(
+          () => import('./routes/Requests'),
+          (m) => m.Requests,
+        ),
       },
       {
         path: 'sign-in',
-        lazy: () => import('./routes/SignIn').then((m) => ({ Component: m.SignIn })),
+        lazy: lazyRoute(
+          () => import('./routes/SignIn'),
+          (m) => m.SignIn,
+        ),
       },
     ],
   },

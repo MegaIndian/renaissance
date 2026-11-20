@@ -45,6 +45,11 @@ function library() {
   return adapter.library(session);
 }
 
+/**
+ * An album's tracks: the server's list (it knows tracks the cache has not synced yet), with the
+ * cache's user data laid over it by id. The cache is what a heart patches at once, so the heart on
+ * the album page fills the moment it is tapped instead of on the next refetch.
+ */
 export function useAlbumTracks(albumId: string | undefined) {
   const all = useStoreSlice(libraryStore, (s) => s.snapshot.tracks);
   const cached = useMemo(
@@ -56,7 +61,30 @@ export function useAlbumTracks(albumId: string | undefined) {
     queryFn: () => library().albumTracks(albumId ?? ''),
     enabled: !!albumId && sessionStore.get().status === 'signedIn',
   });
-  return { ...query, tracks: query.data ?? cached, fromCache: !query.data };
+  const tracks = useMemo(() => {
+    if (!query.data) return cached;
+    const byId = new Map(cached.map((t) => [t.id, t]));
+    return query.data.map((t) => {
+      const local = byId.get(t.id);
+      return local ? overlayUserData(t, local) : t;
+    });
+  }, [query.data, cached]);
+  return { ...query, tracks, fromCache: !query.data };
+}
+
+/** The server row with the cache's favourite and the higher of the two play counts. */
+export function overlayUserData(server: Track, local: Track): Track {
+  const playCount = Math.max(server.playCount, local.playCount);
+  const lastPlayed =
+    Date.parse(local.lastPlayed ?? '') > Date.parse(server.lastPlayed ?? '')
+      ? local.lastPlayed
+      : server.lastPlayed;
+  return {
+    ...server,
+    isFavorite: local.isFavorite,
+    playCount,
+    ...(lastPlayed !== undefined ? { lastPlayed } : {}),
+  };
 }
 
 export function useAlbum(albumId: string | undefined) {

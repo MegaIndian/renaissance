@@ -10,13 +10,19 @@ import { focusRing } from './focus';
 
 const iconButton = `grid min-h-6 min-w-6 shrink-0 place-items-center rounded-pill ${focusRing}`;
 
-/** Previous, play or pause, next, with shuffle and repeat around them when asked (F23, F24). */
+/**
+ * Previous, play or pause, next, with shuffle and repeat around them when asked (F23, F24). The bar
+ * keeps the five on one row at every width it shows them; the now-playing screen on a phone may
+ * `wrap` them, so a 25 px root at 390 px still fits.
+ */
 export function TransportControls({
   size = 'md',
   withModes = false,
+  wrap = false,
 }: {
   size?: 'sm' | 'md' | 'lg';
   withModes?: boolean;
+  wrap?: boolean;
 }) {
   const { t } = useTranslation();
   const { status, queue } = usePlayer();
@@ -33,7 +39,9 @@ export function TransportControls({
     one: t('player.repeatOne'),
   };
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+    <div
+      className={`flex ${wrap ? 'flex-wrap' : 'flex-nowrap'} items-center justify-center gap-2 sm:gap-3`}
+    >
       {withModes ? (
         <button
           type="button"

@@ -1,10 +1,17 @@
-import { screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { I18nextProvider } from 'react-i18next';
+import { RouterProvider, createMemoryRouter } from 'react-router';
+import type { RouteObject } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { setLanguage } from '../lib/i18n';
+import { i18n, setLanguage } from '../lib/i18n';
+import { lazyRoute } from '../lib/lazy';
 import { renderApp } from '../test/render';
 import { setViewport } from '../test/setup';
+import { Home } from './Home';
+import { NotFound } from './NotFound';
+import { Root } from './Root';
 
 describe('Root shell', () => {
   beforeEach(() => {
@@ -104,5 +111,93 @@ describe('Root shell', () => {
     expect(actionable[0]?.textContent).toBe('Sign in');
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).not.toHaveClass('bg-primary');
+  });
+});
+
+describe('a screen whose chunk cannot load offline', () => {
+  const online = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+  afterEach(() => {
+    if (online) Object.defineProperty(navigator, 'onLine', online);
+  });
+
+  it('says you are offline instead of "something went wrong", and loads itself when the connection returns', async () => {
+    setViewport(1280);
+    setLanguage('en');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    let attempts = 0;
+    const routes: RouteObject[] = [
+      {
+        path: '/',
+        Component: Root,
+        ErrorBoundary: NotFound,
+        HydrateFallback: () => null,
+        children: [
+          { index: true, Component: Home },
+          {
+            path: 'library',
+            lazy: lazyRoute(
+              () =>
+                ++attempts === 1
+                  ? Promise.reject(new TypeError('Failed to fetch dynamically imported module'))
+                  : Promise.resolve({ Screen: () => <h1>The library</h1> }),
+              (m) => m.Screen,
+            ),
+          },
+        ],
+      },
+    ];
+    const router = createMemoryRouter(routes, { initialEntries: ['/library?section=albums'] });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>,
+    );
+    expect(
+      await screen.findByText(
+        /You seem to be offline. Your library still works from the last refresh/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong on this page')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('search')).toBeInTheDocument();
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'The library' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.search).toBe('?section=albums');
+    expect(attempts).toBe(2);
+  });
+
+  it('any other load failure keeps the generic sentence', async () => {
+    setViewport(1280);
+    setLanguage('en');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    const routes: RouteObject[] = [
+      {
+        path: '/',
+        Component: Root,
+        ErrorBoundary: NotFound,
+        HydrateFallback: () => null,
+        children: [
+          {
+            path: 'library',
+            lazy: lazyRoute(
+              () => Promise.reject(new TypeError('Failed to fetch dynamically imported module')),
+              (m: { Screen: () => null }) => m.Screen,
+            ),
+          },
+        ],
+      },
+    ];
+    const router = createMemoryRouter(routes, { initialEntries: ['/library'] });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>,
+    );
+    expect(await screen.findByText('Something went wrong on this page')).toBeInTheDocument();
   });
 });

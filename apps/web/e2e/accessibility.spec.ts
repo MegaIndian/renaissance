@@ -60,6 +60,7 @@ for (const mode of ['simple', 'advanced'] as const) {
         page.getByRole('banner').getByRole('link', { name: 'Sign in' }),
         MIN[mode],
       );
+      await expectAskBarTarget(page, MIN[mode]);
     });
 
     test(`desktop: sidebar items, the sign-in link and segments are at least ${MIN[mode]} px`, async ({
@@ -71,8 +72,28 @@ for (const mode of ['simple', 'advanced'] as const) {
       await expectAtLeast(sidebar.getByRole('link'), MIN[mode]);
       await expectAtLeast(sidebar.getByRole('radio'), MIN[mode]);
       await expectAtLeast(page.getByRole('button', { name: 'Play' }), MIN[mode]);
+      await expectAskBarTarget(page, MIN[mode]);
     });
   });
+}
+
+/**
+ * The Ask bar is the one box on every screen: the input itself (what takes a tap) is at least the
+ * rule's height, and a tap on the box's edge or its magnifier focuses it too.
+ */
+async function expectAskBarTarget(page: Page, min: number): Promise<void> {
+  const input = page.getByRole('combobox');
+  await expectAtLeast(input, min);
+  const box = await input.evaluate((el) => {
+    const r = (el.parentElement as HTMLElement).getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  });
+  await page.mouse.click(box.x + 8, box.y + 2);
+  await expect(input).toBeFocused();
+  await page.keyboard.press('Escape');
+  await input.blur();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 2);
+  await expect(input).toBeFocused();
 }
 
 for (const theme of ['dark', 'light'] as const) {

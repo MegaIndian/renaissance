@@ -64,7 +64,8 @@ describe('SignIn', () => {
     expect(signIn.mock.calls[0]?.[0]?.url).toBe('http://192.168.1.5:8096');
     expect(signIn.mock.calls[0]?.[1]).toEqual({ userName: 'mom', password: 'pw' });
     expect(localStorage.getItem('renaissance.lastServer')).toBe('http://192.168.1.5:8096');
-    expect(await screen.findByText('Good morning, mom', { exact: false })).toBeInTheDocument();
+    // The heading, not the greeting: the greeting follows the clock and this test runs at every hour.
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(/, mom$/);
     vi.restoreAllMocks();
   });
 

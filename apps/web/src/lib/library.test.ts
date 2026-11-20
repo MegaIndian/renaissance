@@ -1,15 +1,18 @@
 import { LibraryIndex, MemoryLibraryStore, buildSnapshot, loadSnapshot } from '@renaissance/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { Track, UserDataChange } from '@renaissance/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { albums, artists, fakeAdapter, playlists, session, tracks } from '../test/fakes';
 import {
   IndexedDbLibraryStore,
   addItems,
+  applyUserDataChanges,
   dbName,
   deleteLibrary,
   libraryStore,
   openLibraryStore,
   patchItems,
+  refreshLibrary,
   startLibrary,
   stopLibrary,
 } from './library';
@@ -116,5 +119,91 @@ describe('storage that is blocked', () => {
     expect(opened.persisted).toBe(true);
     expect(opened.store).toBeInstanceOf(IndexedDbLibraryStore);
     await opened.store.close?.();
+  });
+});
+
+describe('changes while a sync runs, and changes the server pushes', () => {
+  afterEach(() => stopLibrary());
+
+  it('a patch made while a sync is in flight survives the sync landing', async () => {
+    // The sync reads the store before the patch is written, so its snapshot would show the old heart.
+    const { adapter } = fakeAdapter();
+    let release: () => void = () => undefined;
+    let hold = false;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const library = adapter.library(session);
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      tracks: async (...args: Parameters<typeof library.tracks>) => {
+        if (hold) await gate;
+        return library.tracks(...args);
+      },
+    });
+    await startLibrary(adapter, { ...session, userId: `pending-${Date.now()}` });
+    hold = true;
+    expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(false);
+    const sync = refreshLibrary({ full: true });
+    expect(libraryStore.get().sync.status).toBe('syncing');
+    patchItems('track', (item) => (item.id === 't1' ? { ...item, isFavorite: true } : item));
+    expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(true);
+    release();
+    await sync;
+    expect(libraryStore.get().sync.status).toBe('idle');
+    expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(true);
+    // A later sync, with nothing pending, shows what the server has.
+    await refreshLibrary({ full: true });
+    expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't1')?.isFavorite).toBe(false);
+  });
+
+  it('a push naming items patches the cached rows and fetches the ones the cache lacks', async () => {
+    const { adapter } = fakeAdapter();
+    const fetched: string[] = [];
+    let events: { onUserDataChanged?: (changes: UserDataChange[]) => void } = {};
+    const library = adapter.library(session);
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      byIds: (kind: 'track' | 'album', ids: readonly string[]) => {
+        fetched.push(`${kind} ${ids.join(',')}`);
+        return Promise.resolve(
+          kind === 'track'
+            ? ids.filter((id) => id === 't9').map((id) => ({ ...tracks[0], id, title: 'Song 9' }))
+            : [],
+        );
+      },
+    } as never);
+    vi.spyOn(adapter, 'subscribe').mockImplementation((_s, e) => {
+      events = e;
+      return () => undefined;
+    });
+    await startLibrary(adapter, { ...session, userId: `push-${Date.now()}` });
+    const before = libraryStore.get().snapshot.tracks.find((t) => t.id === 't2') as Track;
+    expect(before.isFavorite).toBe(false);
+    expect(before.playCount).toBe(3);
+
+    // What 10.10.7 pushes when another device hearts t2, plays it, and hearts a song the cache has
+    // never seen (outside the delta's reach, ADR 0012).
+    events.onUserDataChanged?.([
+      { itemId: 't2', isFavorite: true, playCount: 4, lastPlayed: '2026-11-20T01:00:00.000Z' },
+      { itemId: 'al1', isFavorite: true },
+      { itemId: 't9', isFavorite: true, playCount: 1 },
+      { itemId: 'movie-1', isFavorite: true },
+    ]);
+    await vi.waitFor(() => {
+      expect(libraryStore.get().snapshot.tracks.some((t) => t.id === 't9')).toBe(true);
+    });
+    const after = libraryStore.get().snapshot.tracks.find((t) => t.id === 't2') as Track;
+    expect(after.isFavorite).toBe(true);
+    expect(after.playCount).toBe(4);
+    expect(after.lastPlayed).toBe('2026-11-20T01:00:00.000Z');
+    expect(libraryStore.get().snapshot.albums[0]?.isFavorite).toBe(true);
+    expect(fetched).toEqual(['track t9,movie-1', 'album movie-1']);
+    // The push is applied; nothing else of the row changed.
+    expect(after.title).toBe('Carefree');
+
+    // An empty push (no `Data`) changes nothing and fetches nothing.
+    await applyUserDataChanges([]);
+    expect(fetched).toHaveLength(2);
   });
 });

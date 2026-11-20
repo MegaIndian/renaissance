@@ -1,6 +1,8 @@
 import { addCatalog, createI18n, hasCatalog, isLanguage } from '@renaissance/core/i18n';
 import type { Language } from '@renaissance/core/i18n';
 
+import { toast } from './toast';
+
 const STORAGE_KEY = 'renaissance.language';
 
 /**
@@ -37,13 +39,18 @@ applyLanguage(i18n.language);
 
 const loading = new Map<Language, Promise<void>>();
 
+/** Where each catalog chunk comes from; a test may swap a loader to hold it back or fail it. */
+export const catalogLoaders: Record<'gu', () => Promise<{ default: object }>> = {
+  gu: () => import('@renaissance/core/locales/gu'),
+};
+
 /** Resolves once this language's strings are in the instance. English always is. */
 export function ensureCatalog(language: Language): Promise<void> {
   if (language === 'en' || hasCatalog(i18n, language)) return Promise.resolve();
   let pending = loading.get(language);
   if (!pending) {
-    pending = import('@renaissance/core/locales/gu')
-      .then((module) => addCatalog(i18n, language, module.default))
+    pending = catalogLoaders[language]()
+      .then((module) => addCatalog(i18n, language, module.default as never))
       .finally(() => loading.delete(language));
     loading.set(language, pending);
   }
@@ -60,19 +67,40 @@ export function applyLanguage(language: string): void {
   document.documentElement.lang = language;
 }
 
-/** Switch the language; resolves once its strings are shown (at once when they are already loaded). */
-export function setLanguage(language: Language): Promise<void> {
+function store(language: string | null): void {
   try {
-    localStorage.setItem(STORAGE_KEY, language);
+    if (language) localStorage.setItem(STORAGE_KEY, language);
+    else localStorage.removeItem(STORAGE_KEY);
   } catch {
     /* private window: the choice lasts the session */
   }
-  applyLanguage(language);
+}
+
+/**
+ * Switch the language. `html lang`, the strings and the stored choice change together, once the
+ * catalog is in (at once when it already is), so a screen reader never speaks English under a
+ * Gujarati `lang`. Resolves `true` when the strings are shown; when the chunk cannot be fetched
+ * (offline on a first switch, a stale deploy), everything stays as it was, one toast says so, and
+ * it resolves `false`. It never rejects.
+ */
+export function setLanguage(language: Language): Promise<boolean> {
+  const show = (): void => {
+    store(language);
+    applyLanguage(language);
+    void i18n.changeLanguage(language);
+  };
   if (hasCatalog(i18n, language) || language === 'en') {
-    void i18n.changeLanguage(language);
-    return Promise.resolve();
+    show();
+    return Promise.resolve(true);
   }
-  return ensureCatalog(language).then(() => {
-    void i18n.changeLanguage(language);
-  });
+  return ensureCatalog(language).then(
+    () => {
+      show();
+      return true;
+    },
+    () => {
+      toast(i18n.t('error.failed'), { tone: 'danger' });
+      return false;
+    },
+  );
 }

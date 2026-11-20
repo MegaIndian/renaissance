@@ -26,6 +26,7 @@ import type {
   Session,
   SyncProgress,
   Track,
+  UserDataChange,
 } from '@renaissance/core';
 import { openDB } from 'idb';
 import type { DBSchema, IDBPDatabase } from 'idb';
@@ -186,6 +187,12 @@ let active: {
   retry: (ms: number) => void;
 } | null = null;
 let syncing: Promise<void> | null = null;
+/**
+ * Local patches made while a sync is in flight. The sync built its snapshot from a read that began
+ * before the patch, so each is replayed on the result before it is shown (a heart tapped during a
+ * delta stays a heart).
+ */
+let pendingPatches: { kind: CacheKind; update: (item: CacheItem) => CacheItem | null }[] = [];
 let retryDelay = RETRY_FIRST_MS;
 /** Bumped by every start and stop, so a start that lost the race while opening its store gives up. */
 let generation = 0;
@@ -220,7 +227,17 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
     .then((result) => {
       if (active !== current) return;
       retryDelay = RETRY_FIRST_MS;
-      setSnapshot(result.snapshot);
+      let snapshot = result.snapshot;
+      for (const patch of pendingPatches) {
+        const applied = applyPatch(snapshot, patch.kind, patch.update);
+        snapshot = applied.snapshot;
+        // The disk copy may hold the server's row from the sync; the patch is the newer truth.
+        if (applied.changed.length) {
+          void current.store.write(patch.kind, applied.changed).catch(() => undefined);
+        }
+      }
+      pendingPatches = [];
+      setSnapshot(snapshot);
       patchSync({ status: 'idle', progress: null, mode: result.mode });
     })
     .catch((error: unknown) => {
@@ -237,6 +254,7 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
     })
     .finally(() => {
       syncing = null;
+      pendingPatches = [];
     });
   return syncing;
 }
@@ -262,7 +280,12 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
   };
   const unsubscribe = adapter.subscribe(session, {
     onLibraryChanged: () => schedule(),
-    onUserDataChanged: () => schedule(),
+    onUserDataChanged: (changes) => {
+      // The push names the items: patch them now. The delta that follows cannot see a favourite
+      // or a play on 10.10.7 (ADR 0012), so this is how another device's heart reaches this one.
+      void applyUserDataChanges(changes).catch(() => undefined);
+      schedule();
+    },
   });
   const interval = setInterval(() => void refreshLibrary(), REFRESH_INTERVAL_MS);
   const onOnline = (): void => void refreshLibrary();
@@ -309,6 +332,7 @@ export function stopLibrary(): void {
   active?.stop();
   active = null;
   syncing = null;
+  pendingPatches = [];
   libraryStore.set({
     snapshot: emptySnapshot,
     index: new LibraryIndex(),
@@ -323,23 +347,23 @@ export function broadcastLibraryChange(): void {
   active?.broadcast();
 }
 
-/**
- * Apply a local change (favourite toggled, playlist renamed) to the snapshot and the disk cache at
- * once. The other tabs are told to refresh unless the caller asks to wait (an optimistic change
- * broadcasts once the server has it, so the other tab never reads the old state back).
- */
-export function patchItems<K extends CacheKind>(
-  kind: K,
+const LIST_KEY = {
+  track: 'tracks',
+  album: 'albums',
+  artist: 'artists',
+  playlist: 'playlists',
+} as const;
+
+/** One patch over a snapshot: the new snapshot plus what changed, so the caller can write it. */
+function applyPatch(
+  snapshot: LibrarySnapshot,
+  kind: CacheKind,
   update: (item: CacheItem) => CacheItem | null,
-  options: { broadcast?: boolean } = {},
-): void {
-  const state = libraryStore.get();
-  const listKey = { track: 'tracks', album: 'albums', artist: 'artists', playlist: 'playlists' }[
-    kind
-  ] as 'tracks' | 'albums' | 'artists' | 'playlists';
+): { snapshot: LibrarySnapshot; changed: CacheItem[]; removed: string[] } {
+  const listKey = LIST_KEY[kind];
   const changed: CacheItem[] = [];
   const removed: string[] = [];
-  const next = (state.snapshot[listKey] as CacheItem[]).flatMap((item) => {
+  const next = (snapshot[listKey] as CacheItem[]).flatMap((item) => {
     const result = update(item);
     if (result === item) return [item];
     if (result === null) {
@@ -349,12 +373,30 @@ export function patchItems<K extends CacheKind>(
     changed.push(result);
     return [result];
   });
-  if (!changed.length && !removed.length) return;
-  const snapshot = { ...state.snapshot, [listKey]: next } as LibrarySnapshot;
+  if (!changed.length && !removed.length) return { snapshot, changed, removed };
+  const out = { ...snapshot, [listKey]: next } as LibrarySnapshot;
   if (kind === 'artist') {
-    const ids = new Set(state.snapshot.albumArtists.map((a) => a.id));
-    snapshot.albumArtists = snapshot.artists.filter((a) => ids.has(a.id));
+    const ids = new Set(snapshot.albumArtists.map((a) => a.id));
+    out.albumArtists = out.artists.filter((a) => ids.has(a.id));
   }
+  return { snapshot: out, changed, removed };
+}
+
+/**
+ * Apply a local change (favourite toggled, playlist renamed) to the snapshot and the disk cache at
+ * once. The other tabs are told to refresh unless the caller asks to wait (an optimistic change
+ * broadcasts once the server has it, so the other tab never reads the old state back). A patch made
+ * while a sync runs is kept and replayed on the sync's result, which was read before the patch.
+ */
+export function patchItems<K extends CacheKind>(
+  kind: K,
+  update: (item: CacheItem) => CacheItem | null,
+  options: { broadcast?: boolean } = {},
+): void {
+  const state = libraryStore.get();
+  const { snapshot, changed, removed } = applyPatch(state.snapshot, kind, update);
+  if (!changed.length && !removed.length) return;
+  if (syncing) pendingPatches.push({ kind, update });
   setSnapshot(snapshot);
   if (active) {
     if (changed.length) void active.store.write(kind, changed).catch(() => undefined);
@@ -363,12 +405,52 @@ export function patchItems<K extends CacheKind>(
   }
 }
 
+/**
+ * What another device changed, from the server's push: patch the cached rows by id, and fetch the
+ * tracks or albums the cache does not hold yet (an item outside the delta's reach). No broadcast:
+ * every tab has its own socket.
+ */
+export async function applyUserDataChanges(changes: UserDataChange[]): Promise<void> {
+  if (!changes.length) return;
+  const byId = new Map(changes.map((c) => [c.itemId, c]));
+  const merge = (item: CacheItem): CacheItem => {
+    const change = byId.get(item.id);
+    if (!change) return item;
+    const next = {
+      ...item,
+      ...(change.isFavorite !== undefined ? { isFavorite: change.isFavorite } : {}),
+      ...(change.playCount !== undefined ? { playCount: change.playCount } : {}),
+      ...(change.lastPlayed !== undefined ? { lastPlayed: change.lastPlayed } : {}),
+    } as CacheItem;
+    const same = (['isFavorite', 'playCount', 'lastPlayed'] as const).every(
+      (key) => (next as Record<string, unknown>)[key] === (item as Record<string, unknown>)[key],
+    );
+    return same ? item : next;
+  };
+  const known = new Set<string>();
+  const { snapshot } = libraryStore.get();
+  for (const kind of ['track', 'album', 'artist', 'playlist'] as const) {
+    for (const item of snapshot[LIST_KEY[kind]] as CacheItem[]) {
+      if (byId.has(item.id)) known.add(item.id);
+    }
+    patchItems(kind, merge, { broadcast: false });
+  }
+  const missing = changes.map((c) => c.itemId).filter((id) => !known.has(id));
+  const current = active;
+  if (!missing.length || !current) return;
+  const library = current.adapter.library(current.session);
+  const fetchedTracks = await library.byIds('track', missing);
+  const stillMissing = missing.filter((id) => !fetchedTracks.some((t) => t.id === id));
+  const fetchedAlbums = stillMissing.length ? await library.byIds('album', stillMissing) : [];
+  if (active !== current) return;
+  if (fetchedTracks.length) addItems('track', fetchedTracks);
+  if (fetchedAlbums.length) addItems('album', fetchedAlbums);
+}
+
 /** Add brand-new items (a created playlist) to the snapshot and the cache. */
 export function addItems(kind: CacheKind, items: CacheItem[]): void {
   const state = libraryStore.get();
-  const listKey = { track: 'tracks', album: 'albums', artist: 'artists', playlist: 'playlists' }[
-    kind
-  ] as 'tracks' | 'albums' | 'artists' | 'playlists';
+  const listKey = LIST_KEY[kind];
   const existing = new Set((state.snapshot[listKey] as CacheItem[]).map((i) => i.id));
   const fresh = [
     ...new Map(items.filter((i) => !existing.has(i.id)).map((i) => [i.id, i])).values(),

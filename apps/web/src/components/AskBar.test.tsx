@@ -47,6 +47,18 @@ describe('AskBar', () => {
     expect(screen.getByText('Nothing in your library matches yet')).toBeInTheDocument();
   });
 
+  it('lists the kind holding the best match first: an artist typed by name leads the songs', async () => {
+    setLanguage('en');
+    signInFake();
+    renderWithI18n(<AskBar />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('combobox'), 'kevin macleod');
+    const options = screen.getAllByRole('option');
+    expect(options[0]).toHaveTextContent('Kevin MacLeod');
+    expect(options[0]).toHaveTextContent('Artists');
+    expect(options[1]).toHaveTextContent('Songs');
+  });
+
   it('shows recent searches when empty and can clear them', async () => {
     setLanguage('en');
     signInFake();

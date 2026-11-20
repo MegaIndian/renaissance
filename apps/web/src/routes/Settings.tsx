@@ -103,8 +103,10 @@ export function Settings() {
           value={language}
           options={supportedLanguages.map((lng) => ({ value: lng, label: t(`language.${lng}`) }))}
           onChange={(lng: Language) => {
-            void setLanguage(lng);
-            updateSettings({ language: lng });
+            // The choice is stored once the strings are in; a failed fetch leaves it as it was.
+            void setLanguage(lng).then((ok) => {
+              if (ok) updateSettings({ language: lng });
+            });
           }}
         />
       </Section>
@@ -205,7 +207,7 @@ export function Settings() {
           </p>
           <div className="flex items-center gap-3">
             <Button tone="secondary" onClick={() => void refreshLibrary({ full: true })}>
-              {t('library.refresh')}
+              {t('library.rebuild')}
             </Button>
             <SyncStatus />
           </div>

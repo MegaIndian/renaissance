@@ -1,5 +1,5 @@
-import { isEmptyResult, rememberSearch } from '@renaissance/core';
-import type { Album, Artist, Playlist, SearchResult, Track } from '@renaissance/core';
+import { rememberSearch } from '@renaissance/core';
+import type { Album, Artist, Playlist, SearchGroup, Track } from '@renaissance/core';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
@@ -65,8 +65,10 @@ export function AskBar({
     };
   }, [open]);
 
-  const results: SearchResult | null = useMemo(
-    () => (signedIn && value.trim() ? index.search(value, 4) : null),
+  // Kinds ordered by their best match, so "Artist 499" lists that artist first, not the songs
+  // whose titles merely contain 499.
+  const groups: SearchGroup[] | null = useMemo(
+    () => (signedIn && value.trim() ? index.groups(value, 4) : null),
     [index, signedIn, value],
   );
 
@@ -81,15 +83,20 @@ export function AskBar({
   const hits: Hit[] = useMemo(() => {
     if (!signedIn) return [];
     if (!value.trim()) return recent.map((term) => ({ kind: 'recent', term }));
-    if (!results || isEmptyResult(results)) return [];
+    if (!groups || !groups.length) return [];
     return [
-      ...results.tracks.map((item) => ({ kind: 'track', item }) as const),
-      ...results.albums.map((item) => ({ kind: 'album', item }) as const),
-      ...results.artists.map((item) => ({ kind: 'artist', item }) as const),
-      ...results.playlists.map((item) => ({ kind: 'playlist', item }) as const),
+      ...groups.flatMap((group): Hit[] =>
+        group.kind === 'track'
+          ? group.items.map((item) => ({ kind: 'track', item }) as const)
+          : group.kind === 'album'
+            ? group.items.map((item) => ({ kind: 'album', item }) as const)
+            : group.kind === 'artist'
+              ? group.items.map((item) => ({ kind: 'artist', item }) as const)
+              : group.items.map((item) => ({ kind: 'playlist', item }) as const),
+      ),
       { kind: 'all', term: value.trim() },
     ];
-  }, [recent, results, signedIn, value]);
+  }, [recent, groups, signedIn, value]);
 
   const choose = (hit: Hit): void => {
     setOpen(false);
@@ -129,7 +136,7 @@ export function AskBar({
 
   const hint = !signedIn
     ? t('ask.signInFirst')
-    : value.trim() && results && isEmptyResult(results)
+    : value.trim() && groups && !groups.length
       ? ready
         ? t('ask.noResults')
         : t('library.syncingFirst')
@@ -151,8 +158,11 @@ export function AskBar({
       <label className="sr-only" htmlFor="ask">
         {t('ask.placeholder')}
       </label>
+      {/* The whole box is the target (rule 12): the input fills its height, and a tap on the
+          magnifier or the padding focuses it too. */}
       <div
-        className={`flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 ${focusWithin}`}
+        onClick={() => input.current?.focus()}
+        className={`flex cursor-text items-center gap-2 rounded-md border border-border bg-card px-3 ${focusWithin}`}
       >
         <Icon name="search" className="size-4 text-muted-foreground" />
         <input
@@ -165,7 +175,7 @@ export function AskBar({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
-          className="min-w-0 flex-1 bg-transparent text-body text-foreground outline-none placeholder:text-muted-foreground"
+          className="min-w-0 flex-1 bg-transparent py-2 text-body text-foreground outline-none placeholder:text-muted-foreground"
           placeholder={t('ask.placeholder')}
           value={value}
           onChange={(e) => {

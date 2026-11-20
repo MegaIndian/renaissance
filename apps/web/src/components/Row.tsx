@@ -16,6 +16,7 @@ export function Row({
   emptyBody,
   children,
   count,
+  pending = false,
 }: {
   title: string;
   to?: string;
@@ -23,6 +24,8 @@ export function Row({
   empty: string;
   emptyBody?: string | undefined;
   count: number;
+  /** The cache is still loading from disk: an empty row says nothing yet rather than "none". */
+  pending?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -39,7 +42,7 @@ export function Row({
         ) : null}
       </div>
       {count === 0 ? (
-        emptyBody ? (
+        pending ? null : emptyBody ? (
           <EmptyState title={empty} description={emptyBody} />
         ) : (
           <EmptyState title={empty} quiet />

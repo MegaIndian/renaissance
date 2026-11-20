@@ -2,7 +2,10 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { LibraryIndex, buildSnapshot } from '@renaissance/core';
+
 import { setLanguage } from '../lib/i18n';
+import { libraryStore } from '../lib/library';
 import { settingsStore } from '../lib/settings';
 import { signInFake } from '../test/fakes';
 import { renderWithI18n } from '../test/render';
@@ -46,6 +49,28 @@ describe('Home', () => {
       .click(within(mySongs).getByRole('button', { name: 'Play Fluffing a Duck' }));
     expect(player.snapshot.queue.items[0]?.id).toBe('t3');
     expect(player.snapshot.status).toBe('playing');
+  });
+
+  it('shows no empty sentence while the cache is still loading from disk', () => {
+    setLanguage('en');
+    settingsStore.set({ ...settingsStore.get(), mode: 'simple' });
+    signInFake();
+    const empty = buildSnapshot([], [], [], [], null);
+    libraryStore.set({
+      snapshot: empty,
+      index: new LibraryIndex(empty),
+      sync: { status: 'loading', progress: null, mode: null, error: null },
+      ready: false,
+      persisted: true,
+    });
+    const view = renderWithI18n(<Home now={new Date(2026, 10, 17, 20)} />);
+    expect(screen.getByRole('region', { name: 'My songs' })).toBeInTheDocument();
+    expect(screen.queryByText('Your favourite songs appear here')).not.toBeInTheDocument();
+    expect(screen.queryByText('What you play shows up here')).not.toBeInTheDocument();
+    view.unmount();
+    libraryStore.set({ ...libraryStore.get(), ready: true });
+    renderWithI18n(<Home now={new Date(2026, 10, 17, 20)} />);
+    expect(screen.getByText('Your favourite songs appear here')).toBeInTheDocument();
   });
 
   it('advanced mode adds Recently added and Most played and names the mixes phase', () => {

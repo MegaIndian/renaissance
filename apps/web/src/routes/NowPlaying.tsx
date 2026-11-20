@@ -87,7 +87,7 @@ export function NowPlaying() {
         </div>
         <Scrubber />
         <div className="md:hidden" data-testid="now-playing-transport">
-          <TransportControls size="lg" withModes />
+          <TransportControls size="lg" withModes wrap />
         </div>
         <div className="flex items-start justify-around" data-testid="now-playing-actions">
           <button

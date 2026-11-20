@@ -7,7 +7,7 @@ import { useNavigate, useParams } from 'react-router';
 import { addToQueue, playNext, playNow } from '../lib/actions';
 import { movePlaylistEntry, removeFromPlaylist } from '../lib/playlist-actions';
 import { openDialog } from '../lib/dialogs';
-import { usePlaylistTracks, useSnapshot } from '../lib/queries';
+import { usePlaylistTracks, useLibrary } from '../lib/queries';
 import { usePlayer } from '../lib/usePlayer';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { Button } from '../components/Button';
@@ -26,7 +26,8 @@ export function PlaylistPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { playlists } = useSnapshot();
+  const { snapshot, ready } = useLibrary();
+  const { playlists } = snapshot;
   const playlist = playlists.find((p) => p.id === id);
   const entries = usePlaylistTracks(id);
   const player = usePlayer();
@@ -36,7 +37,8 @@ export function PlaylistPage() {
   const currentId = player.queue.items[player.queue.index]?.id;
   const paused = player.status !== 'playing' && player.status !== 'loading';
 
-  if (!playlist) return <EmptyState title={t('playlist.notFound')} quiet />;
+  // While the cache loads from disk the playlist is not known yet; say nothing rather than "gone".
+  if (!playlist) return ready ? <EmptyState title={t('playlist.notFound')} quiet /> : null;
   const total = tracks.reduce((sum, x) => sum + x.duration, 0);
 
   const drop = (to: number): void => {

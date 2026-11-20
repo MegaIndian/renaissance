@@ -249,6 +249,43 @@ test.describe('against the demo Jellyfin', () => {
     const row = page.getByRole('listitem').filter({ hasText: 'Carefree' });
     await row.getByRole('button', { name: 'Add to favourites' }).click();
     await expect(page.getByRole('status')).toContainText('Added Carefree to favourites');
+    // The same row's heart is pressed at once, here and on the album page, before any reload.
+    await expect(row.getByRole('button', { name: 'Remove from favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await page.goto('/library?section=albums&lang=en&theme=dark');
+    await page
+      .getByRole('link', { name: /Royalty Free/ })
+      .first()
+      .click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Royalty Free' })).toBeVisible();
+    const albumRow = page.getByRole('listitem').filter({ hasText: 'Carefree' });
+    await expect(albumRow.getByRole('button', { name: 'Remove from favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    const other = page.getByRole('listitem').filter({ hasText: 'Sneaky Snitch' });
+    await other.getByRole('button', { name: 'Add to favourites' }).click();
+    // Pressed the moment it is tapped: the album rows carry the cache's favourite by id.
+    await expect(other.getByRole('button', { name: 'Remove from favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+      { timeout: 500 },
+    );
+    await expect
+      .poll(
+        async () =>
+          (await serverState()).tracks.find((t) => t.Name === 'Sneaky Snitch')?.UserData.IsFavorite,
+      )
+      .toBe(true);
+    await other.getByRole('button', { name: 'Remove from favourites' }).click();
+    await expect(other.getByRole('button', { name: 'Add to favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+      { timeout: 500 },
+    );
+    await openTracks(page);
     await expect
       .poll(
         async () =>
@@ -397,6 +434,27 @@ test.describe('against the demo Jellyfin', () => {
     const queue = await bar.getByRole('link', { name: 'Queue' }).boundingBox();
     expect(Math.abs((heart?.y ?? 0) - (queue?.y ?? 99))).toBeLessThan(4);
     expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    // Tablets in simple mode (the default): the five transport buttons share one row and the bar
+    // is one height from 768 to 900.
+    const transportNames = [/Shuffle/, 'Previous', /^(Play|Pause)$/, 'Next', /Repeat/] as const;
+    let barHeight: number | undefined;
+    for (const width of [768, 800, 820, 860, 900]) {
+      await page.setViewportSize({ width, height: 1024 });
+      await page.goto('/library?section=tracks&lang=en&theme=dark&mode=simple');
+      await expect(page.getByText('4 songs')).toBeVisible({ timeout: 15_000 });
+      const tops: number[] = [];
+      for (const name of transportNames) {
+        const box = await bar.getByRole('button', { name }).boundingBox();
+        expect(box, `${width}: transport button ${String(name)}`).not.toBeNull();
+        tops.push(Math.round(box?.y ?? 0));
+      }
+      expect(new Set(tops).size, `${width} simple: transport rows ${tops.join(',')}`).toBe(1);
+      expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      const height = Math.round((await bar.boundingBox())?.height ?? 0);
+      barHeight ??= height;
+      expect(height, `${width} simple: bar height`).toBe(barHeight);
+    }
 
     // 1024 to 1366 in simple mode (the default, 1.25×): the scrubber keeps at least 160 px, the
     // transport sits clear of the title, nothing overflows; the times and the volume come at 1280.

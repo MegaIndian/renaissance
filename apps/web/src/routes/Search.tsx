@@ -17,7 +17,7 @@ export function Search() {
   const { t } = useTranslation();
   const [params] = useSearchParams();
   const term = params.get('q')?.trim() ?? '';
-  const { index } = useLibrary();
+  const { index, ready } = useLibrary();
   const recent = useStoreValue(recentSearchesStore);
   const results = useMemo(() => (term ? index.search(term, 50) : null), [index, term]);
 
@@ -48,7 +48,9 @@ export function Search() {
           ) : null}
         </>
       ) : results && isEmptyResult(results) ? (
-        <EmptyState title={t('search.noResults', { term })} quiet />
+        ready ? (
+          <EmptyState title={t('search.noResults', { term })} quiet />
+        ) : null
       ) : results ? (
         <>
           {results.artists.length ? (

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { setLanguage } from '../lib/i18n';
+import { libraryStore } from '../lib/library';
 import { signInFake } from '../test/fakes';
 import { renderApp } from '../test/render';
 
@@ -29,6 +30,45 @@ describe('Album, artist and playlist pages', () => {
     expect(screen.queryByRole('menuitem', { name: 'Go to album' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('album: a heart on the album page fills at once, before any refetch', async () => {
+    setLanguage('en');
+    const { calls } = signInFake();
+    renderApp('/album/al1');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { level: 1, name: 'Royalty Free' });
+    const rows = screen.getAllByRole('listitem');
+    const row = rows.find((r) => within(r).queryByText('Carefree')) as HTMLElement;
+    const heart = within(row).getByRole('button', { name: 'Add to favourites' });
+    expect(heart).toHaveAttribute('aria-pressed', 'false');
+    await user.click(heart);
+    // The rows come from the server's list; the cache's favourite is laid over them by id.
+    expect(within(row).getByRole('button', { name: 'Remove from favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(calls.favorites).toEqual([{ id: 't2', favorite: true }]);
+    await user.click(within(row).getByRole('button', { name: 'Remove from favourites' }));
+    expect(within(row).getByRole('button', { name: 'Add to favourites' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
+
+  it('a playlist route says nothing while the cache is still loading, then that the playlist is gone', async () => {
+    setLanguage('en');
+    signInFake();
+    libraryStore.set({ ...libraryStore.get(), ready: false });
+    renderApp('/playlist/nope');
+    await screen.findByRole('search');
+    expect(
+      screen.queryByText('This playlist is not on the server any more'),
+    ).not.toBeInTheDocument();
+    libraryStore.set({ ...libraryStore.get(), ready: true });
+    expect(
+      await screen.findByText('This playlist is not on the server any more'),
+    ).toBeInTheDocument();
   });
 
   it('artist: biography, albums row and songs', async () => {
