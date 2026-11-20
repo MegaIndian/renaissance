@@ -176,10 +176,22 @@ export interface Playlists {
   remove(session: Session, playlistId: string): Promise<void>;
 }
 
+/**
+ * One item's per-user data as the server pushed it (a favourite or a play on any device). Fields the
+ * push left out are unknown, not false.
+ */
+export interface UserDataChange {
+  itemId: string;
+  isFavorite?: boolean | undefined;
+  playCount?: number | undefined;
+  lastPlayed?: string | undefined;
+}
+
 /** What the server pushes while connected (Jellyfin: the `/socket` websocket). */
 export interface ServerEvents {
   onLibraryChanged?: () => void;
-  onUserDataChanged?: () => void;
+  /** The items whose user data changed, when the push names them; an empty list when it does not. */
+  onUserDataChanged?: (changes: UserDataChange[]) => void;
 }
 
 export interface ServerAdapter {

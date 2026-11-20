@@ -55,6 +55,32 @@ describe('LibraryIndex', () => {
     expect(kevin.tracks.map((t) => t.id)).toEqual(['t2', 't3', 't1']);
   });
 
+  it('groups the kinds by their best match, so an exact artist or album name leads the list', () => {
+    // 'kevin macleod' is the artist's exact name; the songs and the album only carry it as their
+    // artist (an equal score, so songs keep their place before albums).
+    const kevin = index.groups('kevin macleod');
+    expect(kevin.map((g) => g.kind)).toEqual(['artist', 'track', 'album']);
+    expect(kevin[0]?.items.map((i) => i.id)).toEqual(['a1']);
+    // The album's exact title beats the songs on it; the playlist that starts with the word comes next.
+    const royalty = index.groups('royalty free');
+    expect(royalty.map((g) => g.kind)).toEqual(['album', 'track']);
+    // A tie keeps songs first: 'sneaky' is a prefix of the song and of the playlist.
+    expect(index.groups('sneaky').map((g) => g.kind)).toEqual(['track', 'playlist']);
+    // Kinds with no hit are left out; blank input gives nothing.
+    expect(index.groups('snitch').map((g) => g.kind)).toEqual(['track']);
+    expect(index.groups('  ')).toEqual([]);
+    // The big library: an artist named exactly what was typed comes before songs containing the digits.
+    const big = new LibraryIndex({
+      tracks: Array.from({ length: 2000 }, (_, i) =>
+        track(`t${i}`, { title: `Song ${10000 + i}`, artistName: `Artist ${i % 500}` }),
+      ),
+      artists: Array.from({ length: 500 }, (_, i) => artist(`a${i}`, { name: `Artist ${i}` })),
+    });
+    const groups = big.groups('Artist 499', 4);
+    expect(groups[0]?.kind).toBe('artist');
+    expect(groups[0]?.items[0]?.id).toBe('a499');
+  });
+
   it('respects the limit, handles blank input and reports size', () => {
     expect(index.search('kevin', 2).tracks).toHaveLength(2);
     expect(isEmptyResult(index.search('   '))).toBe(true);

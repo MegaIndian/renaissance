@@ -41,15 +41,31 @@ export function score(query: string, primary: string, secondary: string): number
   return 0;
 }
 
-function rank<T>(entries: Entry<T>[], query: string, limit: number): T[] {
+/** One kind's hits, best first, with the best score so the kinds can be ordered against each other. */
+interface Ranked<T> {
+  items: T[];
+  /** The top hit's score; 0 when the kind has no hit. */
+  best: number;
+}
+
+function rank<T>(entries: Entry<T>[], query: string, limit: number): Ranked<T> {
   const hits: { item: T; score: number; weight: number }[] = [];
   for (const entry of entries) {
     const s = score(query, entry.primary, entry.secondary);
     if (s > 0) hits.push({ item: entry.item, score: s, weight: entry.weight });
   }
   hits.sort((a, b) => b.score - a.score || b.weight - a.weight);
-  return hits.slice(0, limit).map((h) => h.item);
+  return { items: hits.slice(0, limit).map((h) => h.item), best: hits[0]?.score ?? 0 };
 }
+
+export type SearchKind = 'track' | 'album' | 'artist' | 'playlist';
+
+/** The kinds a search hit, each with its items, ordered so the kind holding the best match comes first. */
+export type SearchGroup =
+  | { kind: 'track'; items: Track[] }
+  | { kind: 'album'; items: Album[] }
+  | { kind: 'artist'; items: Artist[] }
+  | { kind: 'playlist'; items: Playlist[] };
 
 export interface LibraryIndexInput {
   tracks: Track[];
@@ -111,11 +127,35 @@ export class LibraryIndex {
     const query = normalize(term);
     if (!query) return { tracks: [], albums: [], artists: [], playlists: [] };
     return {
-      artists: rank(this.artists, query, limit),
-      albums: rank(this.albums, query, limit),
-      tracks: rank(this.tracks, query, limit),
-      playlists: rank(this.playlists, query, limit),
+      artists: rank(this.artists, query, limit).items,
+      albums: rank(this.albums, query, limit).items,
+      tracks: rank(this.tracks, query, limit).items,
+      playlists: rank(this.playlists, query, limit).items,
     };
+  }
+
+  /**
+   * The same hits grouped by kind, the kinds ordered by their best score (songs, albums, artists,
+   * playlists on a tie), so an artist or album named exactly what was typed leads the instant list
+   * instead of sitting under songs that merely contain the words. Kinds with no hit are left out.
+   */
+  groups(term: string, limit = 8): SearchGroup[] {
+    const query = normalize(term);
+    if (!query) return [];
+    const tracks = rank(this.tracks, query, limit);
+    const albums = rank(this.albums, query, limit);
+    const artists = rank(this.artists, query, limit);
+    const playlists = rank(this.playlists, query, limit);
+    const ordered: { group: SearchGroup; best: number }[] = [
+      { group: { kind: 'track', items: tracks.items }, best: tracks.best },
+      { group: { kind: 'album', items: albums.items }, best: albums.best },
+      { group: { kind: 'artist', items: artists.items }, best: artists.best },
+      { group: { kind: 'playlist', items: playlists.items }, best: playlists.best },
+    ];
+    return ordered
+      .filter((g) => g.best > 0)
+      .sort((a, b) => b.best - a.best)
+      .map((g) => g.group);
   }
 }
 

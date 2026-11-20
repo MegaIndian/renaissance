@@ -6,8 +6,10 @@
  * Refresh strategy, shaped by Jellyfin 10.10 (see JellyfinAdapter):
  * - first run: every track, album, artist and playlist, in pages, with progress callbacks;
  * - later runs ("delta"): new tracks and albums by paging `dateAdded` descending until the last sync
- *   time; recently edited items by one page of `lastSaved`; favourite and play-count changes through
- *   `userDataChangedSince`; artists and playlists refetched whole (they are small); deletions and
+ *   time; recently edited items by one page of `lastSaved`; user-data changes the server dates through
+ *   `userDataChangedSince` (10.10.7 does not date a favourite or a play, so those come from the
+ *   socket's `UserDataChanged` push, patched into the store by the platform); artists and playlists
+ *   refetched whole (they are small); deletions and
  *   misses found by comparing the server's total with the cache's count and reconciling ids when
  *   they differ: ids the server no longer has are dropped, ids the cache lacks are fetched.
  * - the delta reads from a watermark the server itself stamped, not from a clock: the newest

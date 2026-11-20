@@ -172,6 +172,7 @@
     "syncingFirst": "Loading your library for the first time. This takes a moment and happens once.",
     "syncFailed": "The library could not be refreshed. What you see is from the last time it was.",
     "refresh": "Refresh library",
+    "rebuild": "Rebuild library",
     "refreshed": "Library refreshed",
     "syncedAt": "Last refreshed {{when}}",
     "tracksCount": "{{count, number}} songs",

@@ -39,6 +39,7 @@ import type {
   SearchResult,
   ServerAdapter,
   ServerEvents,
+  UserDataChange,
   Session,
   SortKey,
   StreamQuality,
@@ -53,6 +54,7 @@ import {
   JfPlaylistCreated,
   JfQuickConnectResult,
   JfSocketMessage,
+  JfUserDataChanged,
 } from './jellyfin-schemas';
 
 export const CLIENT_NAME = 'Renaissance';
@@ -180,7 +182,7 @@ export function toTrack(item: JfItem): Track {
   const audio = item.MediaStreams?.find((s) => s.Type === 'Audio');
   return TrackSchema.parse({
     id: item.Id,
-    title: item.Name || '(untitled)',
+    title: item.Name?.trim() || '(untitled)',
     albumId: optional(item.AlbumId),
     albumTitle: optional(item.Album),
     artistIds: (item.ArtistItems ?? []).map((a) => a.Id),
@@ -203,6 +205,18 @@ export function toTrack(item: JfItem): Track {
   });
 }
 
+/** The items a `UserDataChanged` push names; an unparseable or absent `Data` names none. */
+export function userDataChanges(data: unknown): UserDataChange[] {
+  const parsed = JfUserDataChanged.safeParse(data);
+  if (!parsed.success) return [];
+  return parsed.data.UserDataList.map((entry) => ({
+    itemId: entry.ItemId,
+    isFavorite: entry.IsFavorite ?? undefined,
+    playCount: entry.PlayCount ?? undefined,
+    lastPlayed: isoDate(entry.LastPlayedDate),
+  }));
+}
+
 export function toPlaylistEntry(item: JfItem): PlaylistEntry {
   return PlaylistEntrySchema.parse({ ...toTrack(item), entryId: item.PlaylistItemId ?? item.Id });
 }
@@ -211,7 +225,7 @@ export function toAlbum(item: JfItem): Album {
   const artists = item.AlbumArtists?.length ? item.AlbumArtists : (item.ArtistItems ?? []);
   return AlbumSchema.parse({
     id: item.Id,
-    title: item.Name || '(untitled)',
+    title: item.Name?.trim() || '(untitled)',
     artistIds: artists.map((a) => a.Id),
     artistCredits: credits(artists),
     artistName:
@@ -234,7 +248,7 @@ export function toAlbum(item: JfItem): Album {
 export function toArtist(item: JfItem): Artist {
   return ArtistSchema.parse({
     id: item.Id,
-    name: item.Name || '(unknown artist)',
+    name: item.Name?.trim() || '(unknown artist)',
     imageId: primaryImageId(item),
     bio: optional(item.Overview),
     dateAdded: isoDate(item.DateCreated),
@@ -245,7 +259,7 @@ export function toArtist(item: JfItem): Artist {
 export function toPlaylist(item: JfItem): Playlist {
   return PlaylistSchema.parse({
     id: item.Id,
-    name: item.Name || '(untitled)',
+    name: item.Name?.trim() || '(untitled)',
     trackCount: item.ChildCount ?? 0,
     duration: item.RunTimeTicks ? ticksToSeconds(item.RunTimeTicks) : undefined,
     imageId: primaryImageId(item),
@@ -902,7 +916,11 @@ export class JellyfinAdapter implements ServerAdapter {
     });
   }
 
-  /** Jellyfin's `/socket` channel: `LibraryChanged` and `UserDataChanged` drive the delta refresh (F14). */
+  /**
+   * Jellyfin's `/socket` channel (F14): `LibraryChanged` schedules the delta refresh; `UserDataChanged`
+   * names the items whose favourite or play count changed on any device, so the cache can patch them
+   * at once (the delta cannot see them: 10.10.7 does not bump `DateLastSaved` for user data, ADR 0012).
+   */
   subscribe(session: Session, events: ServerEvents): () => void {
     const Socket = this.options.WebSocket;
     if (!Socket) return () => undefined;
@@ -942,7 +960,9 @@ export class JellyfinAdapter implements ServerAdapter {
         const parsed = JfSocketMessage.safeParse(data);
         if (!parsed.success) return;
         if (parsed.data.MessageType === 'LibraryChanged') events.onLibraryChanged?.();
-        if (parsed.data.MessageType === 'UserDataChanged') events.onUserDataChanged?.();
+        if (parsed.data.MessageType === 'UserDataChanged') {
+          events.onUserDataChanged?.(userDataChanges(parsed.data.Data));
+        }
         if (parsed.data.MessageType === 'ForceKeepAlive') {
           socket?.send(JSON.stringify({ MessageType: 'KeepAlive' }));
         }

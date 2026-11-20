@@ -132,6 +132,9 @@ describe('JellyfinAdapter mapping', () => {
   it('falls back to the container as codec and names an untitled file', () => {
     const t = toTrack({ Id: 'x', Name: '', Container: 'FLAC', MediaStreams: [] } as never);
     expect(t.title).toBe('(untitled)');
+    // A name that is only spaces is no name: the row would show nothing and its button say "Play".
+    expect(toTrack({ Id: 'y', Name: '   ' } as never).title).toBe('(untitled)');
+    expect(toAlbum({ Id: 'z', Name: ' \t ' } as never).title).toBe('(untitled)');
     expect(t.codec).toBe('flac');
     expect(t.isFavorite).toBe(false);
   });
@@ -473,13 +476,17 @@ describe('JellyfinAdapter calls', () => {
       }
     }
     const events = { library: 0, user: 0 };
+    const changes: unknown[] = [];
     const withSocket = new JellyfinAdapter(server, {
       ...options,
       WebSocket: FakeSocket as unknown as typeof WebSocket,
     });
     const stop = withSocket.subscribe(session, {
       onLibraryChanged: () => events.library++,
-      onUserDataChanged: () => events.user++,
+      onUserDataChanged: (list) => {
+        events.user++;
+        changes.push(list);
+      },
     });
     const socket = sockets[0] as FakeSocket;
     expect(socket.url).toMatch(/^ws:\/\/localhost:8096\/socket\?api_key=tok&deviceId=dev-1$/);
@@ -487,11 +494,47 @@ describe('JellyfinAdapter calls', () => {
     expect(socket.sent[0]).toContain('KeepAlive');
     socket.onmessage?.({ data: JSON.stringify({ MessageType: 'LibraryChanged', Data: {} }) });
     socket.onmessage?.({ data: JSON.stringify({ MessageType: 'UserDataChanged' }) });
+    // The shape 10.10.7 pushes when another device hearts a song (captured on the demo).
+    socket.onmessage?.({
+      data: JSON.stringify({
+        MessageType: 'UserDataChanged',
+        Data: {
+          UserId: 'u1',
+          UserDataList: [
+            {
+              Rating: 0,
+              PlayedPercentage: 0,
+              PlaybackPositionTicks: 0,
+              PlayCount: 3,
+              IsFavorite: true,
+              LastPlayedDate: '2026-11-19T20:00:00.0000000Z',
+              Played: true,
+              Key: 'k1',
+              ItemId: 't5000',
+            },
+            { PlayCount: 1, IsFavorite: false, Played: false, Key: 'k2', ItemId: 'al7' },
+          ],
+        },
+      }),
+    });
     socket.onmessage?.({ data: JSON.stringify({ MessageType: 'ForceKeepAlive' }) });
     socket.onmessage?.({ data: 'null' });
     // One malformed frame from a proxy is ignored, not thrown out of the handler.
     expect(() => socket.onmessage?.({ data: '{not json' })).not.toThrow();
-    expect(events).toEqual({ library: 1, user: 1 });
+    expect(events).toEqual({ library: 1, user: 2 });
+    // A push without `Data` names no item; one with it names each item and its user data.
+    expect(changes).toEqual([
+      [],
+      [
+        {
+          itemId: 't5000',
+          isFavorite: true,
+          playCount: 3,
+          lastPlayed: '2026-11-19T20:00:00.000Z',
+        },
+        { itemId: 'al7', isFavorite: false, playCount: 1, lastPlayed: undefined },
+      ],
+    ]);
     expect(socket.sent).toHaveLength(2);
     stop();
     socket.onclose?.();

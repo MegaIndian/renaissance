@@ -77,3 +77,17 @@ export const JfSocketMessage = z.object({
   MessageType: z.string(),
   Data: z.unknown().optional(),
 });
+
+/** `UserDataChanged`'s `Data`, as 10.10.7 sends it when any device changes a favourite or plays. */
+export const JfUserDataChanged = z.object({
+  UserDataList: z
+    .array(
+      z.object({
+        ItemId: z.string(),
+        IsFavorite: nullable(z.boolean()),
+        PlayCount: nullable(z.number()),
+        LastPlayedDate: nullable(z.string()),
+      }),
+    )
+    .default([]),
+});
