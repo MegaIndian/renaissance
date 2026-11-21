@@ -9,6 +9,12 @@ import { AskResults } from './AskResults';
 import { Icon } from './Icon';
 import { focusWithin } from './focus';
 
+/** The same words whatever the case and spacing: "Halo  Beyonce" and "halo beyonce". */
+export function sameWords(a: string, b: string): boolean {
+  const key = (s: string) => s.trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');
+  return key(a) === key(b);
+}
+
 /** How long the typing must pause before the catalogue is asked (F61: under 300 ms to rows). */
 export const TYPEAHEAD_DEBOUNCE_MS = 250;
 export const TYPEAHEAD_MIN_CHARS = 2;
@@ -64,9 +70,25 @@ export function AskBar({
     return () => document.removeEventListener('pointerdown', onPointer);
   }, []);
 
+  const ready = status === 'ready' && client !== null;
+  // A full catalogue answer the typeahead could not wait for (MusicBrainz's turn came after the
+  // rows were shown) arrives on the event stream: it replaces the rows when the box still holds
+  // the words it answers and no Enter has replaced them (design AH).
+  const latest = useRef({ value: '', answered: false });
+  useEffect(() => {
+    latest.current = { value: value.trim(), answered: answer !== null };
+  }, [value, answer]);
+  useEffect(() => {
+    if (!ready) return;
+    return client.events((event) => {
+      if (event.type !== 'catalogue') return;
+      if (latest.current.answered) return;
+      if (sameWords(event.result.query, latest.current.value)) setTypeahead(event.result);
+    });
+  }, [client, ready]);
+
   // Typeahead: the catalogue for the letters so far, once typing pauses; older answers are dropped
   // (the box's own change handler clears the rows when the words get too short).
-  const ready = status === 'ready' && client !== null;
   useEffect(() => {
     abortTypeahead.current?.abort();
     const q = value.trim();

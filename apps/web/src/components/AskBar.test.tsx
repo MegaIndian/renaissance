@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { HubEvent as HubEventT } from '@renaissance/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setLanguage } from '../lib/i18n';
@@ -214,12 +215,122 @@ describe('AskBar with the hub', () => {
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(hub.cancelRequest).toHaveBeenCalledWith('55555555-5555-4555-8555-555555555555');
     expect(await screen.findByText('Undone')).toBeInTheDocument();
-    // Enter with the model off: the catalogue rows stay the answer, and the line says what works.
+    // Enter with the model off: the catalogue rows stay the answer, and since they answer the
+    // words the hub sends no line about the model and none is shown (functionality V).
+    await user.type(input, '{Enter}');
+    await waitFor(() => expect(hub.askStreaming).toHaveBeenCalled());
+    expect(await screen.findByText('Tha Carter II')).toBeInTheDocument();
+    expect(screen.queryByText(/Smart answers are off/)).not.toBeInTheDocument();
+  });
+
+  it('shows the model-off line only when the hub sends it, and the version in the subtitle (functionality V, design AJ)', async () => {
+    setLanguage('en');
+    const { fakeHub, emptyAnswer } = await import('../test/hub');
+    const song = (id: string, title: string, album: string) => ({
+      id: `dz:track:${id}`,
+      title,
+      artist: 'Lil Wayne',
+      album,
+      duration: 263,
+    });
+    const catalogue = {
+      query: 'fireman lil wayne',
+      songs: [
+        song('1', 'Fireman', 'Tha Carter II'),
+        song('2', 'Fireman (Chopped & Screwed)', 'Tha Carter II (Chopped)'),
+        song('3', 'Fireman (a cappella)', 'Fireman (promo)'),
+      ],
+      albums: [],
+      artists: [],
+      cached: false,
+    };
+    const hub = fakeHub({
+      catalogueSearch: vi.fn(async () => catalogue),
+      askStreaming: vi.fn(
+        async (_input: unknown, onInstant: (i: typeof emptyAnswer.instant) => void) => {
+          onInstant(emptyAnswer.instant);
+          return {
+            ...emptyAnswer,
+            catalogue,
+            why: 'Smart answers are off right now. Type a song or artist name',
+          };
+        },
+      ),
+    });
+    renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = await screen.findByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'fireman lil wayne');
+    // Three rows titled "Fireman", told apart by the version that leads each subtitle.
+    expect(await screen.findAllByText('Fireman')).toHaveLength(3);
+    expect(screen.queryByText('Fireman (Chopped & Screwed)')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Chopped & Screwed · Lil Wayne · Tha Carter II (Chopped) · 4:23'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('a cappella · Lil Wayne · Fireman (promo) · 4:23')).toBeInTheDocument();
+    expect(screen.getByText('Lil Wayne · Tha Carter II · 4:23')).toBeInTheDocument();
+    // The hub's own line is shown as it is when it sends one.
     await user.type(input, '{Enter}');
     expect(
       await screen.findByText('Smart answers are off right now. Type a song or artist name'),
     ).toBeInTheDocument();
-    expect(screen.getByText('Tha Carter II')).toBeInTheDocument();
+  });
+
+  it('replaces the typed rows with the full answer the hub pushes for the same words (design AH)', async () => {
+    setLanguage('en');
+    const { fakeHub } = await import('../test/hub');
+    const { HubEvent } = await import('@renaissance/core');
+    type Listener = (event: HubEventT) => void;
+    let listener: Listener | undefined;
+    const tribute = {
+      query: 'rolling in the deep adele',
+      songs: [
+        {
+          id: 'dz:track:1',
+          title: 'Rolling In The Deep',
+          artist: 'Adele Pop Hits',
+          album: 'Adele Pop Hits',
+        },
+      ],
+      albums: [],
+      artists: [],
+      cached: false,
+      partial: true,
+    };
+    const original = {
+      ...tribute,
+      partial: undefined,
+      songs: [
+        { id: 'mb:recording:ad1', title: 'Rolling in the Deep', artist: 'Adele', album: '21' },
+        ...tribute.songs,
+      ],
+    };
+    const hub = fakeHub({
+      catalogueSearch: vi.fn(async () => tribute),
+      events: vi.fn((onEvent: Listener) => {
+        listener = onEvent;
+        return () => undefined;
+      }),
+    });
+    renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = await screen.findByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'Rolling in the Deep Adele');
+    expect(await screen.findByText('Adele Pop Hits · Adele Pop Hits')).toBeInTheDocument();
+    await waitFor(() => expect(listener).toBeDefined());
+    // Another query's late answer changes nothing.
+    listener!(
+      HubEvent.parse({ type: 'catalogue', result: { ...original, query: 'halo beyonce' } }),
+    );
+    expect(screen.queryByText('Adele · 21')).not.toBeInTheDocument();
+    listener!(HubEvent.parse({ type: 'catalogue', result: original }));
+    expect(await screen.findByText('Adele · 21')).toBeInTheDocument();
+    const adds = screen.getAllByRole('button', { name: 'Add' });
+    expect(adds[0]!.className).toContain('bg-primary');
+    const panel = screen.getByLabelText('Results');
+    expect(panel.textContent?.indexOf('Adele · 21')).toBeLessThan(
+      panel.textContent?.indexOf('Adele Pop Hits · Adele Pop Hits') ?? -1,
+    );
   });
 
   it('says what still works when the model is off with no rows, and asks to sign in without a hub', async () => {

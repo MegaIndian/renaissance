@@ -43,7 +43,7 @@ export function Requests() {
   useEffect(() => {
     if (!ready) return;
     return client.events((event) => {
-      if (event.type === 'ping') return;
+      if (event.type !== 'request' && event.type !== 'ready') return;
       queryClient.setQueryData<MusicRequest[]>(['requests', effectiveScope], (current) => {
         const list = current ?? [];
         const index = list.findIndex((r) => r.id === event.request.id);

@@ -1,4 +1,4 @@
-import { HubClientError } from '@renaissance/core';
+import { HubClientError, splitTitleVersion } from '@renaissance/core';
 import type {
   AskAction,
   AskResponse,
@@ -57,19 +57,17 @@ export function AskResults({
   const off = answer?.model === 'off';
   const nothing = answer && count === 0 && answer.actions.length === 0;
   // Nothing to show: the hub's own line when it gave one (a sentence with the model off), else
-  // "nothing matches"; otherwise the model-off, budget or deterministic line, or the model's why.
+  // "nothing matches"; otherwise the budget line, or the hub's own line: with the model off it is
+  // the deterministic "X is in your library", the model-off line when a sentence had no rows, and
+  // nothing at all when the rows already answer the words (functionality V).
   const line = !answer
     ? ''
     : nothing
       ? off && answer.why
         ? answer.why
         : t('ask.noResults')
-      : off
-        ? answer.reason === 'budget'
-          ? t('ask.budgetOff')
-          : answer.reason === 'deterministic'
-            ? answer.why
-            : t('ask.modelOff')
+      : off && answer.reason === 'budget'
+        ? t('ask.budgetOff')
         : answer.why;
   return (
     <div className="flex flex-col gap-3" aria-live="polite">
@@ -340,13 +338,17 @@ function SongRow({
   if (song.artistId) input.artistId = song.artistId;
   if (song.duration !== undefined) input.duration = song.duration;
   const { state, add, undo, ready } = useAdd(input);
+  // The version named in brackets goes first in the subtitle, where a narrow screen still shows
+  // it: five Firemans read "Fireman" over "Chopped & Screwed · Lil Wayne · …" (design AJ).
+  const { title, version } = splitTitleVersion(song.title);
   return (
     <li className="flex flex-wrap items-center gap-3 px-3 py-2">
       <Art src={song.art} index={index} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-body font-medium">{song.title}</span>
+        <span className="block truncate text-body font-medium">{title}</span>
         <Subtitle
           parts={[
+            version,
             song.artist,
             song.album,
             formatDuration(song.duration),
