@@ -95,24 +95,51 @@ Every list is ranked and pruned before it is cut to size (never after, or the ri
 away unseen): a row must cover the words typed (command words and filler such as "play", "get me",
 "for", "something" do not count; a prefix and one typo do match), the exact title and artist come
 first, a title or artist carrying a version word the words did not ask for (live, remix, karaoke,
-cover, tribute, stripped, instrumental, acoustic, "radio edit", "originally performed", "made
-famous", "in the style of") ranks under every plain row, and when the words read as a sentence (a
-command verb, or four or more words with a request word among them: "something", "songs", "hits",
-"please"; articles and pronouns do not count, so "Rolling in the Deep Adele" and "Someone Like You
-Adele" are a title and an artist) only a row that is the title itself survives. When no row is the
-exact title and artist, both speeds ask Deezer once more with the words split by what the rows say
-(an artist the rows name whose every word was typed, else the words left over from an exact title:
-`artist:"Adele" track:"Rolling in the Deep"`) and merge before ranking. The exception to "never
-waits": when the rows named a title and an artist and still none is the song by that artist (Deezer's
-catalogue from the hub's address has no Adele at all and no plain "Halo"), the typeahead starts the
-full search and waits up to two seconds for MusicBrainz; its answer, when it comes in time, is the
-one shown, and either way it lands in the cache for the next letters or the Enter that follows.
-So "fireman lil wayne" puts Lil Wayne's Fireman first and drops the mixtapes named after him,
-"Rolling in the Deep Adele" shows Adele above the tribute acts, "Halo Beyonce" puts Halo above
-"Halo (Live)", and "play something calm for cooking" or "રસોઈ માટે શાંત ગીત વગાડ" show no rows at
-all; a long title ("Kabhi Kabhie Mere Dil Mein") is not a sentence and keeps its exact row. Songs
-already on the server carry `libraryId` and come first; the rows' artists are looked up in Jellyfin
-too, so an artist query marks the songs the server has. `q` is 2 to 200 characters.
+cover, tribute, stripped, instrumental, acoustic, clean, main, "a cappella", chopped, "radio edit",
+"originally performed", "made famous", "in the style of") ranks under every plain row, and so does
+a row whose album names a live, concert, tour, unplugged or session record, a karaoke or tribute
+collection, a "year mix" or "pop hits" set (the version penalty reads the album too, so Halo on
+"I Am... World Tour" sits under Halo on "I Am... Sasha Fierce"). The title is compared after its
+edition tags are stripped ("Hotel California (2013 Remaster)" and "A Milli (Album Version
+Explicit)" are the titles "Hotel California" and "A Milli"), and a title is exact only when it
+covers the words typed that are not the artist's ("California" by Hotel Valmont is not the title
+for "hotel california"; the Eagles' is). Once the song by the artist is in the list, a row by
+another artist whose title merely names that artist goes ("Lil Wayne Fireman" by DJ Symphony under
+Lil Wayne's Fireman). Rows that answer the words alike keep Deezer's order, which is popularity:
+in the full search the songs Deezer also lists come first in its order, each carrying its
+MusicBrainz recording, then the recordings Deezer did not have. Of several MusicBrainz recordings
+with one title and artist the full search keeps the best, not the first: the one on the best
+release, never a recording MusicBrainz notes as live, clean, a remix or a demo while a plain one
+exists (a note of "explicit" or "album version" names the plain recording itself, as MusicBrainz
+writes it when a clean or radio edit exists), so "fireman lil wayne" and "a milli lil wayne" lead
+with the Tha Carter II and Tha Carter III recordings rather than the censored edits on the 2023
+"I Am Music" compilation or a note-less copy on a later compilation.
+When Deezer lists several editions of one song, the row keeps the one whose album is not a live,
+tour or compilation record ("Hotel California" over "Hell Freezes Over", Thriller over "Michael
+Jackson's This Is It"), then the more played one. The release a row names is the best official
+studio album or single the recording is on, the earliest on a tie, and a release group whose
+title names a mix, a year or a soundtrack ("The Video Year Mix 2011") ranks under a plain one.
+When the words read as a sentence (a command verb, or four or more words with a request word among
+them: "something", "songs", "hits", "please"; articles and pronouns do not count, so "Rolling in
+the Deep Adele" and "Someone Like You Adele" are a title and an artist; two or more words that are
+all request words and filler, "old songs", are a request too) only a row that is the title itself
+survives. When no row is the exact title and artist, both speeds ask Deezer once more with the
+words split by what the rows say (an artist the rows name whose every word was typed, else the
+words left over from an exact title: `artist:"Adele" track:"Rolling in the Deep"`) and merge before
+ranking. The exception to "never waits": when the rows named a title and an artist and still none
+is the song by that artist (Deezer's catalogue from the hub's address has no Adele at all and no
+plain "Halo"), the typeahead starts the full search and waits up to two seconds for MusicBrainz;
+its answer, when it comes in time, is the one shown. When it is not in time, the Deezer rows are
+shown now and, once MusicBrainz answers with the song by the artist, the full answer is pushed to
+the typist's event stream as a `catalogue` event (below); the app replaces the rows when the box
+still holds those words and no Enter has replaced them, and the cache holds the full answer for
+the next keystroke on the same words either way. So "fireman lil wayne" puts Lil Wayne's Fireman
+first and drops the mixtapes named after him, "Rolling in the Deep Adele" shows Adele above the
+tribute acts, "Halo Beyonce" puts the studio Halo above the tour recording and "Halo (Live)", and
+"play something calm for cooking" or "રસોઈ માટે શાંત ગીત વગાડ" show no rows at all; a long title
+("Kabhi Kabhie Mere Dil Mein") is not a sentence and keeps its exact row. Songs already on the
+server carry `libraryId` and come first; the rows' artists are looked up in Jellyfin too, so an
+artist query marks the songs the server has. `q` is 2 to 200 characters.
 
 The two speeds are cached apart (`catalogue:fast:` and `catalogue:search:`). The typeahead reads
 the full answer when it has the song typed (it carries MusicBrainz ids) or when neither answer
@@ -176,22 +203,23 @@ current letters. A Deezer failure or quota error is answered as no rows but neve
 next keystroke asks again; in the full search it means no Deezer rows and a briefly cached answer.
 MusicBrainz has the same limiter rules at one request a second, with one more: the pipeline's
 lookups for a request somebody made are never refused as busy and take the next slot ahead of the
-typing, and when the queue is full `/ask` answers with the Deezer rows instead of none.
+typing, and when the queue is full, or MusicBrainz answers 503 past the client's retries or not
+at all, `/ask` answers with the Deezer rows (marked `partial`) instead of none.
 
 ## Requests (F61, F62, F63, F87)
 
 A request is a song (`kind: track`) or an album (`kind: album`) the caller wants on the server. The
 pipeline (`apps/hub/src/fetch/pipeline.ts`) runs one request at a time:
 
-| Status        | Meaning                                                                                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `requested`   | Stored, waiting for the runner                                                                                                                                                                                           |
-| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                                  |
-| `downloading` | The best file is being fetched from Soulseek; `progress` is `{ unit: "percent", done, total: 100, etaSeconds? }`, the estimate from the transfer rate so far                                                             |
-| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                                |
-| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                                  |
-| `failed`      | `reason` says why: `catalogue_miss`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error` |
-| `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                        |
+| Status        | Meaning                                                                                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `requested`   | Stored, waiting for the runner                                                                                                                                                                                                             |
+| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                                                    |
+| `downloading` | The best file is being fetched from Soulseek; `progress` is `{ unit: "percent", done, total: 100, etaSeconds? }`, the estimate from the transfer rate so far                                                                               |
+| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                                                  |
+| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                                                    |
+| `failed`      | `reason` says why: `catalogue_miss`, `catalogue_busy`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error` |
+| `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                                          |
 
 Album requests stay `finding` with `progress: { unit: "songs", done, total }` while Lidarr looks
 (the total from Lidarr's statistics, read back after the album is monitored, else the monitored
@@ -204,15 +232,24 @@ listing of the failed-imports folder per tick (`RENAISSANCE_LIDARR_FAILED_IMPORT
 `failed_imports` under `RENAISSANCE_LIDARR_DOWNLOADS_DIR`), shared by every waiting album and taken
 only when an incomplete album is due. A folder counts as an album's only when it is named
 `<Artist> - <Title>` (a year may follow; "Tha Carter II" never claims "Lil Wayne - Tha Carter III
-(2008)") and at least one of its files maps to a track by its own title; inside such a folder
-Lidarr's own track attribution is trusted for the rest. The files are mapped to the monitored
-release's tracks and filed with the same explicit `ManualImport` the single path uses. A track that
-already has a file is never replaced (the stray `.m4a` beside a FLAC is left alone), a file already
-handed to Lidarr is not handed over again (when Lidarr completes the command without moving it, the
-next tick says so once, with Lidarr's `rejections`, in a step), and nothing here fails the request:
+(2008)"), at any level above the file (a `CD1/` subfolder inside it is the album's), and at least
+one of its files maps to a track by its own title; inside such a folder Lidarr's own track
+attribution is trusted for the rest. A file's title is its name with one track-number group
+removed ("06 - 22 (Taylor's Version)" is "22 (Taylor's Version)", never "Taylor's Version"), and
+it is matched to a track by the whole title, then by the title with its edition tags stripped on
+both sides, so a shared suffix never files a song as another. The files are mapped to the
+monitored release's tracks and filed with the same explicit `ManualImport` the single path uses. A
+track that already has a file is never replaced (the stray `.m4a` beside a FLAC is left alone), a
+file already handed to Lidarr is not handed over again, across hub restarts too (the handed paths
+are a `filed_paths` column on the request; when Lidarr completes the command without moving a
+file, the next tick says so once, with Lidarr's `rejections`, in a step), and nothing here fails
+the request:
 files that map to no track have not arrived (soularr leaves wrong matches behind in folders of the
 right name, Marina Kaye's under "Taylor Swift - Fearless (2008)"), the hub logs it and keeps
 waiting, and the deadline decides.
+
+The minute tick runs one at a time: a tick that fires while the previous one still waits on Lidarr
+is skipped, so an album is never finished twice.
 
 A request records `matched: { title, artist, album? }` when the catalogue resolved the words typed
 to a song with another spelling or credit (a Deezer row with no MusicBrainz ids yet), or to a
@@ -222,10 +259,13 @@ Dhanush, on The Bollywood Remix Project") and the pipeline searches for and maps
 release named on the row is preferred when the recording is on it. Credits keep their join phrases
 ("Lil Wayne feat. Static Major"). A
 caller's `duration` is kept as given and picks the version meant; the lookup itself never settles
-for a live take, a remix or a demo of a plain title (MusicBrainz's own note on the recording, or
-every release being a live album, rules it out unless the words asked for it), and a title that is
-not the same song once "feat." and edition tags are stripped is a `catalogue_miss` rather than a
-stand-in.
+for a live take, a remix, a demo, or a clean or explicit edit of a plain title (MusicBrainz's own
+note on the recording, or every release being a live album, rules it out unless the words asked
+for it), and a title that is not the same song once "feat." and edition tags are stripped is a
+`catalogue_miss` rather than a stand-in. The title is cleaned before MusicBrainz is asked, so
+"🔥 Fireman 🔥" looks up "fireman"; when MusicBrainz answers 503 or not at all through the client's
+retries, the request fails with `catalogue_busy`, worded as "try again in a minute", and Retry runs
+it again.
 
 Every status change is a row in `steps` (`at`, `status`, `reason`, `detail`), so the Requests tab can
 show (in advanced mode and to admins) what the pipeline tried: the queries and how many files each
@@ -240,8 +280,13 @@ Singles: queries are `artist title`, then `artist-without-Lil title` (the Soulse
 nothing for some short tokens; "Lil Wayne Fireman" gives 0 files, "Wayne Fireman" hundreds), then
 `title album`, then `title`. Ranking is deterministic: duration within 3 s of the catalogue, lossless
 or 320 kbps, a free upload slot, a short queue, the title in the file name, the artist in the path,
-penalties for live, remix, karaoke, sped-up and DJ-pack folders, and the caller's rules (F80) as
-exclusions. The file is downloaded, mapped to the MusicBrainz track by recording id (then title),
+penalties for live, remix, karaoke, clean, sped-up and DJ-pack folders (a "(Clean)" file is a
+censored edit unless the title asks for it or the household rules keep explicit versions out), a
+penalty for a username that is a web address (an advertising account whose transfers never start),
+and the caller's rules (F80) as exclusions. Up to three files are tried, each from a user not tried
+before: after a transfer that completes without the file or does not finish in time, every other
+file from that user is skipped and the transfer record is removed from slskd (in dry run, logged).
+The file is downloaded, mapped to the MusicBrainz track by recording id (then title),
 and imported with Lidarr's `ManualImport` carrying `albumReleaseId` and `disableReleaseSwitching`,
 so Lidarr's edition matching never refuses it. A new artist is added to Lidarr first, unmonitored
 for new items, with the metadata profile that allows singles (created if missing); an artist that
@@ -367,9 +412,14 @@ The Ask bar's endpoint. Body: `text` (1 to 2000 chars), optional `language` (`en
    tracks, albums, artists that person may see) for the words as typed and for the title inside them
    ("play carefree", "carefree vagad" also search "carefree"), the hits unioned. An exact library
    title plays at once with no model call and no catalogue call (`model: "off"`,
-   `reason: "deterministic"`). Otherwise the catalogue is looked up and returned as `catalogue`
-   (songs, albums, artists with art, duration and `libraryId` when already on the server): the add
-   path the apps render as rows with Add and Play, with or without the model.
+   `reason: "deterministic"`). Otherwise the catalogue is looked up for the title inside the words
+   and, when the command stripped was one word, for the words as typed too ("play that funky
+   music" is a title as well as a command: Wild Cherry's row leads, the rows for "that funky music"
+   follow, each row once, the merged list pruned and ordered for the title so a row that merely
+   names the artist never leads; "can you please get me …" is no title and is not looked up), and
+   returned as `catalogue` (songs, albums, artists with art, duration and `libraryId`
+   when already on the server): the add path the apps render as rows with Add and Play, with or
+   without the model.
 2. One call to `ANTHROPIC_INTENT_MODEL` (`claude-opus-5-5`) with the eight strict tools
    `search_library`, `lookup_catalogue`, `play`, `queue`, `make_playlist`, `request`, `set_rule`,
    `explain`, a cached system prompt and the context block. Every tool call is grounded: ids must
@@ -384,7 +434,9 @@ The Ask bar's endpoint. Body: `text` (1 to 2000 chars), optional `language` (`en
    from `en.json` and `gu.json`.
 
 Without `ANTHROPIC_API_KEY` the hub still answers: `model: "off"`, `reason: "no_key"`, with
-`instant` and `catalogue`. Past the monthly cap: `reason: "budget"` (an estimated cost is reserved
+`instant` and `catalogue`; `why` is the "smart answers are off" line only when the words read as a
+sentence and no library hit or catalogue row answers them ("can you please get me fireman by lil
+wayne" shows Fireman's rows and no such line), and the apps show `why` as the hub sent it. Past the monthly cap: `reason: "budget"` (an estimated cost is reserved
 while a call is in flight, so concurrent asks cannot all pass at the cap). A refusal or API error:
 `reason: "refusal"` or `"error"`, no actions, still with `catalogue`.
 
@@ -480,7 +532,14 @@ curl -N "http://localhost:8787/events?token=$TOKEN"
 #
 # event: ready
 # data: {"type":"ready","request":{"id":"...","status":"ready",...}}
+#
+# event: catalogue
+# data: {"type":"catalogue","result":{"query":"rolling in the deep adele","songs":[...],"albums":[],"artists":[],"cached":false}}
 ```
+
+The `catalogue` event carries the full catalogue answer for words the typeahead had to answer
+without the song by the artist typed (MusicBrainz's turn came after the two-second wait). It goes
+to the profile that typed them; the app shows it when the box still holds those words.
 
 ## Rate limit
 

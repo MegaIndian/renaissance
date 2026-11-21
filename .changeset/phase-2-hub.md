@@ -51,3 +51,27 @@ every scope and offers no Cancel or Retry; retries reach watchers' streams; "Und
 is in flight; the art placeholder stays under a picture until it loads; Enter aborts the pending
 typeahead; the typeahead answers 503 busy when the Deezer limiter refuses; a hub whose database
 cannot be used at start stays up answering 503 with the reason on `/health`.
+
+Round 4 rework: the first row for a plain title is the song people mean. Titles are compared with
+their edition tags stripped and must cover the words typed ("hotel california" leads with the
+Eagles, "a milli lil wayne" with Lil Wayne's album version), the full search keeps the best
+MusicBrainz recording of a title rather than the first (Tha Carter II and Tha Carter III, never a
+clean edit on a compilation), a live, tour, session or compilation album demotes a row the way a
+version word does, two Deezer editions of one song keep the studio one, the release a row names is
+the earliest official studio album or single, rows by other artists whose title only names the
+asked artist go once the song by the artist is in the list, "(main)", "(a cappella)" and "(Clean)"
+rank as versions, a recording MusicBrainz notes "explicit" or "album version" is the plain one
+(so Tha Carter III and I Am… Sasha Fierce beat a note-less copy on a compilation), a stray fuzzy
+word in a long artist name no longer lifts a row over Deezer's first, when MusicBrainz finds the
+original after the typeahead had to show tribute acts the open panel receives it over the event
+stream, and when MusicBrainz is over its share past the client's retries Enter answers with the
+typeahead rows rather than none. One uploader can no longer fail a request:
+after a transfer that ends without the file every other file from that user is skipped, the three
+attempts come from distinct users, a username that is a web address ranks under every plain one,
+and the failed transfer is removed from slskd. "06 - 22 (Taylor's Version)" files as "22", a
+decorated title ("🔥 Fireman 🔥") still resolves, a busy MusicBrainz fails the request with a
+"try again in a minute" reason, "play that funky music" finds Wild Cherry first, and a request the
+rows already answer shows no "smart answers are off" line. On phones the version named in brackets
+moves into the row's subtitle before the artist, so five Firemans can be told apart. The parked
+files handed to Lidarr are kept on the request across restarts, a disc subfolder inside the album
+folder is the album's, and the minute tick never overlaps itself.
