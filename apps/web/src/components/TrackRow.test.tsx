@@ -15,6 +15,16 @@ function glyph(container: HTMLElement): string | null {
 }
 
 describe('TrackRow', () => {
+  it("a song the server left untitled is named in the user's language, not with a literal from the cache (func AG)", () => {
+    setLanguage('en');
+    signInFake();
+    renderWithI18n(
+      <TrackRow track={{ ...tracks[0]!, title: '' }} index={0} onPlay={() => undefined} />,
+    );
+    expect(screen.getByRole('button', { name: 'Play Untitled' })).toBeInTheDocument();
+    expect(screen.queryByText('(untitled)')).not.toBeInTheDocument();
+  });
+
   it('the current row shows the pause glyph while playing and the play glyph while paused, matching the button name', () => {
     setLanguage('en');
     signInFake();

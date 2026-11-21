@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,6 +79,30 @@ describe('Menu placement', () => {
     expect(menu).toHaveAttribute('data-placement', 'below');
     expect(menu.className).toContain('mt-1');
     expect(menu.className).not.toContain('bottom-full');
+  });
+
+  it('is placed again when its container scrolls or the window resizes, so the place is never stale (prod AG)', async () => {
+    setLanguage('en');
+    window.innerHeight = 844;
+    layout(700);
+    renderMenu();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'More for Carefree' }));
+    expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'above');
+    // The list scrolled up with its row: room below now, so the list follows.
+    layout(100);
+    screen.getByRole('main').dispatchEvent(new Event('scroll'));
+    await waitFor(() =>
+      expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'below'),
+    );
+    expect(screen.getByRole('menu').className).not.toContain('bottom-full');
+    // A resize that leaves no room below flips it back; the list stays open throughout.
+    layout(700);
+    window.dispatchEvent(new Event('resize'));
+    await waitFor(() =>
+      expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'above'),
+    );
+    expect(screen.getAllByRole('menuitem')).toHaveLength(6);
   });
 
   it('flipsAbove measures against the viewport when there is no scroll container, and never flips into less room', () => {

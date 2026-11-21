@@ -221,6 +221,103 @@ describe('changes while a sync runs, and changes the server pushes', () => {
     expect(fetched[1]?.split(',')).toHaveLength(PUSH_FETCH_LIMIT);
   });
 
+  it('Rebuild pressed during a refresh runs the full sync after it instead of dropping it (func AE)', async () => {
+    const { adapter } = fakeAdapter();
+    const library = adapter.library(session);
+    let hold = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reads: string[] = [];
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      tracks: async (...args: Parameters<typeof library.tracks>) => {
+        reads.push('start');
+        if (hold) await gate;
+        reads.push('done');
+        return library.tracks(...args);
+      },
+    });
+    await startLibrary(adapter, { ...session, userId: `rebuild-${Date.now()}` });
+    reads.length = 0;
+    hold = true;
+    const running = refreshLibrary();
+    const full = refreshLibrary({ full: true });
+    expect(full).not.toBe(running);
+    await vi.waitFor(() => expect(reads).toEqual(['start']));
+    hold = false;
+    release();
+    await full;
+    expect(libraryStore.get().sync.mode).toBe('full');
+    // The running sync read the songs once; the rebuild read them again after it, not alongside.
+    expect(reads).toEqual(['start', 'done', 'start', 'done']);
+  });
+
+  it("a sync that lost the race on sign-out does not clear the new user's sync when it ends (func AH)", async () => {
+    const { adapter } = fakeAdapter();
+    const library = adapter.library(session);
+    let hold = false;
+    const releases: (() => void)[] = [];
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      tracks: async (...args: Parameters<typeof library.tracks>) => {
+        if (hold) await new Promise<void>((resolve) => releases.push(resolve));
+        return library.tracks(...args);
+      },
+    });
+    await startLibrary(adapter, { ...session, userId: `stale-a-${Date.now()}` });
+    hold = true;
+    const stale = refreshLibrary({ full: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    hold = false;
+    stopLibrary();
+    await startLibrary(adapter, { ...session, userId: `stale-b-${Date.now()}` });
+    hold = true;
+    const mine = refreshLibrary();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    // The old user's sync ends now: it must not touch the running one.
+    releases[0]?.();
+    await stale;
+    expect(refreshLibrary()).toBe(mine);
+    releases[1]?.();
+    await mine;
+    expect(libraryStore.get().sync.status).toBe('idle');
+  });
+
+  it('ids a push named that could not be fetched are fetched by the next refresh (prod AH)', async () => {
+    const { adapter } = fakeAdapter();
+    const library = adapter.library(session);
+    let fail = true;
+    const asked: string[][] = [];
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      musicByIds: (ids: string[]) => {
+        asked.push([...ids]);
+        if (fail) return Promise.reject(new Error('timeout'));
+        return Promise.resolve({
+          tracks: ids.map((id) => ({ ...tracks[0]!, id, title: `Fetched ${id}` })),
+          albums: [],
+        });
+      },
+    });
+    await startLibrary(adapter, { ...session, userId: `missed-${Date.now()}` });
+    await applyUserDataChanges([{ itemId: 't9', isFavorite: true }]);
+    expect(asked).toEqual([['t9']]);
+    expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't9')).toBeUndefined();
+    fail = false;
+    await refreshLibrary();
+    await vi.waitFor(() => {
+      expect(libraryStore.get().snapshot.tracks.find((t) => t.id === 't9')?.title).toBe(
+        'Fetched t9',
+      );
+    });
+    expect(asked).toEqual([['t9'], ['t9']]);
+    // Once fetched, the id is not asked for again.
+    await refreshLibrary();
+    expect(asked).toHaveLength(2);
+  });
+
   it('a playlist deleted while a sync runs stays gone on disk, so a cold start does not bring it back', async () => {
     const { adapter } = fakeAdapter();
     let release: () => void = () => undefined;

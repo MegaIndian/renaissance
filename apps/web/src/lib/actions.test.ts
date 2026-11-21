@@ -99,6 +99,18 @@ describe('queue actions', () => {
     playNext([], t);
     expect(player.snapshot.queue.items).toHaveLength(2);
   });
+
+  it('adding to an empty queue starts playback, and the toast says so (design AD)', () => {
+    const { player } = signInFake();
+    addToQueue([tracks[2]!], t);
+    expect(player.snapshot.status).toBe('playing');
+    expect(toastStore.get()?.message).toBe('Playing Fluffing a Duck');
+    toastStore.get()?.undo?.();
+    expect(player.snapshot.queue.items).toHaveLength(0);
+    playNext([tracks[0]!, tracks[1]!], t);
+    expect(player.snapshot.status).toBe('playing');
+    expect(toastStore.get()?.message).toBe('Playing 2 songs');
+  });
 });
 
 describe('playlists', () => {

@@ -60,12 +60,43 @@ describe('Settings', () => {
     renderApp('/settings');
     expect(await screen.findByRole('button', { name: 'Rebuild library' })).toBeInTheDocument();
     expect(screen.queryByText(/songs · /)).not.toBeInTheDocument();
+    // The first sync is running over an empty cache: still no "0 songs · 0 albums" (prod AE).
+    libraryStore.set({
+      ...libraryStore.get(),
+      ready: true,
+      sync: {
+        status: 'syncing',
+        progress: { kind: 'artist', done: 1, total: 1 },
+        mode: null,
+        error: null,
+      },
+    });
+    expect(await screen.findByText(/Loading your library: 1 of 1 artists/)).toBeInTheDocument();
+    expect(screen.queryByText(/songs · /)).not.toBeInTheDocument();
     libraryStore.set({
       ...libraryStore.get(),
       ready: true,
       sync: { status: 'idle', progress: null, mode: null, error: null },
     });
     expect(await screen.findByText('0 songs · 0 albums · 0 artists')).toBeInTheDocument();
+  });
+
+  it('the theme, language and network groups have a visible caption, not only an aria-label (design AC)', async () => {
+    setLanguage('en');
+    renderApp('/settings');
+    const theme = await screen.findByRole('radiogroup', { name: 'Theme' });
+    const main = within(screen.getByRole('main'));
+    for (const [name, group] of [
+      ['Theme', theme],
+      ['Language', main.getByRole('radiogroup', { name: 'Language' })],
+      ['Network', main.getByRole('radiogroup', { name: 'Network' })],
+    ] as const) {
+      const labelId = group.getAttribute('aria-labelledby');
+      expect(labelId, name).toBeTruthy();
+      const caption = document.getElementById(labelId ?? '');
+      expect(caption).toHaveTextContent(name);
+      expect(caption?.className).not.toContain('sr-only');
+    }
   });
 
   it('the avatar goes to Settings when signed in and to Sign in when not; language persists in settings', async () => {

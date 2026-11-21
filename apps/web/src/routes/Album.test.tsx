@@ -1,10 +1,12 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { ServerError } from '@renaissance/core';
 
 import { setLanguage } from '../lib/i18n';
 import { libraryStore } from '../lib/library';
-import { signInFake } from '../test/fakes';
+import { session, signInFake } from '../test/fakes';
 import { renderApp } from '../test/render';
 
 describe('Album, artist and playlist pages', () => {
@@ -105,10 +107,27 @@ describe('Album, artist and playlist pages', () => {
     expect(calls.playlists).toContain('remove p1 e3');
   });
 
-  it('missing items say so', async () => {
+  it('missing items say so, after saying that they are being looked up (design AE)', async () => {
     setLanguage('en');
     signInFake();
     renderApp('/album/nope');
+    expect(await screen.findByText('Loading…')).toHaveAttribute('role', 'status');
     expect(await screen.findByText('This album is not on the server any more')).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('an unknown artist is looked up with a visible cue, not a blank page (design AE)', async () => {
+    setLanguage('en');
+    const { adapter } = signInFake();
+    const library = adapter.library(session);
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      artist: () => Promise.reject(new ServerError(404, '/Items/nope')),
+    });
+    renderApp('/artist/nope');
+    expect(await screen.findByText('Loading…')).toHaveAttribute('role', 'status');
+    expect(
+      await screen.findByText('This artist is not on the server any more'),
+    ).toBeInTheDocument();
   });
 });

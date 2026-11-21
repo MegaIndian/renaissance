@@ -86,12 +86,90 @@ describe('Library', () => {
     renderApp('/library?section=tracks');
     await screen.findByRole('radiogroup', { name: 'Library section' });
     expect(screen.queryByText(/\d+ songs?$/)).not.toBeInTheDocument();
+    // The cache was read and it was empty: the first sync is running. Still no "0 songs" (prod AE).
+    libraryStore.set({
+      ...libraryStore.get(),
+      ready: true,
+      sync: {
+        status: 'syncing',
+        progress: { kind: 'artist', done: 1, total: 1 },
+        mode: null,
+        error: null,
+      },
+    });
+    expect(await screen.findByText(/Loading your library for the first time/)).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ songs?$/)).not.toBeInTheDocument();
     libraryStore.set({
       ...libraryStore.get(),
       ready: true,
       sync: { status: 'idle', progress: null, mode: null, error: null },
     });
     expect(await screen.findByText('0 songs')).toBeInTheDocument();
+  });
+
+  it('the albums and artists counts and the playlists empty state wait for the cache too (func AC)', async () => {
+    setLanguage('en');
+    signInFake();
+    const empty = buildSnapshot([], [], [], [], null);
+    libraryStore.set({
+      snapshot: empty,
+      index: new LibraryIndex(empty),
+      sync: { status: 'loading', progress: null, mode: null, error: null },
+      ready: false,
+      persisted: true,
+    });
+    renderApp('/library?section=albums');
+    const user = userEvent.setup();
+    const sections = await screen.findByRole('radiogroup', { name: 'Library section' });
+    expect(screen.queryByText(/\d+ albums?$/)).not.toBeInTheDocument();
+    await user.click(within(sections).getByRole('radio', { name: 'Artists' }));
+    expect(screen.queryByText(/\d+ artists?$/)).not.toBeInTheDocument();
+    await user.click(within(sections).getByRole('radio', { name: 'Playlists' }));
+    expect(screen.queryByText('No playlists yet')).not.toBeInTheDocument();
+    expect(screen.getByText(/Loading your library for the first time/)).toBeInTheDocument();
+    libraryStore.set({
+      ...libraryStore.get(),
+      ready: true,
+      sync: { status: 'idle', progress: null, mode: null, error: null },
+    });
+    expect(await screen.findByText('No playlists yet')).toBeInTheDocument();
+    await user.click(within(sections).getByRole('radio', { name: 'Albums' }));
+    expect(await screen.findByText('0 albums')).toBeInTheDocument();
+  });
+
+  it('a first sync that fails says so, instead of claiming a last time and an empty library (func AD)', async () => {
+    setLanguage('en');
+    updateSettings({ mode: 'advanced' });
+    signInFake();
+    const empty = buildSnapshot([], [], [], [], null);
+    libraryStore.set({
+      snapshot: empty,
+      index: new LibraryIndex(empty),
+      sync: { status: 'error', progress: null, mode: null, error: 'offline' },
+      ready: true,
+      persisted: true,
+    });
+    renderApp('/library?section=tracks');
+    await screen.findByRole('radiogroup', { name: 'Library section' });
+    expect(
+      screen.getAllByText(
+        'Your library could not be loaded from the server. It will be tried again.',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText('Nothing here yet')).not.toBeInTheDocument();
+    expect(screen.queryByText(/could not be refreshed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ songs?$/)).not.toBeInTheDocument();
+  });
+
+  it('the year filter carries the filter glyph like the genre filter beside it (design AF)', async () => {
+    setLanguage('en');
+    updateSettings({ mode: 'advanced' });
+    signInFake();
+    renderApp('/library?section=tracks');
+    const year = await screen.findByRole('button', { name: 'Year' });
+    const genre = screen.getByRole('button', { name: 'Genre' });
+    expect(genre.querySelector('svg')).not.toBeNull();
+    expect(year.querySelector('svg')).not.toBeNull();
   });
 
   it('signed out: one sentence and the Sign in primary', async () => {
