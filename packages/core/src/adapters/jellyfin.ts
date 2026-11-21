@@ -183,7 +183,7 @@ export function toTrack(item: JfItem): Track {
   const audio = item.MediaStreams?.find((s) => s.Type === 'Audio');
   return TrackSchema.parse({
     id: item.Id,
-    title: item.Name?.trim() || '(untitled)',
+    title: item.Name?.trim() ?? '',
     albumId: optional(item.AlbumId),
     albumTitle: optional(item.Album),
     artistIds: (item.ArtistItems ?? []).map((a) => a.Id),
@@ -235,7 +235,7 @@ export function toAlbum(item: JfItem): Album {
   const artists = item.AlbumArtists?.length ? item.AlbumArtists : (item.ArtistItems ?? []);
   return AlbumSchema.parse({
     id: item.Id,
-    title: item.Name?.trim() || '(untitled)',
+    title: item.Name?.trim() ?? '',
     artistIds: artists.map((a) => a.Id),
     artistCredits: credits(artists),
     artistName:
@@ -258,7 +258,7 @@ export function toAlbum(item: JfItem): Album {
 export function toArtist(item: JfItem): Artist {
   return ArtistSchema.parse({
     id: item.Id,
-    name: item.Name?.trim() || '(unknown artist)',
+    name: item.Name?.trim() ?? '',
     imageId: primaryImageId(item),
     bio: optional(item.Overview),
     dateAdded: isoDate(item.DateCreated),
@@ -269,7 +269,7 @@ export function toArtist(item: JfItem): Artist {
 export function toPlaylist(item: JfItem): Playlist {
   return PlaylistSchema.parse({
     id: item.Id,
-    name: item.Name?.trim() || '(untitled)',
+    name: item.Name?.trim() ?? '',
     trackCount: item.ChildCount ?? 0,
     duration: item.RunTimeTicks ? ticksToSeconds(item.RunTimeTicks) : undefined,
     imageId: primaryImageId(item),

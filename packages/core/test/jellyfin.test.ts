@@ -8,6 +8,8 @@ import {
   serverBase,
   ticksToSeconds,
   toAlbum,
+  toArtist,
+  toPlaylist,
   toTrack,
   userDataChanges,
 } from '../src/adapters/jellyfin';
@@ -130,12 +132,15 @@ describe('JellyfinAdapter mapping', () => {
     expect(t.lastSaved).toBe('2026-11-18T03:09:00.000Z');
   });
 
-  it('falls back to the container as codec and names an untitled file', () => {
+  it('falls back to the container as codec and keeps an untitled file untitled (func AG)', () => {
     const t = toTrack({ Id: 'x', Name: '', Container: 'FLAC', MediaStreams: [] } as never);
-    expect(t.title).toBe('(untitled)');
-    // A name that is only spaces is no name: the row would show nothing and its button say "Play".
-    expect(toTrack({ Id: 'y', Name: '   ' } as never).title).toBe('(untitled)');
-    expect(toAlbum({ Id: 'z', Name: ' \t ' } as never).title).toBe('(untitled)');
+    // No English in the cache: the screens translate an empty title where they render it.
+    expect(t.title).toBe('');
+    // A name that is only spaces is no name either.
+    expect(toTrack({ Id: 'y', Name: '   ' } as never).title).toBe('');
+    expect(toAlbum({ Id: 'z', Name: ' \t ' } as never).title).toBe('');
+    expect(toArtist({ Id: 'w', Name: null } as never).name).toBe('');
+    expect(toPlaylist({ Id: 'v' } as never).name).toBe('');
     expect(t.codec).toBe('flac');
     expect(t.isFavorite).toBe(false);
   });

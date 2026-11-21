@@ -74,7 +74,8 @@ export function parseQueue(raw: unknown): QueueState {
     q.items.length === q.order.length &&
     q.index >= -1 &&
     q.index < q.items.length;
-  return consistent ? q : emptyQueue;
+  if (!consistent) return emptyQueue;
+  return q.history.length > HISTORY_LIMIT ? { ...q, history: q.history.slice(-HISTORY_LIMIT) } : q;
 }
 
 export function current(state: QueueState): Track | undefined {

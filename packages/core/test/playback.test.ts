@@ -16,10 +16,16 @@ class FakeAudio implements AudioPort {
   dur = 180;
   private listeners = new Set<(e: AudioEvent) => void>();
   rejectPlay = false;
+  /** The next load fails the way a refused stream does: an `error` event after `load` returned. */
+  failNextLoad = false;
   load(url: string, position = 0) {
     this.current = url;
     this.pos = position;
     this.log.push(`load ${new URL(url).pathname}@${position}`);
+    if (this.failNextLoad) {
+      this.failNextLoad = false;
+      queueMicrotask(() => this.emit({ type: 'error', message: 'refused' }));
+    }
   }
   play() {
     this.log.push('play');
@@ -102,6 +108,9 @@ function setup(options: { reports?: PlaybackReport[]; network?: 'wifi' | 'cellul
 
 const tracks = ['1', '2', '3'].map((id) => track(id, { codec: 'mp3', bitrate: 320_000 }));
 
+/** Reports go out one behind another (func AF); the tests wait for the chain to drain. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 describe('Player', () => {
   it('plays a list from the chosen track, preloads the next, and reports started', () => {
     const { audio, player, reports } = setup();
@@ -115,7 +124,7 @@ describe('Player', () => {
     ]);
   });
 
-  it('hands over gaplessly at the end: the preloaded slot takes over and the old track is stopped', () => {
+  it('hands over gaplessly at the end: the preloaded slot takes over and the old track is stopped', async () => {
     const { audio, player, reports } = setup();
     player.playTracks(tracks, 0);
     audio.tick(179);
@@ -126,6 +135,7 @@ describe('Player', () => {
       'play',
       'preload /Audio/3/universal',
     ]);
+    await flush();
     expect(reports.map((r) => `${r.state} ${r.trackId} ${r.position}`)).toEqual([
       'started 1 0',
       'stopped 1 179',
@@ -140,6 +150,7 @@ describe('Player', () => {
     audio.tick(180);
     audio.emit({ type: 'ended' });
     expect(player.snapshot.status).toBe('ended');
+    await flush();
     expect(reports.at(-1)).toMatchObject({ state: 'stopped', position: 180 });
     await player.play();
     expect(player.snapshot.status).toBe('playing');
@@ -171,9 +182,11 @@ describe('Player', () => {
     expect(reports).toHaveLength(1);
     advance(10_000);
     audio.tick(15);
+    await flush();
     expect(reports.at(-1)).toMatchObject({ state: 'progress', position: 15, paused: false });
     player.pause();
     expect(player.snapshot.status).toBe('paused');
+    await flush();
     expect(reports.at(-1)).toMatchObject({ state: 'progress', paused: true });
     player.seek(60);
     expect(audio.log.at(-1)).toBe('seek 60');
@@ -260,13 +273,14 @@ describe('Player', () => {
     expect(empty.reports).toEqual([]);
   });
 
-  it('the preloaded stream carries the play session id the hand-over then reports', () => {
+  it('the preloaded stream carries the play session id the hand-over then reports', async () => {
     const { audio, player, reports } = setup();
     player.playTracks(tracks, 0);
     const preloadedUrl = audio.spare ?? '';
     const preloadedId = new URL(preloadedUrl).searchParams.get('ps');
     expect(preloadedId).toBeTruthy();
     audio.emit({ type: 'ended' });
+    await flush();
     expect(reports.at(-1)).toMatchObject({
       trackId: '2',
       state: 'started',
@@ -314,7 +328,7 @@ describe('Player', () => {
     });
   });
 
-  it('waiting and paused events from the media layer update the status; destroy stops the track', () => {
+  it('waiting and paused events from the media layer update the status; destroy stops the track', async () => {
     const { audio, player, reports } = setup();
     player.playTracks(tracks);
     audio.emit({ type: 'waiting' });
@@ -323,6 +337,7 @@ describe('Player', () => {
     audio.emit({ type: 'paused' });
     expect(player.snapshot.status).toBe('paused');
     player.destroy();
+    await flush();
     expect(reports.at(-1)?.state).toBe('stopped');
     expect(audio.log.at(-1)).toBe('destroy');
   });
@@ -332,6 +347,36 @@ describe('Player', () => {
     player.playTracks(tracks, 2);
     player.next();
     expect(player.snapshot.status).toBe('ended');
+  });
+  it('a refused stream is loaded again on Play, and Next never adopts a spare buffered beside the failure (func AB)', async () => {
+    const { audio, player } = setup();
+    audio.failNextLoad = true;
+    player.playTracks(tracks, 0);
+    await flush();
+    expect(player.snapshot.status).toBe('error');
+    expect(player.snapshot.error).toBe('refused');
+    // The failure clears the preload: the next track is not kept in a slot that shared the outage.
+    expect(audio.spare).toBeNull();
+    expect(audio.log.at(-1)).toBe('preload none');
+    // Play loads the same stream again instead of calling play() on the broken element.
+    await player.play();
+    expect(audio.log.filter((l) => l.startsWith('load /Audio/1/')).length).toBe(2);
+    expect(player.snapshot.status).toBe('playing');
+    expect(player.snapshot.error).toBeNull();
+    expect(audio.spare).toContain('/Audio/2/');
+    // A failure mid-track drops the spare buffered beside it, so Next loads the following track
+    // fresh instead of taking that slot over.
+    audio.emit({ type: 'error', message: 'refused' });
+    expect(player.snapshot.status).toBe('error');
+    expect(audio.spare).toBeNull();
+    player.next();
+    expect(audio.log.filter((l) => l.startsWith('takeover')).length).toBe(0);
+    expect(audio.log.slice(-3)).toEqual([
+      'load /Audio/2/universal@0',
+      'play',
+      'preload /Audio/3/universal',
+    ]);
+    expect(player.snapshot.status).toBe('playing');
   });
 });
 
@@ -363,19 +408,53 @@ describe('PlaybackReporter', () => {
     now = 10_000;
     reporter.progress(4);
     reporter.progress(5, true, true);
+    await flush();
     expect(sent.map((r) => `${r.state}:${r.position}`)).toEqual([
       'started:0',
       'progress:4',
       'progress:5',
     ]);
     reporter.started(track('b'), 'transcode', 0, 7);
+    await flush();
     expect(sent.at(-2)).toMatchObject({ state: 'stopped', trackId: 'a', position: 7 });
     expect(sent.at(-1)).toMatchObject({ state: 'started', trackId: 'b', method: 'transcode' });
     fail = true;
     reporter.stopped(9);
-    await Promise.resolve();
+    await flush();
     expect(onError).toHaveBeenCalledOnce();
     const defaults = new PlaybackReporter({ send: () => Promise.resolve() });
     expect(defaults.started(track('c'), 'direct')).toMatch(/^[\w-]{8,}$/);
+  });
+
+  it('sends one report after another: the Started waits for the Stopped before it (func AF)', async () => {
+    const sent: string[] = [];
+    let release: (() => void) | undefined;
+    const onError = vi.fn();
+    const reporter = new PlaybackReporter({
+      send: (r) => {
+        sent.push(`${r.state}:${r.trackId}`);
+        if (r.state === 'stopped' && r.trackId === '1') {
+          return new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        if (r.trackId === '2' && r.state === 'started') return Promise.reject(new Error('down'));
+        return Promise.resolve();
+      },
+      newId: () => 'ps',
+      onError,
+    });
+    reporter.started(track('1'), 'direct');
+    reporter.started(track('2'), 'direct', 0, 30);
+    await flush();
+    expect(sent).toEqual(['started:1', 'stopped:1']);
+    release?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(['started:1', 'stopped:1', 'started:2']);
+    // A failed report is handed to onError and the chain goes on.
+    reporter.stopped(40);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onError).toHaveBeenCalledOnce();
+    expect(sent.at(-1)).toBe('stopped:2');
   });
 });

@@ -140,6 +140,9 @@ describe('persistence', () => {
     expect(parseQueue(null)).toBe(emptyQueue);
     expect(parseQueue({ ...state, keys: [1] })).toBe(emptyQueue);
     expect(parseQueue({ ...state, index: 99 })).toBe(emptyQueue);
+    // A stored history longer than the cap keeps its newest entries (func AA).
+    const long = Array.from({ length: 500 }, (_, i) => i);
+    expect(parseQueue({ ...state, history: long }).history).toEqual(long.slice(-200));
     const old = { ...state } as Record<string, unknown>;
     delete old['albumAware'];
     expect(parseQueue(old).albumAware).toBe(false);

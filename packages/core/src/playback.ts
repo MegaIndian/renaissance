@@ -242,6 +242,10 @@ export class Player {
         this.onEnded();
         return;
       case 'error':
+        // The spare slot buffered beside this failure (a refused stream, an outage) is not trusted:
+        // the next start loads its track fresh instead of adopting a broken element.
+        this.preloaded = null;
+        this.deps.audio.preload(null);
         this.patch({ status: 'error', error: event.message });
         return;
     }
@@ -359,7 +363,8 @@ export class Player {
       this.start(queue, 0);
       return;
     }
-    if (this.loadedKey !== queue.keys[queue.index]) {
+    // After a failure the loaded stream is the broken one: load it again, as for an unloaded key.
+    if (status === 'error' || this.loadedKey !== queue.keys[queue.index]) {
       this.start(queue, this.snapshot.position);
       return;
     }

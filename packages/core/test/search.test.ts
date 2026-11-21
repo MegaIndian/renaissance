@@ -109,6 +109,16 @@ describe('LibraryIndex', () => {
     expect(fastest).toBeLessThan(100);
   });
 
+  it('builds its entries on the first search, not in the constructor (prod AF)', () => {
+    const idx = new LibraryIndex({ tracks: [track('t1', { title: 'Lazy' })] });
+    expect(idx.built).toBe(false);
+    expect(idx.search('lazy').tracks.map((t) => t.id)).toEqual(['t1']);
+    expect(idx.built).toBe(true);
+    const grouped = new LibraryIndex({ tracks: [track('t1', { title: 'Lazy' })] });
+    expect(grouped.groups('lazy')[0]?.kind).toBe('track');
+    expect(grouped.built).toBe(true);
+  });
+
   it('can be rebuilt kind by kind', () => {
     const idx = new LibraryIndex();
     expect(idx.size).toBe(0);

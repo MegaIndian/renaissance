@@ -30,6 +30,13 @@ export class PlaybackReporter {
   private readonly deps: Required<ReporterDeps>;
   private active: { track: Track; method: PlayMethod; playSessionId: string } | null = null;
   private lastSentAt = 0;
+  /**
+   * Reports go out one after another: Jellyfin processes a Stopped that lands after the next Started
+   * as "nothing playing" until the following progress report. The first report of a quiet reporter
+   * is sent at once; the ones behind an unanswered report wait for it.
+   */
+  private chain: Promise<void> = Promise.resolve();
+  private inFlight = 0;
 
   constructor(deps: ReporterDeps) {
     this.deps = {
@@ -96,6 +103,14 @@ export class PlaybackReporter {
   }
 
   private dispatch(report: PlaybackReport): void {
-    this.deps.send(report).catch((error: unknown) => this.deps.onError(error));
+    const send = (): Promise<void> =>
+      this.deps
+        .send(report)
+        .catch((error: unknown) => this.deps.onError(error))
+        .finally(() => {
+          this.inFlight -= 1;
+        });
+    this.inFlight += 1;
+    this.chain = this.inFlight === 1 ? send() : this.chain.then(send);
   }
 }

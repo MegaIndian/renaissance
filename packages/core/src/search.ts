@@ -79,12 +79,35 @@ export class LibraryIndex {
   private albums: Entry<Album>[] = [];
   private artists: Entry<Artist>[] = [];
   private playlists: Entry<Playlist>[] = [];
+  /**
+   * Input waiting to be indexed. The entries are built on the first search, not when the snapshot
+   * changes: a heart, a play count or a server push replaces the snapshot and must not pay for
+   * normalising 20,000 titles on the main thread (about 18 ms) every time.
+   */
+  private pending: Partial<LibraryIndexInput> | null = null;
 
   constructor(input?: Partial<LibraryIndexInput>) {
-    if (input) this.rebuild(input);
+    if (input) this.pending = input;
+  }
+
+  /** False while a snapshot is waiting for its first search. */
+  get built(): boolean {
+    return this.pending === null;
+  }
+
+  private ensure(): void {
+    const input = this.pending;
+    if (!input) return;
+    this.pending = null;
+    this.build(input);
   }
 
   rebuild(input: Partial<LibraryIndexInput>): void {
+    this.ensure();
+    this.build(input);
+  }
+
+  private build(input: Partial<LibraryIndexInput>): void {
     if (input.tracks) {
       this.tracks = input.tracks.map((t) => ({
         item: t,
@@ -120,12 +143,14 @@ export class LibraryIndex {
   }
 
   get size(): number {
+    this.ensure();
     return this.tracks.length + this.albums.length + this.artists.length + this.playlists.length;
   }
 
   search(term: string, limit = 8): SearchResult {
     const query = normalize(term);
     if (!query) return { tracks: [], albums: [], artists: [], playlists: [] };
+    this.ensure();
     return {
       artists: rank(this.artists, query, limit).items,
       albums: rank(this.albums, query, limit).items,
@@ -142,6 +167,7 @@ export class LibraryIndex {
   groups(term: string, limit = 8): SearchGroup[] {
     const query = normalize(term);
     if (!query) return [];
+    this.ensure();
     const tracks = rank(this.tracks, query, limit);
     const albums = rank(this.albums, query, limit);
     const artists = rank(this.artists, query, limit);

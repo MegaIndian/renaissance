@@ -131,7 +131,11 @@
     "addedNext": "{{title}} હવે પછી વાગશે",
     "addedToEnd": "{{title}} કતારમાં ઉમેર્યું",
     "addedCountNext": "{{count, number}} ગીતો હવે પછી વાગશે",
-    "addedCountEnd": "{{count, number}} ગીતો કતારમાં ઉમેર્યાં"
+    "addedCountEnd": "{{count, number}} ગીતો કતારમાં ઉમેર્યાં",
+    "startedPlaying": "{{title}} વાગે છે",
+    "startedPlayingCount": "{{count, number}} ગીતો વાગે છે",
+    "startedPlayingCount_one": "{{count, number}} ગીત વાગે છે",
+    "saveFailed": "કતાર આ બ્રાઉઝરમાં સાચવી શકાઈ નહીં. આ ટૅબ બંધ થાય ત્યાં સુધી રહેશે."
   },
   "status": {
     "preAlpha": "Pre-alpha, તબક્કો 1: વેબ પર વગાડવાનું ચાલુ છે; મોબાઇલ સ્ક્રીન તબક્કા 3માં આવશે."
@@ -171,6 +175,8 @@
     "syncing": "તમારી લાઇબ્રેરી લોડ થાય છે: {{total, number}} માંથી {{done, number}} {{kind}}",
     "syncingFirst": "તમારી લાઇબ્રેરી પહેલી વાર લોડ થાય છે. થોડી વાર લાગશે અને એક જ વાર થાય છે.",
     "syncFailed": "લાઇબ્રેરી તાજી કરી શકાઈ નહીં. જે દેખાય છે તે છેલ્લી વારનું છે.",
+    "firstSyncFailed": "તમારી લાઇબ્રેરી સર્વરથી લોડ થઈ શકી નહીં. ફરી પ્રયત્ન થશે.",
+    "untitled": "શીર્ષક વિના",
     "refresh": "લાઇબ્રેરી તાજી કરો",
     "rebuild": "લાઇબ્રેરી ફરી બનાવો",
     "refreshed": "લાઇબ્રેરી તાજી થઈ",

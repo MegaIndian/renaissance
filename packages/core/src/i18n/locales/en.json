@@ -131,7 +131,11 @@
     "addedNext": "{{title}} plays next",
     "addedToEnd": "Added {{title}} to the queue",
     "addedCountNext": "{{count, number}} songs play next",
-    "addedCountEnd": "Added {{count, number}} songs to the queue"
+    "addedCountEnd": "Added {{count, number}} songs to the queue",
+    "startedPlaying": "Playing {{title}}",
+    "startedPlayingCount": "Playing {{count, number}} songs",
+    "startedPlayingCount_one": "Playing {{count, number}} song",
+    "saveFailed": "The queue could not be saved in this browser. It lasts until this tab closes."
   },
   "status": {
     "preAlpha": "Pre-alpha, phase 1: web playback is live; mobile screens come in phase 3."
@@ -171,6 +175,8 @@
     "syncing": "Loading your library: {{done, number}} of {{total, number}} {{kind}}",
     "syncingFirst": "Loading your library for the first time. This takes a moment and happens once.",
     "syncFailed": "The library could not be refreshed. What you see is from the last time it was.",
+    "firstSyncFailed": "Your library could not be loaded from the server. It will be tried again.",
+    "untitled": "Untitled",
     "refresh": "Refresh library",
     "rebuild": "Rebuild library",
     "refreshed": "Library refreshed",

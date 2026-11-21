@@ -37,7 +37,8 @@ const userFields = {
 
 export const Artist = z.object({
   id: z.string().min(1),
-  name: z.string().min(1),
+  /** As the server gave it; empty when the file has none, and the screens say so in the user's language. */
+  name: z.string(),
   imageId: z.string().optional(),
   /** Biography from the server's metadata, when it has one. */
   bio: z.string().optional(),
@@ -60,7 +61,8 @@ export type ArtistCredit = z.infer<typeof ArtistCredit>;
 
 export const Album = z.object({
   id: z.string().min(1),
-  title: z.string().min(1),
+  /** As the server gave it; empty when the file has none, and the screens say so in the user's language. */
+  title: z.string(),
   artistIds: z.array(z.string()),
   artistName: z.string(),
   /** The credited artists with their ids, so the artist list can be merged by name. */
@@ -80,7 +82,8 @@ export type Album = z.infer<typeof Album>;
 
 export const Track = z.object({
   id: z.string().min(1),
-  title: z.string().min(1),
+  /** As the server gave it; empty when the file has none, and the screens say so in the user's language. */
+  title: z.string(),
   albumId: z.string().optional(),
   albumTitle: z.string().optional(),
   artistIds: z.array(z.string()),
@@ -110,7 +113,8 @@ export type Track = z.infer<typeof Track>;
 
 export const Playlist = z.object({
   id: z.string().min(1),
-  name: z.string().min(1),
+  /** As the server gave it; empty when the file has none, and the screens say so in the user's language. */
+  name: z.string(),
   trackCount: z.number().int().nonnegative(),
   /** Total duration in seconds. */
   duration: z.number().nonnegative().optional(),
