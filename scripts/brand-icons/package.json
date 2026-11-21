@@ -4,6 +4,6 @@
   "description": "One-off exporter: the note mark from apps/web/public/favicon.svg as the Expo icon, splash and adaptive icon PNGs. Not part of the pnpm workspace; `npm install` here, then `node export.mjs`.",
   "type": "module",
   "dependencies": {
-    "sharp": "0.34.5"
+    "sharp": "^0.35.5"
   }
 }

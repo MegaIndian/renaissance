@@ -94,11 +94,15 @@ export const COMMAND_END =
  * with a request word among them ("something calm for cooking", "કિશોર કુમાર ના ગીતો"). A five-word
  * title with no such word ("Kabhi Kabhie Mere Dil Mein") is not a sentence, and neither is a title
  * with its articles or pronouns and an artist after it ("Rolling in the Deep Adele", "Someone Like
- * You Adele").
+ * You Adele"). Two or more words that are all filler and request words ("old songs") are a request.
  */
 export function looksLikeSentence(text: string): boolean {
   const n = normalize(text);
   if (COMMAND.test(n) || COMMAND_END.test(n)) return true;
   const all = tokens(n);
-  return all.length >= 4 && all.some((t) => SENTENCE_WORDS.has(t));
+  if (all.length >= 4 && all.some((t) => SENTENCE_WORDS.has(t))) return true;
+  // "old songs", "new music": nothing but request words and filler is a request, not a name.
+  return (
+    all.length >= 2 && all.every((t) => STOP_WORDS.has(t)) && all.some((t) => SENTENCE_WORDS.has(t))
+  );
 }

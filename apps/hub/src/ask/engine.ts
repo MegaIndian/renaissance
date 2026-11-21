@@ -21,6 +21,7 @@ import { askTools } from '@renaissance/core';
 import { createI18n } from '@renaissance/core/i18n';
 
 import { LimiterBusyError } from '../catalogue/rate-limiter.js';
+import { relevantRows } from '../catalogue/relevance.js';
 import type { CatalogueService } from '../catalogue/service.js';
 import type { Stores } from '../db/index.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
@@ -102,6 +103,23 @@ export function unionInstant(a: InstantResults, b: InstantResults): InstantResul
     albums: merge(a.albums, b.albums),
     artists: merge(a.artists, b.artists),
   };
+}
+
+/** Two catalogue answers as one: the first's rows lead, the second's follow, each row once. */
+export function mergeCatalogue(first: CatalogueSearch, second: CatalogueSearch): CatalogueSearch {
+  const merge = <T extends { id: string }>(x: T[], y: T[]): T[] => {
+    const seen = new Set(x.map((r) => r.id));
+    return [...x, ...y.filter((r) => !seen.has(r.id) && seen.add(r.id))];
+  };
+  const merged: CatalogueSearch = {
+    ...first,
+    songs: merge(first.songs, second.songs),
+    albums: merge(first.albums, second.albums),
+    artists: merge(first.artists, second.artists),
+    cached: first.cached && second.cached,
+  };
+  if (first.partial || second.partial) merged.partial = true;
+  return merged;
 }
 
 const i18nByLanguage = new Map<'en' | 'gu', I18n>();
@@ -443,22 +461,48 @@ export function createEngine(deps: EngineDeps) {
       // about the title inside the words ("get me fireman by lil wayne" asks about "fireman lil
       // wayne"), and the rows that do not answer those words are pruned (design Q). When the
       // MusicBrainz queue is full the Deezer rows stand in rather than nothing.
+      // The words as typed too, when a command was stripped: "play that funky music" is a title
+      // as well as a command, and the catalogue for the whole phrase finds Wild Cherry where the
+      // stripped "that funky music" finds another song first (functionality V). The rows for the
+      // whole phrase lead, the rest follow without duplicates.
       const query = stripCommand(input.text) || input.text;
       const who = { owner: input.profile.id };
-      const cat = await catalogue.search(query, who).catch(async (error: unknown) => {
-        if (error instanceof LimiterBusyError) {
-          return catalogue.search(query, { ...who, fast: true }).catch(() => undefined);
-        }
-        log.warn(
-          { error: error instanceof Error ? error.message : String(error) },
-          'catalogue lookup failed',
-        );
-        return undefined;
-      });
+      const lookup = (words: string): Promise<CatalogueSearch | undefined> =>
+        catalogue.search(words, who).catch(async (error: unknown) => {
+          // The queue is full, or MusicBrainz is over its share (503 past the client's retries)
+          // or down: the Deezer rows stand in, marked partial, rather than an empty panel.
+          if (!(error instanceof LimiterBusyError)) {
+            log.warn(
+              { error: error instanceof Error ? error.message : String(error) },
+              'catalogue lookup failed; answering from the typeahead rows',
+            );
+          }
+          return catalogue.search(words, { ...who, fast: true }).catch(() => undefined);
+        });
+      // The phrase as typed is looked up when one word was stripped ("play that funky music"):
+      // "can you please get me …" is never part of a title, and a whole sentence sent to
+      // MusicBrainz costs seconds and lists the rows that merely name the artist first.
+      const typed = normalize(input.text);
+      const oneWordCommand =
+        query !== typed && typed.split(' ').length === query.split(' ').length + 1;
+      const [forTitle, forPhrase] = await Promise.all([
+        lookup(query),
+        oneWordCommand ? lookup(input.text) : Promise.resolve(undefined),
+      ]);
+      // Merged, the rows are pruned and ordered for the title once more, so a phrase row that only
+      // names the artist ("Lil Wayne Fireman" by DJ Symphony) goes when the song by the artist is
+      // there; the title lookup's own rows, already pruned for these words, are never taken away.
+      const cat =
+        forPhrase && forTitle
+          ? mergeCatalogue(relevantRows(query, mergeCatalogue(forPhrase, forTitle)), forTitle)
+          : (forTitle ?? forPhrase);
       const withCatalogue = cat ? { catalogue: cat } : {};
+      const rows = cat ? cat.songs.length + cat.albums.length + cat.artists.length : 0;
+      const hits = instant.tracks.length + instant.albums.length + instant.artists.length;
       // Without a key, a sentence ("play something calm for cooking") gets the one line that says
-      // smart answers are off and what still works; a name that matched nothing gets nothing
-      // here, and the app says nothing matches (design Q).
+      // smart answers are off and what still works; a request whose rows answer it already
+      // ("can you please get me fireman by lil wayne") gets the rows and no such line; a name that
+      // matched nothing gets nothing here, and the app says nothing matches (design Q).
       if (!deps.client)
         return {
           ...base,
@@ -467,7 +511,8 @@ export function createEngine(deps: EngineDeps) {
           reason: 'no_key',
           instant,
           actions: [],
-          why: looksLikeSentence(input.text) ? t(language, 'ask.modelOff') : '',
+          why:
+            looksLikeSentence(input.text) && rows + hits === 0 ? t(language, 'ask.modelOff') : '',
         };
       const reservation = budget.reserve();
       if (!reservation)

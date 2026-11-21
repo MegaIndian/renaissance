@@ -47,6 +47,11 @@ export interface SlskdClient {
   search(text: string, options?: { timeoutMs?: number }): Promise<SlskdResponse[]>;
   enqueue(username: string, files: { filename: string; size: number }[]): Promise<void>;
   transfers(username: string): Promise<SlskdTransfer[]>;
+  /**
+   * Cancels a transfer that is still going and removes its record, so a failed attempt leaves
+   * nothing behind in slskd's list (functionality S). Best effort: a record already gone is fine.
+   */
+  remove(username: string, transferId: string): Promise<void>;
 }
 
 export function toCandidates(responses: readonly SlskdResponse[]): Candidate[] {
@@ -164,6 +169,21 @@ export function slskdClient(options: {
         doFetch,
       );
       options.log.info({ username, files: files.length }, 'slskd download enqueued');
+    },
+
+    async remove(username, transferId) {
+      const path = `transfers/downloads/${encodeURIComponent(username)}/${encodeURIComponent(transferId)}`;
+      if (options.dryRun) {
+        options.log.info({ dryRun: true, username, transferId }, `would DELETE slskd ${path}`);
+        return;
+      }
+      await httpJson(
+        'slskd',
+        `${api}/${path}?remove=true`,
+        { method: 'DELETE', headers, okStatuses: [204, 404] },
+        doFetch,
+      );
+      options.log.info({ username, transferId }, 'slskd transfer removed');
     },
 
     async transfers(username) {

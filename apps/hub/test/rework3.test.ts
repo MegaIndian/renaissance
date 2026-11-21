@@ -184,11 +184,12 @@ describe('the full search rows and the cache (production Z; design P, AA; functi
     const full = await svc.search('fireman lil wayne');
     expect(full.songs[0]).toMatchObject({ title: 'Fireman', artist: 'Lil Wayne' });
     expect(full.songs.length).toBeLessThanOrEqual(8);
-    // Version words demote: the karaoke, tribute, live, remix and cover rows sit under every plain row.
+    // Rows by other artists whose title only names Lil Wayne go once his Fireman is in the list
+    // (design AI); the version rows that stay sit under the plain one.
     const titles = full.songs.map((s) => s.title);
-    expect(titles.indexOf('Lil Wayne Fireman')).toBeLessThan(
-      titles.indexOf('Fireman (Lil Wayne Remix)'),
-    );
+    expect(titles).not.toContain('Lil Wayne Fireman');
+    expect(titles).not.toContain('Fireman (Lil Wayne Remix)');
+    expect(titles).toEqual(['Fireman']);
     const nineTracks = [
       ...nineRows.slice(0, 8).map((r) => track(r.title, r['artist-credit']![0]!.name)),
       track('Fireman', 'Lil Wayne', 'Tha Carter II'),
@@ -221,7 +222,8 @@ describe('the full search rows and the cache (production Z; design P, AA; functi
       title: 'Fireman',
       artist: 'Lil Wayne',
     });
-    expect(full.songs.map((s) => s.title)).toContain('Lil Wayne Fireman');
+    // The DJ Symphony row names the artist and is not the song: gone (design AI).
+    expect(full.songs.map((s) => s.title)).not.toContain('Lil Wayne Fireman');
     const mbQuery = new URL(calls.find((c) => c.url.includes('/recording?'))!.url).searchParams.get(
       'query',
     );

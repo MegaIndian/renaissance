@@ -74,6 +74,7 @@ export function fakeSlskd(options: {
 }) {
   const searches: string[] = [];
   const enqueued: { username: string; files: { filename: string; size: number }[] }[] = [];
+  const removed: { username: string; transferId: string }[] = [];
   const polls = new Map<string, number>();
   const client: SlskdClient = {
     async search(text) {
@@ -90,11 +91,20 @@ export function fakeSlskd(options: {
         const n = polls.get(f.filename) ?? 0;
         polls.set(f.filename, n + 1);
         const s = states[Math.min(n, states.length - 1)]!;
-        return { filename: f.filename, size: f.size, state: 'InProgress', ...s };
+        return {
+          id: `t-${username}-${f.filename}`,
+          filename: f.filename,
+          size: f.size,
+          state: 'InProgress',
+          ...s,
+        };
       });
     },
+    async remove(username, transferId) {
+      removed.push({ username, transferId });
+    },
   };
-  return { client, searches, enqueued };
+  return { client, searches, enqueued, removed };
 }
 
 export function fakeLidarr(

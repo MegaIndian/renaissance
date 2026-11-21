@@ -55,6 +55,14 @@ export interface Scored {
 export const DJ_FOLDER =
   /\b(dj|edit|edits|remix|remixes|mashup|mashups|bootleg|pack|transition|intro|acapella|instrumentals?)\b/i;
 
+/**
+ * A username that is a web address is an advertising account: its files carry the site's name and
+ * its transfers never start (functionality S). The penalty puts every such file under any plain one.
+ */
+export const URL_USERNAME =
+  /(https?:\/\/|www\.|\.(com|net|org|ru|io|me|cc|xyz|biz|info|tv|to|fm|club|site|online|co|us|uk|de|nl|fr)$)/i;
+export const URL_USERNAME_PENALTY = 40;
+
 export const DURATION_TOLERANCE_S = 3;
 export const DURATION_REJECT_S = 10;
 
@@ -100,11 +108,17 @@ export function score(c: Candidate, want: Want): { scored?: Scored; excluded?: s
     const askedFor = [...titleTokens].some((t) => re.test(t));
     if ((!inName && !inFolder) || askedFor) continue;
     if (want.policy.exclude.includes(key)) return { excluded: `rule: no ${key}` };
-    if (key !== 'explicit' && key !== 'clean') {
-      // A folder is as telling as the name: "Eagles Live" holds live takes whatever the files say.
-      s -= key === 'remix' ? 45 : 30;
-      reasons.push(inName ? `${key} in name` : `${key} in folder`);
-    }
+    if (key === 'explicit') continue;
+    // A censored edit is another cut than the song (functionality T), unless the household rules
+    // keep explicit versions out, in which case it is the one wanted.
+    if (key === 'clean' && want.policy.exclude.includes('explicit')) continue;
+    // A folder is as telling as the name: "Eagles Live" holds live takes whatever the files say.
+    s -= key === 'remix' ? 45 : 30;
+    reasons.push(inName ? `${key} in name` : `${key} in folder`);
+  }
+  if (URL_USERNAME.test(c.username.trim())) {
+    s -= URL_USERNAME_PENALTY;
+    reasons.push('username is a web address');
   }
   // DJ edit packs and remix folders: the file is a version even when its name looks plain.
   if (DJ_FOLDER.test(parentName(path).replace(/[_-]/g, ' '))) {

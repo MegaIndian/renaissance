@@ -149,6 +149,7 @@
       "not_configured": "Fetching isn't set up on the server yet",
       "interrupted": "The server restarted while this was in progress. Try again",
       "error": "Something went wrong. Try again",
+      "catalogue_busy": "The music catalogue was busy. Try again in a minute",
       "not_found_in_time": "Nobody had this album in a week. Try again later"
     },
     "progress": {

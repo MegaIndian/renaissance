@@ -44,17 +44,28 @@ export function createRunner(options: {
     }
   }
 
-  /** Expired catalogue answers and token checks go; the album poll runs. */
+  let ticking = false;
+  /**
+   * Expired catalogue answers and token checks go; the album poll runs. One tick at a time: the
+   * poll can wait on Lidarr for longer than the interval, and a second tick over the first would
+   * finish the same album twice (production AG).
+   */
   async function tick(): Promise<void> {
+    if (ticking) return;
+    ticking = true;
     try {
-      stores.cache.sweep();
-      options.health?.markDatabase(true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      options.health?.markDatabase(false, message);
-      log.error({ error: message }, 'database write failed (health is degraded)');
+      try {
+        stores.cache.sweep();
+        options.health?.markDatabase(true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        options.health?.markDatabase(false, message);
+        log.error({ error: message }, 'database write failed (health is degraded)');
+      }
+      await pipeline.pollAlbums();
+    } finally {
+      ticking = false;
     }
-    await pipeline.pollAlbums();
   }
 
   return {
@@ -91,6 +102,8 @@ export function createRunner(options: {
       timer = setInterval(() => void tick(), options.albumPollMs ?? ALBUM_POLL_MS);
       timer.unref();
     },
+    /** The minute tick, callable by tests; a tick already running makes this one a no-op. */
+    tick,
     stop(): void {
       if (timer) clearInterval(timer);
       timer = undefined;

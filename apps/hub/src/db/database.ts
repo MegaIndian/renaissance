@@ -98,6 +98,9 @@ export const migrations: readonly string[] = [
   // the cap could drop).
   `ALTER TABLE requests ADD COLUMN matched_album TEXT;
    ALTER TABLE requests ADD COLUMN requested_at TEXT;`,
+  // The parked files already handed to Lidarr for an album request, as JSON ({path: "sent" |
+  // "kept"}), so a restart never hands the same file over twice (production AE).
+  `ALTER TABLE requests ADD COLUMN filed_paths TEXT;`,
 ];
 
 /** The database file cannot be opened, written or migrated: a read-only volume, a full disk, a bad path. */

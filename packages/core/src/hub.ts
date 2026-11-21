@@ -338,6 +338,11 @@ export type Budget = z.infer<typeof Budget>;
 export const HubEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request'), request: MusicRequest }),
   z.object({ type: z.literal('ready'), request: MusicRequest }),
+  /**
+   * A full catalogue answer that arrived after the typeahead had to answer without the song by
+   * the artist typed: the app shows it when `result.query` is still what the box holds.
+   */
+  z.object({ type: z.literal('catalogue'), result: CatalogueSearch }),
   z.object({ type: z.literal('ping'), at: z.iso.datetime() }),
 ]);
 export type HubEvent = z.infer<typeof HubEvent>;
@@ -348,3 +353,15 @@ export const HubError = z.object({
   issues: z.array(z.unknown()).optional(),
 });
 export type HubError = z.infer<typeof HubError>;
+
+/**
+ * A song title split into the song and the version named in brackets after it, so a narrow row
+ * can show "Fireman" with "Chopped & Screwed" beside the artist instead of "Fireman (Chopp…":
+ * `splitTitleVersion('Fireman (Chopped & Screwed)')` is `{ title: 'Fireman', version: 'Chopped &
+ * Screwed' }`; a title with no such bracket, or nothing before it, has no `version`.
+ */
+export function splitTitleVersion(title: string): { title: string; version?: string } {
+  const match = /^(.*\S)\s*[([]([^()[\]]+)[)\]]\s*$/.exec(title.trim());
+  if (!match) return { title };
+  return { title: match[1]!, version: match[2]!.trim() };
+}

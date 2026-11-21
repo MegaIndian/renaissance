@@ -156,13 +156,9 @@ describe('language and the deterministic layer', () => {
   it('degrades to the instant layer without a key or past the budget', async () => {
     const noKey = setup({ client: false });
     const out = await ask(noKey, 'something calm for cooking');
-    // A sentence with the model off carries the one line that says what still works (design Q).
-    expect(out).toMatchObject({
-      model: 'off',
-      reason: 'no_key',
-      actions: [],
-      why: 'Smart answers are off right now. Type a song or artist name',
-    });
+    // A sentence with the model off carries the one line that says what still works (design Q)
+    // only when no row answers it; here the library and the catalogue both do (functionality V).
+    expect(out).toMatchObject({ model: 'off', reason: 'no_key', actions: [], why: '' });
     expect(out.instant.tracks).toHaveLength(2);
     expect(out.tools).toHaveLength(8);
     const broke = setup({ cap: 0 });

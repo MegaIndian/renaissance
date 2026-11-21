@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { HubEvent, splitTitleVersion } from '../src/hub';
+
 import { HubClientError, createHubClient, parseSseChunk } from '../src/index';
 import type { AskResponse, MusicRequest } from '../src/index';
 
@@ -302,5 +304,39 @@ describe('createHubClient', () => {
     });
     const error = await new Promise<unknown>((resolve) => hub.events(() => {}, 'mine', resolve));
     expect(error).toBeInstanceOf(HubClientError);
+  });
+});
+
+describe('round 4: the version in a title and the late catalogue event', () => {
+  it('splits the version named in brackets off a title', () => {
+    expect(splitTitleVersion('Fireman (Chopped & Screwed)')).toEqual({
+      title: 'Fireman',
+      version: 'Chopped & Screwed',
+    });
+    expect(splitTitleVersion("22 (Taylor's Version)")).toEqual({
+      title: '22',
+      version: "Taylor's Version",
+    });
+    expect(splitTitleVersion('Fireman [Explicit]')).toEqual({
+      title: 'Fireman',
+      version: 'Explicit',
+    });
+    expect(splitTitleVersion('Rolling in the Deep')).toEqual({ title: 'Rolling in the Deep' });
+    expect(splitTitleVersion("(Sittin' On) The Dock of the Bay")).toEqual({
+      title: "(Sittin' On) The Dock of the Bay",
+    });
+    expect(splitTitleVersion('(Untitled)')).toEqual({ title: '(Untitled)' });
+    expect(splitTitleVersion('Why This Kolaveri Di?: The Soup of Love')).toEqual({
+      title: 'Why This Kolaveri Di?: The Soup of Love',
+    });
+  });
+
+  it('accepts a catalogue event with a full answer', () => {
+    const parsed = HubEvent.safeParse({
+      type: 'catalogue',
+      result: { query: 'halo beyonce', songs: [], artists: [], albums: [], cached: false },
+    });
+    expect(parsed.success).toBe(true);
+    expect(HubEvent.safeParse({ type: 'catalogue' }).success).toBe(false);
   });
 });

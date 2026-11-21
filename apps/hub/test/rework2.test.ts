@@ -127,9 +127,10 @@ describe('relevance: the rows answer the words typed (design P, Q, X; functional
     });
     const full = await svc.search('Fireman Lil Wayne');
     expect(full.songs[0]).toMatchObject({ title: 'Fireman', artist: 'Lil Wayne' });
-    // The DJ Symphony row shares every word but is not the song; it ranks below, not first.
+    // The DJ Symphony row shares every word but is not the song: once the song by the artist is
+    // in the list, a row by someone else whose title names the artist goes (design AI).
     expect(full.songs.map((s) => s.artist)).not.toContain('Someone');
-    expect(full.songs.findIndex((s) => s.artist === 'DJ Symphony')).toBeGreaterThan(0);
+    expect(full.songs.map((s) => s.artist)).not.toContain('DJ Symphony');
     // Mixtapes titled "Lil Wayne" cover a third of the query only.
     expect(full.songs.map((s) => s.title)).not.toContain('Lil Wayne');
     // The typeahead reads the same cached answer: nothing poisoned.

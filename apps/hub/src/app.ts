@@ -107,6 +107,8 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       musicBrainz,
       deezer: deezerClient({ fetch: doFetch }),
       cache: stores.cache,
+      // The full answer the typeahead could not wait for reaches the typist's open panel.
+      onLateAnswer: (owner, result) => bus.publish(owner, { type: 'catalogue', result }),
     });
 
   const slskd =

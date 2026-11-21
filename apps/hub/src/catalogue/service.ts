@@ -35,7 +35,7 @@ import type {
 } from './musicbrainz.js';
 import { fullSearchQuery, recordingQuery, releaseGroupQuery } from './musicbrainz.js';
 import { LimiterBusyError } from './rate-limiter.js';
-import { hasExactRow, relevantRows, scoreRow } from './relevance.js';
+import { comparableTitle, hasExactRow, relevantRows, titleInQuery } from './relevance.js';
 
 export const SEARCH_TTL_MS = 24 * 60 * 60_000;
 export const LOOKUP_TTL_MS = 7 * 24 * 60 * 60_000;
@@ -88,6 +88,26 @@ const yearOf = (date: string | undefined): number | undefined => {
 };
 
 /**
+ * Words in an album's name that say it is not the studio record the song was made for: a live or
+ * tour album, a compilation named for a year or a mix, a soundtrack or "This Is It" collection
+ * (design AK). Used to choose between two editions of the same song, never to drop a row.
+ */
+export const COLLECTION_TITLE =
+  /\b(live|concert|tour|unplugged|session|sessions|mix|megamix|remix|remixes|karaoke|tribute|hits|best of|greatest|collection|anthology|essential|essentials|soundtrack|ost|this is it|year|\d{4})\b/i;
+
+/**
+ * Which of two Deezer tracks with the same title and artist is the one people mean: the one on an
+ * album that is not a live, tour or compilation record, then Deezer's own popularity, then the
+ * one Deezer listed first.
+ */
+export function betterDeezerTrack(a: DeezerTrack, b: DeezerTrack): DeezerTrack {
+  const collection = (t: DeezerTrack) => (COLLECTION_TITLE.test(t.album.title) ? 1 : 0);
+  if (collection(a) !== collection(b)) return collection(a) < collection(b) ? a : b;
+  if ((a.rank ?? 0) !== (b.rank ?? 0)) return (a.rank ?? 0) > (b.rank ?? 0) ? a : b;
+  return a;
+}
+
+/**
  * The typeahead's rows from Deezer: the tracks found, the albums named (Deezer's album search first,
  * then the albums of the tracks) and the artists named, each once.
  */
@@ -100,8 +120,8 @@ export function fromDeezer(
   albums: CatalogueAlbum[];
   artists: CatalogueArtist[];
 } {
-  const songs: CatalogueSong[] = [];
-  const seenSongs = new Set<string>();
+  // Songs once per title and artist, the studio edition kept when Deezer lists several (design AK).
+  const songs = new Map<string, DeezerTrack>();
   // Albums once per title and artist: Deezer lists every edition as its own album.
   const albums = new Map<string, CatalogueAlbum>();
   const albumKey = (title: string, artist: string) => `${normalize(title)}|${normalize(artist)}`;
@@ -128,10 +148,8 @@ export function fromDeezer(
   for (const hit of artistHits) addArtist(hit);
   for (const track of tracks) {
     const key = `${normalize(track.title)}|${normalize(track.artist.name)}`;
-    if (!seenSongs.has(key)) {
-      seenSongs.add(key);
-      songs.push(songFromDeezer(track));
-    }
+    const seen = songs.get(key);
+    songs.set(key, seen ? betterDeezerTrack(seen, track) : track);
     if (!albums.has(albumKey(track.album.title, track.artist.name))) {
       const album: CatalogueAlbum = {
         id: `dz:album:${track.album.id}`,
@@ -144,7 +162,11 @@ export function fromDeezer(
     }
     addArtist(track.artist);
   }
-  return { songs, albums: [...albums.values()], artists: [...artists.values()] };
+  return {
+    songs: [...songs.values()].map(songFromDeezer),
+    albums: [...albums.values()],
+    artists: [...artists.values()],
+  };
 }
 
 /** The rows cut to size, after pruning: never before, or the right row could be cut away unseen. */
@@ -182,8 +204,7 @@ export function guessSplit(
     if (title) return { title, artist: song.artist };
   }
   for (const song of songs) {
-    const scored = scoreRow(song, content, { title: song.title, artist: song.artist });
-    if (scored.score < 20) continue;
+    if (!titleInQuery(song.title, content)) continue;
     const titleTokens = new Set(tokens(song.title));
     const artist = without(titleTokens);
     if (artist && artist !== words.join(' ')) return { title: song.title, artist };
@@ -207,9 +228,16 @@ export function creditName(credit: MbArtistCredit[] | undefined): string {
   );
 }
 
-/** Words in a MusicBrainz note or a release group type that mark another version of a song. */
-const VERSION_NOTE =
-  /\b(live|remix|rmx|mix|edit|demo|instrumental|karaoke|acoustic|unplugged|rehearsal|take|version|dub|radio)\b/i;
+/**
+ * Words in a MusicBrainz note or a release group type that mark another version of a song. A
+ * censored ("clean") or an "explicit" edit noted as such is an edit of the plain recording, never
+ * the recording itself (functionality R).
+ */
+export const VERSION_NOTE =
+  /\b(live|remix|rmx|mix|edit|demo|instrumental|karaoke|acoustic|unplugged|rehearsal|take|version|dub|radio|clean|censored|explicit)\b/i;
+
+/** Notes on a recording that say it is the plain one, not a version of it. */
+export const PLAIN_NOTE = /\b(album version|original version|original|explicit|uncensored)\b/gi;
 
 /** How canonical a release is: official studio albums and singles first, live, mixtapes and bootlegs last. */
 export function releaseScore(r: NonNullable<MbRecording['releases']>[number]): number {
@@ -225,18 +253,37 @@ export function releaseScore(r: NonNullable<MbRecording['releases']>[number]): n
   if (secondary.some((t) => /mixtape|bootleg|demo/i.test(t))) s -= 10;
   if (secondary.some((t) => /live/i.test(t))) s -= 15;
   if (r.date) s += 1;
+  // "The Video Year Mix 2011", "Michael Jackson's This Is It": a collection by its name, when the
+  // release group's types do not already say so (design AK).
+  const groupTitle = r['release-group']?.title ?? '';
+  if (
+    secondary.length === 0 &&
+    (COLLECTION_TITLE.test(groupTitle) || COLLECTION_TITLE.test(r.title))
+  )
+    s -= 3;
   return s;
+}
+
+/** The release's date, else its group's first date, as a sortable number; unknown dates sort last. */
+function releaseTime(r: NonNullable<MbRecording['releases']>[number]): number {
+  const date = r.date ?? r['release-group']?.['first-release-date'];
+  const time = date ? Date.parse(date.length === 4 ? `${date}-01-01` : date) : NaN;
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }
 
 /**
  * Prefer an official release that is an album or single over compilations, live albums and
- * bootlegs; the release named by the caller (the album on the row they tapped) beats them all.
+ * bootlegs, the earliest of them when they tie (the album the song was made for came out before
+ * the collections that reissued it, design AK); the release named by the caller (the album on the
+ * row they tapped) beats them all.
  */
 export function pickRelease(rec: MbRecording, preferAlbum?: string) {
   const wanted = preferAlbum ? normalize(cleanTitle(preferAlbum)) : '';
   const scoreOf = (r: NonNullable<MbRecording['releases']>[number]): number =>
     releaseScore(r) + (wanted && normalize(cleanTitle(r.title)) === wanted ? 100 : 0);
-  return [...(rec.releases ?? [])].sort((a, b) => scoreOf(b) - scoreOf(a))[0];
+  return [...(rec.releases ?? [])].sort(
+    (a, b) => scoreOf(b) - scoreOf(a) || releaseTime(a) - releaseTime(b),
+  )[0];
 }
 
 /**
@@ -253,7 +300,10 @@ export function recordingScore(
   const best = releases.length > 0 ? Math.max(...releases.map(releaseScore)) : -20;
   let s = best * 10 + Math.min(releases.length, 9);
   const asked = tokens(want.title ?? '');
-  const note = rec.disambiguation ?? '';
+  // MusicBrainz notes the canonical recording itself "explicit" when a clean edit exists (A Milli
+  // on Tha Carter III) or "album version" when a radio edit does (Halo on I Am… Sasha Fierce):
+  // those notes name the plain recording, not another version of it.
+  const note = (rec.disambiguation ?? '').replace(PLAIN_NOTE, ' ');
   const noteWords = tokens(note).filter((w) => VERSION_NOTE.test(w));
   if (noteWords.some((w) => !asked.includes(w))) s -= 300;
   const allLive =
@@ -299,10 +349,18 @@ export function songFromRecording(
   }
   const year = yearOf(rec['first-release-date']);
   if (year && !song.year) song.year = year;
-  const match = deezer.find(
-    (d) =>
-      normalize(d.title) === normalize(rec.title) && tokenOverlap(d.artist.name, artist) >= 0.5,
-  );
+  // The Deezer track for art and a preview: the same title, or the same title once edition tags
+  // are stripped ("Hotel California (2013 Remaster)" for "Hotel California").
+  const match =
+    deezer.find(
+      (d) =>
+        normalize(d.title) === normalize(rec.title) && tokenOverlap(d.artist.name, artist) >= 0.5,
+    ) ??
+    deezer.find(
+      (d) =>
+        comparableTitle(d.title) === comparableTitle(rec.title) &&
+        tokenOverlap(d.artist.name, artist) >= 0.5,
+    );
   if (match) {
     if (match.preview) song.preview = match.preview;
     const cover = match.album.cover_medium ?? match.album.cover_big;
@@ -383,6 +441,11 @@ export function catalogueService(options: {
   cache: CacheStore;
   sleep?: (ms: number) => Promise<void>;
   fastWaitMs?: number;
+  /**
+   * Told when a typeahead answered without the song by the artist typed and the full search found
+   * it afterwards: the owner's open panel gets the full answer (design AH).
+   */
+  onLateAnswer?: (owner: string, result: CatalogueSearch) => void;
 }) {
   const { musicBrainz, deezer, cache } = options;
   const sleep = options.sleep ?? realSleep;
@@ -441,23 +504,44 @@ export function catalogueService(options: {
       deezerOrNothing(deezer.search(query, 15, limits)),
     ]);
     const fromMusicBrainz = (tracks: DeezerTrack[]): CatalogueSong[] => {
-      const songs: CatalogueSong[] = [];
-      const seen = new Set<string>();
+      // One recording per title and artist: the one on the best release, never a live, clean or
+      // compilation-only recording MusicBrainz happened to list first (functionality R).
+      const best = new Map<string, { rec: MbRecording; score: number }>();
+      // The plain recording for a title once its edition tags are stripped: a Deezer "Hotel
+      // California (2013 Remaster)" is the Eagles' "Hotel California" row, not a row of its own.
+      const plain = new Map<string, string>();
       for (const rec of recordings) {
         if (rec.video) continue;
-        const song = songFromRecording(rec, tracks);
-        if (!song) continue;
-        const dedupe = `${normalize(song.title)}|${normalize(song.artist)}`;
-        if (seen.has(dedupe)) continue;
+        const artist = creditName(rec['artist-credit']);
+        if (!rec.title || !artist) continue;
+        const dedupe = `${normalize(rec.title)}|${normalize(artist)}`;
+        const score = recordingScore(rec, { title: query });
+        const have = best.get(dedupe);
+        if (!have || score > have.score) best.set(dedupe, { rec, score });
+        const cleaned = `${comparableTitle(rec.title)}|${normalize(artist)}`;
+        if (!plain.has(cleaned) || comparableTitle(rec.title) === normalize(rec.title))
+          plain.set(cleaned, dedupe);
+      }
+      // Deezer's order is popularity and the tiebreak between rows that answer the words alike
+      // (functionality Q): the songs Deezer also lists first, in its order, each with its
+      // MusicBrainz recording when one matched, then the recordings Deezer did not have.
+      const songs: CatalogueSong[] = [];
+      const seen = new Set<string>();
+      const push = (dedupe: string, song: CatalogueSong | undefined): void => {
+        if (!song || seen.has(dedupe)) return;
         seen.add(dedupe);
         songs.push(song);
+      };
+      for (const song of fromDeezer(tracks).songs) {
+        const raw = `${normalize(song.title)}|${normalize(song.artist)}`;
+        const dedupe = best.has(raw)
+          ? raw
+          : plain.get(`${comparableTitle(song.title)}|${normalize(song.artist)}`);
+        const rec = dedupe ? best.get(dedupe)?.rec : undefined;
+        if (rec && dedupe) push(dedupe, songFromRecording(rec, tracks));
+        else push(raw, song);
       }
-      for (const track of tracks) {
-        const dedupe = `${normalize(track.title)}|${normalize(track.artist.name)}`;
-        if (seen.has(dedupe)) continue;
-        seen.add(dedupe);
-        songs.push(songFromDeezer(track));
-      }
+      for (const [dedupe, { rec }] of best) push(dedupe, songFromRecording(rec, tracks));
       return songs;
     };
     let deezerTracks = deezerAnswer ?? [];
@@ -527,6 +611,15 @@ export function catalogueService(options: {
       const full = startFull(query, who).catch(() => undefined);
       const winner = await Promise.race([full, sleep(fastWaitMs).then(() => undefined)]);
       if (winner) return winner;
+      // Too slow for this keystroke: the panel shows the Deezer rows now and, when MusicBrainz
+      // answers with the song, the owner's stream carries the full answer to it (design AH). The
+      // cache already prefers that answer for the next keystroke on the same words.
+      if (who.owner && options.onLateAnswer) {
+        const owner = who.owner;
+        void full.then((late) => {
+          if (late && hasExactRow(query, late)) options.onLateAnswer!(owner, late);
+        });
+      }
     }
     return result;
   }

@@ -45,6 +45,7 @@ interface Row {
   matched_artist: string | null;
   matched_album: string | null;
   requested_at: string | null;
+  filed_paths: string | null;
   /** Watcher profile ids joined with a newline; empty when nobody else asked. */
   watchers: string;
   steps: string;
@@ -101,6 +102,9 @@ function toRequest(r: Row): MusicRequest {
   return out;
 }
 
+/** A parked file's state after it was handed to Lidarr. */
+export type FiledState = 'sent' | 'kept';
+
 export interface RequestUpdate {
   status: RequestStatus;
   reason?: string;
@@ -151,6 +155,8 @@ export function requestStore(db: DatabaseSync) {
     WHERE id = ?
   `);
   const remove = db.prepare('DELETE FROM requests WHERE id = ? RETURNING id');
+  const readFiled = db.prepare('SELECT filed_paths FROM requests WHERE id = ?');
+  const writeFiled = db.prepare('UPDATE requests SET filed_paths = ? WHERE id = ?');
 
   return {
     create(input: NewRequest, requestedBy: string, now = new Date()): MusicRequest {
@@ -187,6 +193,22 @@ export function requestStore(db: DatabaseSync) {
     },
     listByStatus(status: RequestStatus): MusicRequest[] {
       return (byStatus.all(status) as unknown as Row[]).map(toRequest);
+    },
+    /**
+     * The parked files already handed to Lidarr for an album request, by path: `sent` until the
+     * next arrival check sees whether Lidarr moved them, `kept` once it said why it did not. Kept
+     * on the row, not in memory, so a restart never hands a file over twice (production AE).
+     */
+    filedPaths(id: string): Map<string, FiledState> {
+      const row = readFiled.get(id) as unknown as { filed_paths: string | null } | undefined;
+      if (!row?.filed_paths) return new Map();
+      return new Map(Object.entries(JSON.parse(row.filed_paths) as Record<string, FiledState>));
+    },
+    setFiledPaths(id: string, filed: ReadonlyMap<string, FiledState> | undefined): void {
+      writeFiled.run(
+        filed && filed.size > 0 ? JSON.stringify(Object.fromEntries(filed)) : null,
+        id,
+      );
     },
     /**
      * Appends a step (capped at MAX_STEPS, first and last kept) and sets the status; returns the
