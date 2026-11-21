@@ -78,16 +78,18 @@ export const JfSocketMessage = z.object({
   Data: z.unknown().optional(),
 });
 
-/** `UserDataChanged`'s `Data`, as 10.10.7 sends it when any device changes a favourite or plays. */
+/** One entry of a `UserDataChanged` push: the item and what changed for this user. */
+export const JfUserDataEntry = z.object({
+  ItemId: z.string(),
+  IsFavorite: nullable(z.boolean()),
+  PlayCount: nullable(z.number()),
+  LastPlayedDate: nullable(z.string()),
+});
+
+/**
+ * `UserDataChanged`'s `Data`, as 10.10.7 sends it when any device changes a favourite or plays. The
+ * entries are left unparsed here and checked one by one, so one odd entry does not void the batch.
+ */
 export const JfUserDataChanged = z.object({
-  UserDataList: z
-    .array(
-      z.object({
-        ItemId: z.string(),
-        IsFavorite: nullable(z.boolean()),
-        PlayCount: nullable(z.number()),
-        LastPlayedDate: nullable(z.string()),
-      }),
-    )
-    .default([]),
+  UserDataList: z.array(z.unknown()).default([]),
 });

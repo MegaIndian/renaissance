@@ -9,6 +9,7 @@ import {
   ticksToSeconds,
   toAlbum,
   toTrack,
+  userDataChanges,
 } from '../src/adapters/jellyfin';
 import { MemoryLibraryStore, syncLibrary } from '../src/library-cache';
 import { Server as ServerSchema } from '../src/models';
@@ -675,6 +676,56 @@ describe('JellyfinAdapter calls', () => {
     expect(await library.byIds('track', [])).toEqual([]);
     expect(asked).toEqual(['Audio:100', 'Audio:50', 'MusicAlbum:1']);
     expect(tracks[0]?.lastSaved).toBe('2026-11-18T03:09:00.000Z');
+  });
+
+  it('musicByIds asks once without a type, sorts the answer by the type the server returns and drops the rest', async () => {
+    const asked: string[] = [];
+    const { adapter } = make({
+      'GET /Items': (url) => {
+        asked.push(
+          `${url.searchParams.get('Ids')} types=${String(url.searchParams.get('IncludeItemTypes'))}`,
+        );
+        return items([
+          jfAudio('t9', 'Song 9'),
+          { Id: 'al9', Name: 'Album 9', Type: 'MusicAlbum' },
+          { Id: 'movie-1', Name: 'A film', Type: 'Movie' },
+          { Id: 'ep-1', Name: 'An episode', Type: 'Episode' },
+        ]);
+      },
+    });
+    const found = await adapter.library(session).musicByIds(['t9', 'al9', 'movie-1', 'ep-1']);
+    expect(found.tracks.map((t) => t.id)).toEqual(['t9']);
+    expect(found.albums.map((a) => a.id)).toEqual(['al9']);
+    expect(asked).toEqual(['t9,al9,movie-1,ep-1 types=null']);
+    expect(await adapter.library(session).musicByIds([])).toEqual({ tracks: [], albums: [] });
+    expect(asked).toHaveLength(1);
+  });
+
+  it('a push with one odd entry keeps the good ones', () => {
+    const good = {
+      PlayCount: 3,
+      IsFavorite: true,
+      LastPlayedDate: '2026-11-19T20:00:00.0000000Z',
+      Key: 'k1',
+      ItemId: 't5000',
+    };
+    expect(
+      userDataChanges({
+        UserDataList: [
+          { ...good, ItemId: 12345 },
+          good,
+          { ItemId: 'al7', IsFavorite: false, PlayCount: 'many' },
+          'not an entry',
+          null,
+          { ItemId: 'al8', IsFavorite: false },
+        ],
+      }),
+    ).toEqual([
+      { itemId: 't5000', isFavorite: true, playCount: 3, lastPlayed: '2026-11-19T20:00:00.000Z' },
+      { itemId: 'al8', isFavorite: false, playCount: undefined, lastPlayed: undefined },
+    ]);
+    expect(userDataChanges({ UserDataList: 'nope' })).toEqual([]);
+    expect(userDataChanges(undefined)).toEqual([]);
   });
 
   it('the delta reads from the stamps the items carry, with no Date header on any answer and no clock', async () => {

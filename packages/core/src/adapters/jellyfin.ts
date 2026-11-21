@@ -55,6 +55,7 @@ import {
   JfQuickConnectResult,
   JfSocketMessage,
   JfUserDataChanged,
+  JfUserDataEntry,
 } from './jellyfin-schemas';
 
 export const CLIENT_NAME = 'Renaissance';
@@ -205,16 +206,25 @@ export function toTrack(item: JfItem): Track {
   });
 }
 
-/** The items a `UserDataChanged` push names; an unparseable or absent `Data` names none. */
+/**
+ * The items a `UserDataChanged` push names; an unparseable or absent `Data` names none. Each entry
+ * is parsed on its own: one that misses the shape is dropped, the others in the batch still apply.
+ */
 export function userDataChanges(data: unknown): UserDataChange[] {
   const parsed = JfUserDataChanged.safeParse(data);
   if (!parsed.success) return [];
-  return parsed.data.UserDataList.map((entry) => ({
-    itemId: entry.ItemId,
-    isFavorite: entry.IsFavorite ?? undefined,
-    playCount: entry.PlayCount ?? undefined,
-    lastPlayed: isoDate(entry.LastPlayedDate),
-  }));
+  return parsed.data.UserDataList.flatMap((raw) => {
+    const entry = JfUserDataEntry.safeParse(raw);
+    if (!entry.success) return [];
+    return [
+      {
+        itemId: entry.data.ItemId,
+        isFavorite: entry.data.IsFavorite ?? undefined,
+        playCount: entry.data.PlayCount ?? undefined,
+        lastPlayed: isoDate(entry.data.LastPlayedDate),
+      },
+    ];
+  });
 }
 
 export function toPlaylistEntry(item: JfItem): PlaylistEntry {
@@ -270,6 +280,8 @@ export function toPlaylist(item: JfItem): Playlist {
 
 const TRACK_FIELDS = 'DateCreated,DateLastSaved,Genres,MediaStreams,ParentId';
 const ALBUM_FIELDS = 'DateCreated,DateLastSaved,Genres,ChildCount';
+/** A song's and an album's fields together, for a fetch by id whose kinds are not known. */
+const MUSIC_FIELDS = 'DateCreated,DateLastSaved,Genres,MediaStreams,ParentId,ChildCount';
 const ARTIST_FIELDS = 'DateCreated,Overview';
 const PLAYLIST_FIELDS = 'DateCreated,ChildCount';
 
@@ -674,6 +686,22 @@ export class JellyfinAdapter implements ServerAdapter {
         }
         return out;
       },
+      musicByIds: async (wanted) => {
+        const tracks: Track[] = [];
+        const albums: Album[] = [];
+        const chunk = 100;
+        for (let start = 0; start < wanted.length; start += chunk) {
+          const result = await items({
+            Ids: wanted.slice(start, start + chunk).join(','),
+            Fields: MUSIC_FIELDS,
+          });
+          for (const item of result.Items) {
+            if (item.Type === 'Audio') tracks.push(toTrack(item));
+            else if (item.Type === 'MusicAlbum') albums.push(toAlbum(item));
+          }
+        }
+        return { tracks, albums };
+      },
       byIds: (async (kind: 'track' | 'album', wanted: readonly string[]) => {
         const out: (Track | Album)[] = [];
         const chunk = 100;
@@ -919,7 +947,7 @@ export class JellyfinAdapter implements ServerAdapter {
   /**
    * Jellyfin's `/socket` channel (F14): `LibraryChanged` schedules the delta refresh; `UserDataChanged`
    * names the items whose favourite or play count changed on any device, so the cache can patch them
-   * at once (the delta cannot see them: 10.10.7 does not bump `DateLastSaved` for user data, ADR 0012).
+   * at once (the delta cannot see them: 10.10.7 does not bump `DateLastSaved` for user data, ADR 0013).
    */
   subscribe(session: Session, events: ServerEvents): () => void {
     const Socket = this.options.WebSocket;

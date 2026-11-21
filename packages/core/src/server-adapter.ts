@@ -147,6 +147,11 @@ export interface Library {
   /** The items behind these ids, so the cache can fetch what a delta missed (tracks and albums). */
   byIds(kind: 'track', ids: readonly string[]): Promise<Track[]>;
   byIds(kind: 'album', ids: readonly string[]): Promise<Album[]>;
+  /**
+   * The music behind ids of unknown kind (a push names whatever any device touched): one request,
+   * the answer sorted by the server's own type; anything that is not a song or an album is dropped.
+   */
+  musicByIds(ids: readonly string[]): Promise<{ tracks: Track[]; albums: Album[] }>;
 }
 
 export interface Favorites {
