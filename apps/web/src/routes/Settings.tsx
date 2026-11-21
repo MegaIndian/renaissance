@@ -27,7 +27,13 @@ export function Settings() {
   const { t, i18n } = useTranslation();
   const settings = useSettings();
   const session = useSession();
-  const { snapshot, ready } = useLibrary();
+  const { snapshot, ready, sync } = useLibrary();
+  // No count line while the cache is read or the first sync runs over an empty cache: it would say 0.
+  const showCount =
+    ready &&
+    sync.status !== 'loading' &&
+    !(sync.status === 'syncing' && !snapshot.syncedAt) &&
+    !(sync.status === 'error' && !snapshot.syncedAt);
   const navigate = useNavigate();
   const language = (supportedLanguages as readonly string[]).includes(i18n.language)
     ? (i18n.language as Language)
@@ -88,27 +94,33 @@ export function Settings() {
       </Section>
 
       <Section title={t('settings.appearance')}>
-        <SegmentedControl
-          label={t('settings.theme')}
-          value={settings.theme}
-          options={[
-            { value: 'system', label: t('settings.themeSystem') },
-            { value: 'dark', label: t('settings.themeDark') },
-            { value: 'light', label: t('settings.themeLight') },
-          ]}
-          onChange={(theme: SettingsValue['theme']) => updateSettings({ theme })}
-        />
-        <SegmentedControl
-          label={t('settings.language')}
-          value={language}
-          options={supportedLanguages.map((lng) => ({ value: lng, label: t(`language.${lng}`) }))}
-          onChange={(lng: Language) => {
-            // The choice is stored once the strings are in; a failed fetch leaves it as it was.
-            void setLanguage(lng).then((ok) => {
-              if (ok) updateSettings({ language: lng });
-            });
-          }}
-        />
+        <Captioned id="theme-label" label={t('settings.theme')}>
+          <SegmentedControl
+            label={t('settings.theme')}
+            labelledBy="theme-label"
+            value={settings.theme}
+            options={[
+              { value: 'system', label: t('settings.themeSystem') },
+              { value: 'dark', label: t('settings.themeDark') },
+              { value: 'light', label: t('settings.themeLight') },
+            ]}
+            onChange={(theme: SettingsValue['theme']) => updateSettings({ theme })}
+          />
+        </Captioned>
+        <Captioned id="language-label" label={t('settings.language')}>
+          <SegmentedControl
+            label={t('settings.language')}
+            labelledBy="language-label"
+            value={language}
+            options={supportedLanguages.map((lng) => ({ value: lng, label: t(`language.${lng}`) }))}
+            onChange={(lng: Language) => {
+              // The choice is stored once the strings are in; a failed fetch leaves it as it was.
+              void setLanguage(lng).then((ok) => {
+                if (ok) updateSettings({ language: lng });
+              });
+            }}
+          />
+        </Captioned>
       </Section>
 
       <Section title={t('settings.playback')}>
@@ -127,16 +139,19 @@ export function Settings() {
           (v) => updateSettings({ cellularQuality: v as StreamingQuality }),
         )}
         <p className="text-caption text-muted-foreground">{t('settings.qualityHelp')}</p>
-        <SegmentedControl
-          label={t('settings.network')}
-          value={settings.network}
-          options={[
-            { value: 'auto', label: t('settings.networkAuto') },
-            { value: 'wifi', label: t('settings.networkWifi') },
-            { value: 'cellular', label: t('settings.networkCellular') },
-          ]}
-          onChange={(network: SettingsValue['network']) => updateSettings({ network })}
-        />
+        <Captioned id="network-label" label={t('settings.network')}>
+          <SegmentedControl
+            label={t('settings.network')}
+            labelledBy="network-label"
+            value={settings.network}
+            options={[
+              { value: 'auto', label: t('settings.networkAuto') },
+              { value: 'wifi', label: t('settings.networkWifi') },
+              { value: 'cellular', label: t('settings.networkCellular') },
+            ]}
+            onChange={(network: SettingsValue['network']) => updateSettings({ network })}
+          />
+        </Captioned>
         <p className="text-caption text-muted-foreground">
           {t('settings.networkNow', { kind: networkName })}
         </p>
@@ -198,7 +213,7 @@ export function Settings() {
 
       {session.status === 'signedIn' ? (
         <Section title={t('settings.library')}>
-          {ready ? (
+          {showCount ? (
             <p className="text-caption text-muted-foreground">
               {[
                 t('library.tracksCount', { count: snapshot.tracks.length }),
@@ -227,6 +242,18 @@ export function Settings() {
           <p className="text-caption text-muted-foreground">{t('settings.diagnosticsLater')}</p>
         ) : null}
       </Section>
+    </div>
+  );
+}
+
+/** A visible caption over a control group, the same `text-label` the quality selects carry (design AC). */
+function Captioned({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span id={id} className="text-label font-medium">
+        {label}
+      </span>
+      {children}
     </div>
   );
 }

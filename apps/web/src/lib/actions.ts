@@ -9,6 +9,7 @@ import type { Album, Artist, CacheItem, Playlist, Track } from '@renaissance/cor
 import type { TFunction } from 'i18next';
 
 import { broadcastLibraryChange, libraryStore, patchItems } from './library';
+import { artistNameOf, playlistNameOf, titleOf } from './names';
 import { getPlayer } from './player';
 import { sessionStore } from './session';
 import { toast } from './toast';
@@ -36,7 +37,12 @@ export async function toggleFavorite(
   t: TFunction,
 ): Promise<void> {
   const next = !item.isFavorite;
-  const title = 'title' in item ? item.title : item.name;
+  const title =
+    'title' in item
+      ? titleOf(item, t)
+      : kind === 'artist'
+        ? artistNameOf(item, t)
+        : playlistNameOf(item, t);
   // This tab changes at once; the other tabs hear of it once the server agrees (or on the rollback).
   setLocalFavorite(kind, item.id, next, false);
   try {
@@ -56,15 +62,24 @@ export function playNow(tracks: Track[], startAt = 0): void {
   getPlayer().playTracks(tracks, startAt);
 }
 
+/** Added to an empty queue, the songs start playing, and the toast says that, not "added" (design AD). */
+function startedMessage(tracks: Track[], t: TFunction): string {
+  return tracks.length === 1 && tracks[0]
+    ? t('queue.startedPlaying', { title: titleOf(tracks[0], t) })
+    : t('queue.startedPlayingCount', { count: tracks.length });
+}
+
 export function playNext(tracks: Track[], t: TFunction): void {
   if (!tracks.length) return;
   const player = getPlayer();
   const before = player.snapshot.queue;
   player.playNext(tracks);
   const message =
-    tracks.length === 1
-      ? t('queue.addedNext', { title: tracks[0]?.title })
-      : t('queue.addedCountNext', { count: tracks.length });
+    before.index < 0
+      ? startedMessage(tracks, t)
+      : tracks.length === 1 && tracks[0]
+        ? t('queue.addedNext', { title: titleOf(tracks[0], t) })
+        : t('queue.addedCountNext', { count: tracks.length });
   toast(message, {
     undo: () => undoQueueAdd(before.items.length, tracks.length, before.index + 1),
   });
@@ -76,9 +91,11 @@ export function addToQueue(tracks: Track[], t: TFunction): void {
   const before = player.snapshot.queue;
   player.addToEnd(tracks);
   const message =
-    tracks.length === 1
-      ? t('queue.addedToEnd', { title: tracks[0]?.title })
-      : t('queue.addedCountEnd', { count: tracks.length });
+    before.index < 0
+      ? startedMessage(tracks, t)
+      : tracks.length === 1 && tracks[0]
+        ? t('queue.addedToEnd', { title: titleOf(tracks[0], t) })
+        : t('queue.addedCountEnd', { count: tracks.length });
   toast(message, {
     undo: () => undoQueueAdd(before.items.length, tracks.length, before.items.length),
   });

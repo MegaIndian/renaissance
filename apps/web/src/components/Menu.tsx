@@ -42,22 +42,19 @@ export function Menu({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  /** Opened above the trigger (no room below in the scroll container, more room above). */
+  const [above, setAbove] = useState(false);
   const [active, setActive] = useState(0);
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const scroller = useScrollContainer();
 
-  // Placed before paint, on the element itself: the list must exist to be measured, and a state
-  // round trip here would draw it below first.
+  // Measured before paint: the list must exist to be measured, and a state change inside a layout
+  // effect re-renders synchronously, so the list is never painted below first.
   useLayoutEffect(() => {
-    const el = list.current;
-    if (!open || !el) return;
-    const above = flipsAbove(button.current, el, scroller?.current ?? null);
-    el.classList.toggle('bottom-full', above);
-    el.classList.toggle('mb-1', above);
-    el.classList.toggle('mt-1', !above);
-    el.dataset['placement'] = above ? 'above' : 'below';
+    if (!open) return;
+    setAbove(flipsAbove(button.current, list.current, scroller?.current ?? null));
   }, [open, scroller]);
 
   useEffect(() => {
@@ -68,13 +65,23 @@ export function Menu({
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
+    // A scroll of the container or a resize moves the trigger: the list is placed again, so it
+    // follows the row instead of keeping a stale place. It stays open: a list taller than the room
+    // below is reached by scrolling, and closing it there would put its items out of reach.
+    const place = (): void =>
+      setAbove(flipsAbove(button.current, list.current, scroller?.current ?? null));
+    const container = scroller?.current;
+    container?.addEventListener('scroll', place, { passive: true });
+    window.addEventListener('resize', place);
     const first = list.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
     first?.focus();
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('touchstart', onDown);
+      container?.removeEventListener('scroll', place);
+      window.removeEventListener('resize', place);
     };
-  }, [open]);
+  }, [open, scroller]);
 
   const enabled = items.filter((i) => !i.disabled);
 
@@ -140,10 +147,10 @@ export function Menu({
           role="menu"
           aria-label={label}
           onKeyDown={onKeyDown}
-          className={`absolute z-20 mt-1 flex min-w-48 max-w-72 flex-col rounded-md border border-border bg-card p-1 shadow-low ${
-            align === 'end' ? 'right-0' : 'left-0'
-          }`}
-          data-placement="below"
+          className={`absolute z-20 flex min-w-48 max-w-72 flex-col rounded-md border border-border bg-card p-1 shadow-low ${
+            above ? 'bottom-full mb-1' : 'mt-1'
+          } ${align === 'end' ? 'right-0' : 'left-0'}`}
+          data-placement={above ? 'above' : 'below'}
         >
           {items.map((item) => (
             <button

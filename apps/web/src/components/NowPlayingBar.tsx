@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 
+import { titleOf } from '../lib/names';
 import { useIsDesktop } from '../lib/media';
 import { useMode } from '../lib/mode';
 import { getPlayer } from '../lib/player';
@@ -69,12 +70,12 @@ export function NowPlayingBar() {
         >
           <Artwork
             imageId={track.imageId}
-            label={track.title}
+            label={titleOf(track, t)}
             index={colorIndex(track.id)}
             size="xs"
           />
           <span className="flex min-w-0 flex-col">
-            <span className="truncate font-medium text-foreground">{track.title}</span>
+            <span className="truncate font-medium text-foreground">{titleOf(track, t)}</span>
             <span className="truncate text-caption text-muted-foreground">
               {statusLine ?? track.artistName}
             </span>

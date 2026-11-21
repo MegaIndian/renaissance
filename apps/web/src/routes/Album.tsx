@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router';
 import { addToQueue, playNext, playNow } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
+import { titleOf } from '../lib/names';
 import { useAlbum, useAlbumTracks } from '../lib/queries';
 import { usePlayer } from '../lib/usePlayer';
 import { Artwork, colorIndex } from '../components/Artwork';
@@ -28,8 +29,16 @@ export function AlbumPage() {
   const paused = player.status !== 'playing' && player.status !== 'loading';
 
   if (!album) {
-    return isLoading ? null : <EmptyState title={t('album.notFound')} quiet />;
+    // The server is asked once (no retry): say so meanwhile, not a blank page (design AE).
+    return isLoading ? (
+      <p role="status" className="text-caption text-muted-foreground">
+        {t('player.loading')}
+      </p>
+    ) : (
+      <EmptyState title={t('album.notFound')} quiet />
+    );
   }
+  const title = titleOf(album, t);
   const total = album.duration ?? tracks.reduce((sum, x) => sum + x.duration, 0);
   const meta = [
     album.year,
@@ -47,14 +56,14 @@ export function AlbumPage() {
         <div className="w-40 shrink-0 sm:w-48">
           <Artwork
             imageId={album.imageId}
-            label={album.title}
+            label={title}
             index={colorIndex(album.id)}
             size="lg"
             className="shadow-art"
           />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <h1 className="text-display font-semibold tracking-tight">{album.title}</h1>
+          <h1 className="text-display font-semibold tracking-tight">{title}</h1>
           <p className="text-body">
             {album.artistIds[0] ? (
               <Link

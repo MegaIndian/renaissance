@@ -4,11 +4,15 @@
  * settings, the persisted queue (F22) and the MediaSession bridge for media keys and lock screens (F25).
  */
 import { Player, parseQueue, playbackSettingsFrom } from '@renaissance/core';
-import type { AudioEvent, AudioPort, QueueState, Track } from '@renaissance/core';
+import type { AudioEvent, AudioPort, QueueState, RepeatMode, Track } from '@renaissance/core';
 
+import { i18n } from './i18n';
+import { libraryStore } from './library';
+import { debug } from './log';
 import { networkFor } from './network';
 import { sessionStore } from './session';
 import { settingsStore } from './settings';
+import { toast } from './toast';
 
 export class DomAudioPort implements AudioPort {
   private slots: [HTMLAudioElement, HTMLAudioElement];
@@ -108,7 +112,9 @@ export class DomAudioPort implements AudioPort {
   }
 
   takeOver(url: string): boolean {
-    if (this.preloadedUrl !== url || this.spare.src !== url) return false;
+    // A spare whose stream failed (refused while this one was refused too) is not adopted: the
+    // caller loads the track afresh instead of inheriting the error.
+    if (this.preloadedUrl !== url || this.spare.src !== url || this.spare.error) return false;
     const old = this.el;
     this.detach(old);
     old.pause();
@@ -145,9 +151,32 @@ export class DomAudioPort implements AudioPort {
 
 const QUEUE_KEY = 'renaissance.queue';
 
+/**
+ * The persisted queue (F22): the id of the song behind each key, with the queue's keys and
+ * bookkeeping, never the songs themselves. A 20,000-song shuffle of the whole library is under a
+ * megabyte this way and about 16 MB as songs, which no browser's localStorage holds (func AA). The
+ * songs come back from the library snapshot on restore; one the library no longer has is dropped.
+ */
 interface SavedQueue {
   userId: string;
-  queue: QueueState;
+  version: 2;
+  /** The song behind each key, aligned with `keys`. */
+  ids: string[];
+  keys: number[];
+  orderKeys: number[];
+  index: number;
+  history: number[];
+  nextKey: number;
+  shuffle: boolean;
+  albumAware: boolean;
+  repeat: RepeatMode;
+  position: number;
+}
+
+/** The shape before version 2, whole songs; still read once so an upgrade keeps the queue. */
+interface LegacySavedQueue {
+  userId: string;
+  queue: unknown;
   position: number;
 }
 
@@ -155,12 +184,28 @@ function queueKey(userId: string): string {
   return `${QUEUE_KEY}.${userId}`;
 }
 
-export function saveQueue(userId: string, queue: QueueState, position: number): void {
+/** Write the queue for this user; false when the browser refused (quota, private window). */
+export function saveQueue(userId: string, queue: QueueState, position: number): boolean {
   try {
-    const saved: SavedQueue = { userId, queue, position };
+    const saved: SavedQueue = {
+      userId,
+      version: 2,
+      ids: queue.items.map((t) => t.id),
+      keys: queue.keys,
+      orderKeys: queue.orderKeys,
+      index: queue.index,
+      history: queue.history,
+      nextKey: queue.nextKey,
+      shuffle: queue.shuffle,
+      albumAware: queue.albumAware,
+      repeat: queue.repeat,
+      position,
+    };
     localStorage.setItem(queueKey(userId), JSON.stringify(saved));
-  } catch {
-    /* storage full or unavailable: the queue lasts the session */
+    return true;
+  } catch (error) {
+    debug('queue save failed', error);
+    return false;
   }
 }
 
@@ -173,19 +218,85 @@ export function forgetQueue(userId: string): void {
   }
 }
 
-export function loadQueue(userId: string): { queue: QueueState; position: number } | null {
+const isInts = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((v) => Number.isInteger(v));
+
+/**
+ * Read a user's saved queue, with the songs looked up in the library by id. A song the library no
+ * longer holds is left out; when the current song is one of them, the song after it is current and
+ * the position starts from zero. Nothing left, or garbage, is `null`.
+ */
+export function loadQueue(
+  userId: string,
+  lookup: (id: string) => Track | undefined,
+): { queue: QueueState; position: number } | null {
   try {
     const raw = localStorage.getItem(queueKey(userId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<SavedQueue>;
-    const queue = parseQueue(parsed.queue);
-    if (!queue.items.length) return null;
+    const parsed = JSON.parse(raw) as Partial<SavedQueue & LegacySavedQueue>;
     const position =
       typeof parsed.position === 'number' && parsed.position >= 0 ? parsed.position : 0;
-    return { queue, position };
+    if (parsed.version !== 2) {
+      const queue = parseQueue(parsed.queue);
+      return queue.items.length ? { queue, position } : null;
+    }
+    const rehydrated = rehydrate(parsed, lookup);
+    if (!rehydrated || !rehydrated.queue.items.length) return null;
+    return { queue: rehydrated.queue, position: rehydrated.currentKept ? position : 0 };
   } catch {
     return null;
   }
+}
+
+function rehydrate(
+  saved: Partial<SavedQueue>,
+  lookup: (id: string) => Track | undefined,
+): { queue: QueueState; currentKept: boolean } | null {
+  const { ids, keys, orderKeys, history, index } = saved;
+  if (
+    !Array.isArray(ids) ||
+    !isInts(keys) ||
+    !isInts(orderKeys) ||
+    !isInts(history) ||
+    ids.length !== keys.length ||
+    orderKeys.length !== keys.length ||
+    !Number.isInteger(index) ||
+    (index as number) < -1 ||
+    (index as number) >= ids.length
+  ) {
+    return null;
+  }
+  const at = index as number;
+  const byKey = new Map<number, Track>();
+  const items: Track[] = [];
+  const keptKeys: number[] = [];
+  let keptBefore = 0;
+  let currentKept = false;
+  ids.forEach((id, i) => {
+    const key = keys[i] as number;
+    const track = typeof id === 'string' ? lookup(id) : undefined;
+    if (!track) return;
+    byKey.set(key, track);
+    items.push(track);
+    keptKeys.push(key);
+    if (i < at) keptBefore += 1;
+    if (i === at) currentKept = true;
+  });
+  const keptOrderKeys = orderKeys.filter((key) => byKey.has(key));
+  const queue: QueueState = {
+    items,
+    index: at < 0 ? -1 : currentKept ? keptBefore : Math.min(keptBefore, items.length - 1),
+    order: keptOrderKeys.map((key) => byKey.get(key) as Track),
+    keys: keptKeys,
+    orderKeys: keptOrderKeys,
+    history: history.filter((key) => byKey.has(key)),
+    nextKey:
+      typeof saved.nextKey === 'number' ? saved.nextKey : Math.max(-1, ...keys, ...orderKeys) + 1,
+    shuffle: saved.shuffle === true,
+    albumAware: saved.albumAware === true,
+    repeat: saved.repeat === 'all' || saved.repeat === 'one' ? saved.repeat : 'off',
+  };
+  return { queue, currentKept };
 }
 
 let player: Player | null = null;
@@ -214,6 +325,15 @@ export function getPlayer(): Player {
   return created;
 }
 
+/** A save that fails is said once per page: the queue still works, it just lasts the session. */
+let saveFailureReported = false;
+
+function persist(userId: string, queue: QueueState, position: number): void {
+  if (saveQueue(userId, queue, position) || saveFailureReported) return;
+  saveFailureReported = true;
+  toast(i18n.t('queue.saveFailed'), { tone: 'danger' });
+}
+
 function attachPersistence(p: Player): void {
   let positionTimer: ReturnType<typeof setTimeout> | undefined;
   let lastQueue: QueueState | null = null;
@@ -223,7 +343,7 @@ function attachPersistence(p: Player): void {
     if (snapshot.queue !== lastQueue) {
       // A queue change is saved at once; a reload a moment later must find it.
       lastQueue = snapshot.queue;
-      saveQueue(userId, snapshot.queue, Math.floor(snapshot.position));
+      persist(userId, snapshot.queue, Math.floor(snapshot.position));
       return;
     }
     // The position is saved at most every five seconds, without postponing itself.
@@ -231,18 +351,33 @@ function attachPersistence(p: Player): void {
     positionTimer = setTimeout(() => {
       positionTimer = undefined;
       const current = p.snapshot;
-      saveQueue(userId, current.queue, Math.floor(current.position));
+      persist(userId, current.queue, Math.floor(current.position));
     }, 5000);
   });
 }
 
-/** Restore the saved queue for a user once, after sign-in; nothing plays until Play is pressed. */
+/**
+ * Restore the saved queue for a user once, after sign-in; nothing plays until Play is pressed. The
+ * songs come from the library snapshot, so this waits for the cache to be read (and, on a first
+ * sign-in, for the first sync) and gives up if the user signs out meanwhile.
+ */
 export function restoreQueue(userId: string): void {
-  const saved = loadQueue(userId);
-  if (!saved) return;
   const p = getPlayer();
   if (p.snapshot.queue.items.length) return;
-  p.restore(saved.queue, saved.position);
+  const attempt = (): boolean => {
+    const { snapshot, ready, sync } = libraryStore.get();
+    const firstSync =
+      !ready || sync.status === 'loading' || (sync.status === 'syncing' && !snapshot.syncedAt);
+    if (firstSync) return false;
+    const byId = new Map(snapshot.tracks.map((t) => [t.id, t]));
+    const saved = loadQueue(userId, (id) => byId.get(id));
+    if (saved && !p.snapshot.queue.items.length) p.restore(saved.queue, saved.position);
+    return true;
+  };
+  if (attempt()) return;
+  const unsubscribe = libraryStore.subscribe(() => {
+    if (sessionStore.get().session?.userId !== userId || attempt()) unsubscribe();
+  });
 }
 
 export function artworkUrl(track: Track, width: number): string | null {
@@ -280,7 +415,7 @@ function attachMediaSession(p: Player): void {
           return src ? [{ src, sizes: `${size}x${size}`, type: 'image/jpeg' }] : [];
         });
         ms.metadata = new MediaMetadata({
-          title: track.title,
+          title: track.title || i18n.t('library.untitled'),
           artist: track.artistName,
           album: track.albumTitle ?? '',
           artwork: art,
@@ -311,4 +446,5 @@ function attachMediaSession(p: Player): void {
 export function resetPlayerForTests(): void {
   player?.destroy();
   player = null;
+  saveFailureReported = false;
 }

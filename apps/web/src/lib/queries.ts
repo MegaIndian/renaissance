@@ -95,6 +95,8 @@ export function useAlbum(albumId: string | undefined) {
     queryKey: queryKeys.album(albumId ?? ''),
     queryFn: () => library().album(albumId ?? ''),
     enabled: !!albumId && !cached && sessionStore.get().status === 'signedIn',
+    // One 404 is the answer; a retry only delays "not on the server any more" (design AE).
+    retry: false,
   });
   return { ...query, album: cached ?? query.data };
 }
@@ -112,6 +114,7 @@ export function useArtist(artistId: string | undefined) {
     queryKey: queryKeys.artist(artistId ?? ''),
     queryFn: () => library().artist(artistId ?? ''),
     enabled: !!artistId && sessionStore.get().status === 'signedIn',
+    retry: false,
   });
   const cached = byId ?? (query.data ? findArtist(artists, undefined, query.data.name) : undefined);
   const artist =

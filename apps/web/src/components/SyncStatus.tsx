@@ -20,7 +20,8 @@ export function SyncStatus() {
   } else if (sync.status === 'syncing' || sync.status === 'loading') {
     text = snapshot.syncedAt ? t('player.loading') : t('library.syncingFirst');
   } else if (sync.status === 'error') {
-    text = t('library.syncFailed');
+    // No "last time" to fall back on when the very first sync failed.
+    text = snapshot.syncedAt ? t('library.syncFailed') : t('library.firstSyncFailed');
   } else if (snapshot.syncedAt) {
     text = t('library.syncedAt', { when: relativeTime(snapshot.syncedAt, t) });
   }

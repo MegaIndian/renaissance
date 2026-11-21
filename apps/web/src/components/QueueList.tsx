@@ -2,6 +2,7 @@ import { playedBefore, upNext } from '@renaissance/core';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { titleOf } from '../lib/names';
 import { getPlayer } from '../lib/player';
 import { toast } from '../lib/toast';
 import { usePlayer } from '../lib/usePlayer';
@@ -34,7 +35,7 @@ export function QueueList() {
     player.move(from, to);
     toast(
       t('playlist.reorderedTo', {
-        title: queue.items[from]?.title ?? '',
+        title: queue.items[from] ? titleOf(queue.items[from], t) : '',
         position: to - queue.index,
       }),
       { undo: () => player.move(to, from) },
@@ -140,7 +141,7 @@ export function QueueList() {
                         onSelect: () => {
                           const before = queue;
                           player.removeAt(queueIndex);
-                          toast(t('queue.removed', { title: track.title }), {
+                          toast(t('queue.removed', { title: titleOf(track, t) }), {
                             undo: () => player.restore(before, player.snapshot.position),
                           });
                         },

@@ -12,6 +12,8 @@ import { openDB } from 'idb';
 import type { DBSchema, IDBPDatabase } from 'idb';
 import { z } from 'zod';
 
+import { swallow } from './log';
+
 const DB_NAME = 'renaissance-vault';
 const KEY_ID = 'session-key';
 const SESSION_ID = 'session';
@@ -115,7 +117,7 @@ export async function loadSession(): Promise<{ session: Session; mode: VaultMode
     }
     return { session: parsed.data, mode: record.mode };
   } catch {
-    await db.delete('sessions', SESSION_ID).catch(() => undefined);
+    await db.delete('sessions', SESSION_ID).catch(swallow('vault delete failed'));
     return null;
   } finally {
     db.close();

@@ -8,6 +8,7 @@ import { FavoriteButton } from './FavoriteButton';
 import { Icon } from './Icon';
 import { TrackMenu } from './TrackMenu';
 import type { MenuItem } from './Menu';
+import { titleOf } from '../lib/names';
 import { focusRing } from './focus';
 
 /** Row height in rem: 56 px at the 16 px root, 70 px in simple mode (DESIGN.md rule 5). */
@@ -62,6 +63,7 @@ export function TrackRow({
   dragHandleProps?: React.HTMLAttributes<HTMLElement>;
 }) {
   const { t } = useTranslation();
+  const title = titleOf(track, t);
   const sub =
     subtitle ??
     [track.artistName || t('library.unknownArtist'), track.albumTitle].filter(Boolean).join(' · ');
@@ -95,12 +97,7 @@ export function TrackRow({
         </span>
       ) : showArt ? (
         <span className="relative shrink-0">
-          <Artwork
-            imageId={track.imageId}
-            label={track.title}
-            index={colorIndex(track.id)}
-            size="xs"
-          />
+          <Artwork imageId={track.imageId} label={title} index={colorIndex(track.id)} size="xs" />
           {playing ? (
             <span
               aria-hidden
@@ -115,14 +112,12 @@ export function TrackRow({
         type="button"
         onClick={onPlay}
         aria-label={
-          playing && !paused
-            ? t('actions.pause', { title: track.title })
-            : t('actions.play', { title: track.title })
+          playing && !paused ? t('actions.pause', { title }) : t('actions.play', { title })
         }
         aria-current={playing ? 'true' : undefined}
         className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-sm py-1 text-left ${focusRing}`}
       >
-        <span className="w-full truncate text-body font-medium text-foreground">{track.title}</span>
+        <span className="w-full truncate text-body font-medium text-foreground">{title}</span>
         {sub ? (
           <span className="w-full truncate text-caption text-muted-foreground">{sub}</span>
         ) : null}

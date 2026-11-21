@@ -1,6 +1,7 @@
 import { addCatalog, createI18n, hasCatalog, isLanguage } from '@renaissance/core/i18n';
 import type { Language } from '@renaissance/core/i18n';
 
+import { swallow } from './log';
 import { toast } from './toast';
 
 const STORAGE_KEY = 'renaissance.language';
@@ -60,7 +61,7 @@ export function ensureCatalog(language: Language): Promise<void> {
 /** main.tsx renders after this, so a Gujarati visit never flashes English. */
 export const i18nReady: Promise<void> = ensureCatalog(
   isLanguage(i18n.language) ? i18n.language : 'en',
-).catch(() => undefined);
+).catch(swallow('catalog load failed'));
 
 /** `html lang` follows the active language from the first paint (design F, functionality G). */
 export function applyLanguage(language: string): void {

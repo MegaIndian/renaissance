@@ -31,6 +31,8 @@ import type {
 import { openDB } from 'idb';
 import type { DBSchema, IDBPDatabase } from 'idb';
 
+import { debug, swallow } from './log';
+
 interface LibrarySchema extends DBSchema {
   track: { key: string; value: Track };
   album: { key: string; value: Album };
@@ -187,6 +189,13 @@ let active: {
   retry: (ms: number) => void;
 } | null = null;
 let syncing: Promise<void> | null = null;
+/** Whether the running sync is a full one, so a Rebuild during it is not chained twice. */
+let syncingFull = false;
+/**
+ * Ids a server push named that could not be fetched (a timeout, a 401 mid-flight). The delta that
+ * follows cannot see them (ADR 0013), so the next refresh fetches them itself (prod AH).
+ */
+let missedIds = new Set<string>();
 /**
  * Local patches made while a sync is in flight. The sync built its snapshot from a read that began
  * before the patch, so each is replayed on the result before it is shown (a heart tapped during a
@@ -214,13 +223,19 @@ export function dbName(session: Session): string {
   return `renaissance-library-${session.server.id}-${session.userId}`.replace(/[^\w.-]/g, '_');
 }
 
-/** Refresh from the server; one at a time, later calls join the running one. */
+/**
+ * Refresh from the server; one at a time, later calls join the running one. A full rebuild asked for
+ * while a delta runs follows it instead of being dropped (func AE).
+ */
 export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> {
   const current = active;
   if (!current) return Promise.resolve();
-  if (syncing) return syncing;
+  if (syncing) {
+    if (options.full && !syncingFull) return syncing.then(() => refreshLibrary({ full: true }));
+    return syncing;
+  }
   patchSync({ status: 'syncing', error: null, progress: null });
-  syncing = syncLibrary(current.adapter.library(current.session), current.store, {
+  const mine: Promise<void> = syncLibrary(current.adapter.library(current.session), current.store, {
     ...(options.full ? { full: true } : {}),
     onProgress: (progress) => patchSync({ progress }),
   })
@@ -233,15 +248,20 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
         snapshot = applied.snapshot;
         // The disk copy may hold the server's row from the sync; the patch is the newer truth.
         if (applied.changed.length) {
-          void current.store.write(patch.kind, applied.changed).catch(() => undefined);
+          void current.store
+            .write(patch.kind, applied.changed)
+            .catch(swallow('cache write failed'));
         }
         if (applied.removed.length) {
-          void current.store.remove(patch.kind, applied.removed).catch(() => undefined);
+          void current.store
+            .remove(patch.kind, applied.removed)
+            .catch(swallow('cache remove failed'));
         }
       }
       pendingPatches = [];
       setSnapshot(snapshot);
       patchSync({ status: 'idle', progress: null, mode: result.mode });
+      void fetchMissed(current);
     })
     .catch((error: unknown) => {
       if (active !== current) return;
@@ -256,10 +276,31 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
       retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
     })
     .finally(() => {
-      syncing = null;
-      pendingPatches = [];
+      // A sync that lost the race (sign-out, then a new sign-in) must not clear the new user's.
+      if (syncing === mine) {
+        syncing = null;
+        pendingPatches = [];
+      }
     });
-  return syncing;
+  syncing = mine;
+  syncingFull = options.full === true;
+  return mine;
+}
+
+/** Fetch what earlier pushes named and could not get; a failure keeps the ids for the next time. */
+async function fetchMissed(current: NonNullable<typeof active>): Promise<void> {
+  if (!missedIds.size) return;
+  const ids = [...missedIds].slice(0, PUSH_FETCH_LIMIT);
+  missedIds = new Set([...missedIds].filter((id) => !ids.includes(id)));
+  try {
+    const fetched = await current.adapter.library(current.session).musicByIds(ids);
+    if (active !== current) return;
+    if (fetched.tracks.length) addItems('track', fetched.tracks);
+    if (fetched.albums.length) addItems('album', fetched.albums);
+  } catch (error) {
+    if (active === current) for (const id of ids) missedIds.add(id);
+    debug('missed ids fetch failed', error);
+  }
 }
 
 /** Called when the session changes: open this user's cache, show it, then refresh. */
@@ -271,7 +312,7 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
   patchSync({ status: 'loading', progress: null, error: null });
   const { store, persisted } = await openLibraryStore(key);
   if (mine !== generation) {
-    void store.close?.().catch(() => undefined);
+    void store.close?.().catch(swallow('store close failed'));
     return;
   }
   libraryStore.set((s) => ({ ...s, persisted }));
@@ -286,7 +327,7 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
     onUserDataChanged: (changes) => {
       // The push names the items: patch them now. The delta that follows cannot see a favourite
       // or a play on 10.10.7 (ADR 0013), so this is how another device's heart reaches this one.
-      void applyUserDataChanges(changes).catch(() => undefined);
+      void applyUserDataChanges(changes).catch(swallow('push apply failed'));
       schedule();
     },
   });
@@ -317,7 +358,7 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
       if (retryTimer) clearTimeout(retryTimer);
       window.removeEventListener('online', onOnline);
       channel?.close();
-      void store.close?.().catch(() => undefined);
+      void store.close?.().catch(swallow('store close failed'));
     },
   };
   try {
@@ -335,7 +376,9 @@ export function stopLibrary(): void {
   active?.stop();
   active = null;
   syncing = null;
+  syncingFull = false;
   pendingPatches = [];
+  missedIds = new Set();
   libraryStore.set({
     snapshot: emptySnapshot,
     index: new LibraryIndex(),
@@ -402,8 +445,10 @@ export function patchItems<K extends CacheKind>(
   if (syncing) pendingPatches.push({ kind, update });
   setSnapshot(snapshot);
   if (active) {
-    if (changed.length) void active.store.write(kind, changed).catch(() => undefined);
-    if (removed.length) void active.store.remove(kind, removed).catch(() => undefined);
+    if (changed.length) void active.store.write(kind, changed).catch(swallow('cache write failed'));
+    if (removed.length) {
+      void active.store.remove(kind, removed).catch(swallow('cache remove failed'));
+    }
     if (options.broadcast !== false) active.broadcast();
   }
 }
@@ -447,7 +492,15 @@ export async function applyUserDataChanges(changes: UserDataChange[]): Promise<v
     .slice(0, PUSH_FETCH_LIMIT);
   const current = active;
   if (!missing.length || !current) return;
-  const fetched = await current.adapter.library(current.session).musicByIds(missing);
+  let fetched: Awaited<ReturnType<ReturnType<ServerAdapter['library']>['musicByIds']>>;
+  try {
+    fetched = await current.adapter.library(current.session).musicByIds(missing);
+  } catch (error) {
+    // Kept for the next refresh: the delta cannot bring them (ADR 0013).
+    if (active === current) for (const id of missing) missedIds.add(id);
+    debug('push fetch failed', error);
+    return;
+  }
   if (active !== current) return;
   if (fetched.tracks.length) addItems('track', fetched.tracks);
   if (fetched.albums.length) addItems('album', fetched.albums);
@@ -470,7 +523,7 @@ export function addItems(kind: CacheKind, items: CacheItem[]): void {
     [listKey]: [...(state.snapshot[listKey] as CacheItem[]), ...fresh],
   } as LibrarySnapshot);
   if (active) {
-    void active.store.write(kind, fresh).catch(() => undefined);
+    void active.store.write(kind, fresh).catch(swallow('cache write failed'));
     active.broadcast();
   }
 }

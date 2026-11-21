@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
 import { playNow } from '../lib/actions';
+import { artistNameOf } from '../lib/names';
 import { useArtist, useArtistItems, useSimilarArtists, useSnapshot } from '../lib/queries';
 import { useMode } from '../lib/mode';
 import { Artwork, colorIndex } from '../components/Artwork';
@@ -47,8 +48,16 @@ export function ArtistPage() {
   );
 
   if (!artist) {
-    return isLoading ? null : <EmptyState title={t('artist.notFound')} quiet />;
+    // The server is asked once (no retry): say so meanwhile, not a blank page (design AE).
+    return isLoading ? (
+      <p role="status" className="text-caption text-muted-foreground">
+        {t('player.loading')}
+      </p>
+    ) : (
+      <EmptyState title={t('artist.notFound')} quiet />
+    );
   }
+  const name = artistNameOf(artist, t);
   const bio = artist.bio?.trim();
   const shortBio = bio && bio.length > 280 && !bioOpen ? `${bio.slice(0, 280).trimEnd()}…` : bio;
 
@@ -58,14 +67,14 @@ export function ArtistPage() {
         <div className="w-32 shrink-0 sm:w-40">
           <Artwork
             imageId={artist.imageId}
-            label={artist.name}
+            label={name}
             index={colorIndex(artist.id)}
             size="lg"
             rounded="rounded-pill"
           />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <h1 className="text-display font-semibold tracking-tight">{artist.name}</h1>
+          <h1 className="text-display font-semibold tracking-tight">{name}</h1>
           <p className="text-caption text-muted-foreground">
             {[
               t('library.albumsCount', { count: albums.length }),

@@ -9,6 +9,7 @@ import {
   deletePlaylist,
   renamePlaylist,
 } from '../lib/playlist-actions';
+import { playlistNameOf } from '../lib/names';
 import { closeDialog, dialogStore } from '../lib/dialogs';
 import { useSnapshot } from '../lib/queries';
 import { useStoreValue } from '../lib/useStore';
@@ -75,12 +76,12 @@ function AddToPlaylist({ tracks }: { tracks: Track[] }) {
             >
               <Artwork
                 imageId={playlist.imageId}
-                label={playlist.name}
+                label={playlistNameOf(playlist, t)}
                 index={colorIndex(playlist.id)}
                 size="xs"
               />
               <span className="flex min-w-0 flex-col">
-                <span className="truncate">{playlist.name}</span>
+                <span className="truncate">{playlistNameOf(playlist, t)}</span>
                 <span className="text-caption text-muted-foreground">
                   {t('library.tracksCount', { count: playlist.trackCount })}
                 </span>

@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
 import { useMode } from '../lib/mode';
+import { titleOf } from '../lib/names';
 import { useCurrentTrack, usePlayer } from '../lib/usePlayer';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { EmptyState } from '../components/EmptyState';
@@ -39,7 +40,7 @@ export function NowPlaying() {
       <div className="now-playing-art lg:w-2/5 lg:shrink-0" data-testid="now-playing-art">
         <Artwork
           imageId={track.imageId}
-          label={track.title}
+          label={titleOf(track, t)}
           index={colorIndex(track.id)}
           size="lg"
           className="shadow-art"
@@ -62,7 +63,7 @@ export function NowPlaying() {
         </div>
         <div className="flex items-start gap-3">
           <div className="flex min-w-0 flex-1 flex-col">
-            <p className="truncate text-title font-semibold">{track.title}</p>
+            <p className="truncate text-title font-semibold">{titleOf(track, t)}</p>
             {track.artistIds[0] ? (
               <Link
                 to={`/artist/${encodeURIComponent(track.artistIds[0])}`}

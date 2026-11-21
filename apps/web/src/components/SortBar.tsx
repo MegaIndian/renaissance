@@ -142,6 +142,7 @@ export function SortBar({
             <span
               className={`inline-flex min-h-6 items-center gap-1 rounded-sm border px-2 py-1 text-caption ${year ? 'border-primary bg-muted text-foreground' : 'border-border bg-secondary text-secondary-foreground'}`}
             >
+              <Icon name="filter" className="size-3.5" />
               {year ?? t('library.filterYear')}
             </span>
           }

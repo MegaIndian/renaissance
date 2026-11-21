@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
+import { artistNameOf, playlistNameOf, titleOf } from '../lib/names';
 import { playNow } from '../lib/actions';
 import { useLibrary, useSession } from '../lib/queries';
 import { recentSearchesStore, rememberRecent, clearRecent } from '../lib/recent';
@@ -304,7 +305,12 @@ function ResultRow({
       </div>
     );
   }
-  const title = 'title' in hit.item ? hit.item.title : hit.item.name;
+  const title =
+    'title' in hit.item
+      ? titleOf(hit.item, t)
+      : hit.kind === 'artist'
+        ? artistNameOf(hit.item, t)
+        : playlistNameOf(hit.item, t);
   const kindLabel = t(
     `search.${hit.kind === 'track' ? 'tracks' : hit.kind === 'album' ? 'albums' : hit.kind === 'artist' ? 'artists' : 'playlists'}`,
   );

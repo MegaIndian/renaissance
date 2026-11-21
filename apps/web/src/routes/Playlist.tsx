@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 
+import { playlistNameOf, titleOf } from '../lib/names';
 import { addToQueue, playNext, playNow } from '../lib/actions';
 import { movePlaylistEntry, removeFromPlaylist } from '../lib/playlist-actions';
 import { openDialog } from '../lib/dialogs';
@@ -48,7 +49,7 @@ export function PlaylistPage() {
     setOver(null);
     const entry = tracks[from];
     if (from === to || !entry) return;
-    void movePlaylistEntry(playlist, entry.entryId, to, entry.title, t, queryClient);
+    void movePlaylistEntry(playlist, entry.entryId, to, titleOf(entry, t), t, queryClient);
   };
 
   return (
@@ -57,13 +58,15 @@ export function PlaylistPage() {
         <div className="w-40 shrink-0 sm:w-48">
           <Artwork
             imageId={playlist.imageId}
-            label={playlist.name}
+            label={playlistNameOf(playlist, t)}
             index={colorIndex(playlist.id)}
             size="lg"
           />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <h1 className="text-display font-semibold tracking-tight">{playlist.name}</h1>
+          <h1 className="text-display font-semibold tracking-tight">
+            {playlistNameOf(playlist, t)}
+          </h1>
           <p className="text-caption text-muted-foreground">
             {[
               t('library.tracksCount', { count: tracks.length || playlist.trackCount }),
@@ -173,7 +176,7 @@ export function PlaylistPage() {
                         playlist,
                         entry.entryId,
                         i - 1,
-                        entry.title,
+                        titleOf(entry, t),
                         t,
                         queryClient,
                       ),
@@ -188,7 +191,7 @@ export function PlaylistPage() {
                         playlist,
                         entry.entryId,
                         i + 1,
-                        entry.title,
+                        titleOf(entry, t),
                         t,
                         queryClient,
                       ),
@@ -202,7 +205,7 @@ export function PlaylistPage() {
                       void removeFromPlaylist(
                         playlist,
                         [entry.entryId],
-                        entry.title,
+                        titleOf(entry, t),
                         t,
                         queryClient,
                         { tracks: [entry] },

@@ -7,6 +7,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { Playlist, PlaylistEntry, Track } from '@renaissance/core';
 import type { TFunction } from 'i18next';
 
+import { titleOf } from './names';
 import { addItems, patchItems } from './library';
 import { queryKeys } from './queries';
 import { sessionStore } from './session';
@@ -127,9 +128,16 @@ export async function addToPlaylist(
         : t('playlist.addedCount', { name: playlist.name, count: tracks.length }),
       {
         undo: () =>
-          void removeFromPlaylist(playlist, added, tracks[0]?.title ?? '', t, queryClient, {
-            quiet: true,
-          }),
+          void removeFromPlaylist(
+            playlist,
+            added,
+            tracks[0] ? titleOf(tracks[0], t) : '',
+            t,
+            queryClient,
+            {
+              quiet: true,
+            },
+          ),
       },
     );
   } catch {

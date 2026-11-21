@@ -2,6 +2,7 @@ import type { Track } from '@renaissance/core';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
+import { titleOf } from '../lib/names';
 import { addToQueue, playNext, toggleFavorite } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { Menu } from './Menu';
@@ -65,5 +66,5 @@ export function TrackMenu({
       : []),
     ...extra,
   ];
-  return <Menu label={t('track.menu', { title: track.title })} items={items} />;
+  return <Menu label={t('track.menu', { title: titleOf(track, t) })} items={items} />;
 }

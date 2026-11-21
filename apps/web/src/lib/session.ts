@@ -6,6 +6,7 @@
 import { JellyfinAdapter, ServerError, createStore } from '@renaissance/core';
 import type { Credentials, Server, Session } from '@renaissance/core';
 
+import { swallow } from './log';
 import { clearSession, loadSession, saveSession } from './vault';
 import type { VaultMode } from './vault';
 
@@ -224,7 +225,7 @@ export function expireSession(): void {
   const { status, session } = sessionStore.get();
   if (status !== 'signedIn' || !session) return;
   sessionStore.set(signedOut('expired'));
-  void clearSession().catch(() => undefined);
+  void clearSession().catch(swallow('vault clear failed'));
   broadcastSignedOut(session, 'expired');
 }
 
@@ -251,9 +252,9 @@ export async function signInWithQuickConnect(server: Server, secret: string): Pr
 export async function signOut(): Promise<void> {
   const { adapter, session } = sessionStore.get();
   sessionStore.set(signedOut());
-  await clearSession().catch(() => undefined);
+  await clearSession().catch(swallow('vault clear failed'));
   if (session) broadcastSignedOut(session, null);
-  if (adapter && session) await adapter.signOut(session).catch(() => undefined);
+  if (adapter && session) await adapter.signOut(session).catch(swallow('server sign-out failed'));
 }
 
 let restoring: Promise<void> | null = null;

@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router';
 import { playNow } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
+import { artistNameOf, titleOf } from '../lib/names';
 import { useLibrary, useSession } from '../lib/queries';
 import { Button, LinkButton } from '../components/Button';
 import { AlbumCard, ArtistCard, LabelCard, PlaylistCard } from '../components/Cards';
@@ -168,10 +169,19 @@ export function Library() {
     playlists: t('library.playlists'),
   };
   const hasFilters = favoritesOnly || !!genre || !!year;
+  // The cache is still being read, or the first sync over an empty cache is running: no count line
+  // (it would say 0) and no empty sentence (nothing is known yet).
+  const firstSync =
+    !ready || sync.status === 'loading' || (sync.status === 'syncing' && !snapshot.syncedAt);
+  // The first sync failed and there is no last time to fall back on.
+  const firstSyncFailed = sync.status === 'error' && !snapshot.syncedAt;
+  const showCount = !firstSync && !firstSyncFailed;
   const empty = (count: number) =>
     count === 0 ? (
-      !ready || sync.status === 'loading' || (sync.status === 'syncing' && !snapshot.syncedAt) ? (
+      firstSync ? (
         <EmptyState title={t('library.syncingFirst')} quiet />
+      ) : firstSyncFailed ? (
+        <EmptyState title={t('library.firstSyncFailed')} quiet />
       ) : (
         <EmptyState
           title={hasFilters ? t('library.nothingMatches') : t('library.nothingHere')}
@@ -238,7 +248,7 @@ export function Library() {
       {section === 'tracks' ? (
         <>
           <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
-            {ready ? <span>{t('library.tracksCount', { count: tracks.length })}</span> : null}
+            {showCount ? <span>{t('library.tracksCount', { count: tracks.length })}</span> : null}
             {tracks.length ? (
               <>
                 <Button tone="primary" className="min-h-6 py-1" onClick={() => playNow(tracks, 0)}>
@@ -261,17 +271,21 @@ export function Library() {
       ) : null}
       {section === 'albums' ? (
         <>
-          <p className="text-caption text-muted-foreground">
-            {t('library.albumsCount', { count: albums.length })}
-          </p>
+          {showCount ? (
+            <p className="text-caption text-muted-foreground">
+              {t('library.albumsCount', { count: albums.length })}
+            </p>
+          ) : null}
           {empty(albums.length) ?? <AlbumGrid albums={albums} view={view} />}
         </>
       ) : null}
       {section === 'artists' || section === 'albumArtists' ? (
         <>
-          <p className="text-caption text-muted-foreground">
-            {t('library.artistsCount', { count: artists.length })}
-          </p>
+          {showCount ? (
+            <p className="text-caption text-muted-foreground">
+              {t('library.artistsCount', { count: artists.length })}
+            </p>
+          ) : null}
           {empty(artists.length) ?? <ArtistGrid artists={artists} view={view} />}
         </>
       ) : null}
@@ -326,7 +340,11 @@ export function Library() {
             </Button>
           </div>
           {playlists.length === 0 ? (
-            <EmptyState title={t('playlist.empty')} description={t('playlist.emptyBody')} />
+            firstSync || firstSyncFailed ? (
+              empty(0)
+            ) : (
+              <EmptyState title={t('playlist.empty')} description={t('playlist.emptyBody')} />
+            )
           ) : (
             <CardGrid
               items={playlists}
@@ -380,7 +398,7 @@ function AlbumGrid({ albums, view }: { albums: Album[]; view: View }) {
             className="flex h-14 items-center gap-3 border-b border-border px-2 hover:bg-muted/40"
           >
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-body font-medium">{album.title}</span>
+              <span className="truncate text-body font-medium">{titleOf(album, t)}</span>
               <span className="truncate text-caption text-muted-foreground">
                 {[
                   album.artistName || t('library.unknownArtist'),
@@ -402,6 +420,7 @@ function AlbumGrid({ albums, view }: { albums: Album[]; view: View }) {
 }
 
 function ArtistGrid({ artists, view }: { artists: Artist[]; view: View }) {
+  const { t } = useTranslation();
   const rowHeight = useTrackRowHeight();
   if (view === 'list') {
     return (
@@ -414,7 +433,7 @@ function ArtistGrid({ artists, view }: { artists: Artist[]; view: View }) {
             to={`/artist/${encodeURIComponent(artist.id)}`}
             className="flex h-14 items-center gap-3 border-b border-border px-2 text-body font-medium hover:bg-muted/40"
           >
-            <span className="truncate">{artist.name}</span>
+            <span className="truncate">{artistNameOf(artist, t)}</span>
           </Link>
         )}
       />
