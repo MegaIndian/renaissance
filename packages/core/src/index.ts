@@ -12,3 +12,6 @@ export {
 export { greetingKey } from './greeting';
 export { trimTrailingSlashes } from './url';
 export type { JellyfinAdapterOptions } from './adapters/jellyfin';
+export * from './hub';
+export { createHubClient, HubError as HubClientError, parseSseChunk } from './hub-client';
+export type { HubClient, HubClientOptions } from './hub-client';
