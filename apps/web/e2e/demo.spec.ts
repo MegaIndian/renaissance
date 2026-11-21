@@ -416,6 +416,56 @@ test.describe('against the demo Jellyfin', () => {
       .toBe(false);
   });
 
+  test("on a phone the last song's menu opens above its button with every item inside the page, and the current row's glyph follows the bar", async ({
+    page,
+  }) => {
+    await signIn(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openTracks(page);
+    const main = page.getByRole('main');
+    const mainBox = (await main.boundingBox()) ?? { y: 0, height: 0 };
+    const lastRowMenu = page.getByRole('button', { name: 'More options for Sneaky Snitch' });
+    await lastRowMenu.click();
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute('data-placement', 'above');
+    const items = menu.getByRole('menuitem');
+    expect(await items.count()).toBe(6);
+    const trigger = (await lastRowMenu.boundingBox()) ?? { y: 0, height: 0 };
+    for (let i = 0; i < 6; i++) {
+      const box = (await items.nth(i).boundingBox()) ?? { y: -1, height: 0 };
+      expect(box.y, `item ${i} inside the main area`).toBeGreaterThanOrEqual(mainBox.y);
+      expect(box.y + box.height, `item ${i} above the Ask bar`).toBeLessThanOrEqual(
+        mainBox.y + mainBox.height + 1,
+      );
+      expect(box.y + box.height, `item ${i} above its trigger`).toBeLessThanOrEqual(trigger.y + 1);
+    }
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    // The first row, with the whole list below it, still opens downward.
+    await page.getByRole('button', { name: 'More options for Carefree' }).click();
+    await expect(page.getByRole('menu')).toHaveAttribute('data-placement', 'below');
+    await page.keyboard.press('Escape');
+
+    // The current row's glyph: pause while playing, play while paused, the same as the bar's button.
+    const pausePath = 'M7 5h3v14H7Zm7 0h3v14h-3Z';
+    const playPath = 'M7 5v14l11-7Z';
+    const rowGlyph = () =>
+      page
+        .locator('[data-playing] [aria-hidden] svg path, [data-playing] span[aria-hidden] path')
+        .first()
+        .getAttribute('d');
+    await page.getByRole('button', { name: 'Play Carefree' }).click();
+    const bar = page.getByRole('contentinfo');
+    await expect(bar.getByRole('button', { name: 'Pause' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Pause Carefree' })).toBeVisible();
+    expect(await rowGlyph()).toBe(pausePath);
+    await bar.getByRole('button', { name: 'Pause' }).click();
+    await expect(page.getByRole('button', { name: 'Play Carefree' })).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Play' })).toBeVisible();
+    expect(await rowGlyph()).toBe(playPath);
+  });
+
   test('the bar fits a tablet, now playing fits a desktop and a phone, and the Ask bar answers from the cache', async ({
     page,
   }) => {

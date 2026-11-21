@@ -72,13 +72,13 @@ export function useAlbumTracks(albumId: string | undefined) {
   return { ...query, tracks, fromCache: !query.data };
 }
 
-/** The server row with the cache's favourite and the higher of the two play counts. */
+/** The server row with the cache's favourite, the higher play count and the later last play. */
 export function overlayUserData(server: Track, local: Track): Track {
   const playCount = Math.max(server.playCount, local.playCount);
+  // A side without a last play counts as never played (0), so the other side's date wins.
+  const when = (iso: string | undefined): number => (iso ? Date.parse(iso) || 0 : 0);
   const lastPlayed =
-    Date.parse(local.lastPlayed ?? '') > Date.parse(server.lastPlayed ?? '')
-      ? local.lastPlayed
-      : server.lastPlayed;
+    when(local.lastPlayed) > when(server.lastPlayed) ? local.lastPlayed : server.lastPlayed;
   return {
     ...server,
     isFavorite: local.isFavorite,

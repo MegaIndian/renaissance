@@ -88,7 +88,7 @@ export function TrackRow({
           aria-hidden
         >
           {playing ? (
-            <Icon name={paused ? 'pause' : 'play'} className="mx-auto size-3.5" />
+            <Icon name={paused ? 'play' : 'pause'} className="mx-auto size-3.5" />
           ) : (
             (track.trackNumber ?? index + 1)
           )}
@@ -106,7 +106,7 @@ export function TrackRow({
               aria-hidden
               className="absolute inset-0 grid place-items-center rounded-sm bg-background/60 text-foreground"
             >
-              <Icon name={paused ? 'pause' : 'play'} className="size-4" />
+              <Icon name={paused ? 'play' : 'pause'} className="size-4" />
             </span>
           ) : null}
         </span>

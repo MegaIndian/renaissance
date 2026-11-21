@@ -1,8 +1,11 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { LibraryIndex, buildSnapshot } from '@renaissance/core';
+
 import { setLanguage } from '../lib/i18n';
+import { libraryStore } from '../lib/library';
 import { settingsStore, updateSettings } from '../lib/settings';
 import { renderApp } from '../test/render';
 import { signInFake } from '../test/fakes';
@@ -43,6 +46,28 @@ describe('Settings', () => {
     expect(screen.getAllByRole('button', { name: 'Refresh library' })).toHaveLength(1);
   });
 
+  it('the library counts wait for the cache: nothing says "0 songs" while it loads from disk', async () => {
+    setLanguage('en');
+    signInFake();
+    const empty = buildSnapshot([], [], [], [], null);
+    libraryStore.set({
+      snapshot: empty,
+      index: new LibraryIndex(empty),
+      sync: { status: 'loading', progress: null, mode: null, error: null },
+      ready: false,
+      persisted: true,
+    });
+    renderApp('/settings');
+    expect(await screen.findByRole('button', { name: 'Rebuild library' })).toBeInTheDocument();
+    expect(screen.queryByText(/songs · /)).not.toBeInTheDocument();
+    libraryStore.set({
+      ...libraryStore.get(),
+      ready: true,
+      sync: { status: 'idle', progress: null, mode: null, error: null },
+    });
+    expect(await screen.findByText('0 songs · 0 albums · 0 artists')).toBeInTheDocument();
+  });
+
   it('the avatar goes to Settings when signed in and to Sign in when not; language persists in settings', async () => {
     setViewport(390);
     setLanguage('en');
@@ -56,8 +81,9 @@ describe('Settings', () => {
     const user = userEvent.setup();
     const groups = screen.getAllByRole('radiogroup', { name: 'Language' });
     await user.click(groups.at(-1)!.querySelector('[role="radio"]:last-child') as HTMLElement);
-    expect(settingsStore.get().language).toBe('gu');
-    expect(document.documentElement.lang).toBe('gu');
+    // The choice is stored and `lang` set once the Gujarati chunk is in: wait for both.
+    await waitFor(() => expect(settingsStore.get().language).toBe('gu'));
+    await waitFor(() => expect(document.documentElement.lang).toBe('gu'));
     view.unmount();
   });
 });

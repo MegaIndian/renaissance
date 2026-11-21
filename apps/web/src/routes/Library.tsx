@@ -238,7 +238,7 @@ export function Library() {
       {section === 'tracks' ? (
         <>
           <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
-            <span>{t('library.tracksCount', { count: tracks.length })}</span>
+            {ready ? <span>{t('library.tracksCount', { count: tracks.length })}</span> : null}
             {tracks.length ? (
               <>
                 <Button tone="primary" className="min-h-6 py-1" onClick={() => playNow(tracks, 0)}>

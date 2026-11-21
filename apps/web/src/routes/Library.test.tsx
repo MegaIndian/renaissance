@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { setLanguage } from '../lib/i18n';
 import { updateSettings } from '../lib/settings';
+import { LibraryIndex, buildSnapshot } from '@renaissance/core';
+
+import { libraryStore } from '../lib/library';
 import { signInFake } from '../test/fakes';
 import { renderApp } from '../test/render';
 
@@ -67,6 +70,28 @@ describe('Library', () => {
     expect(screen.getByRole('link', { name: /2014/ })).toBeInTheDocument();
     await user.click(within(sections).getByRole('radio', { name: 'Albums' }));
     expect(screen.getByRole('link', { name: /Royalty Free/ })).toBeInTheDocument();
+  });
+
+  it('the song count waits for the cache: no "0 songs" while the library loads from disk', async () => {
+    setLanguage('en');
+    signInFake();
+    const empty = buildSnapshot([], [], [], [], null);
+    libraryStore.set({
+      snapshot: empty,
+      index: new LibraryIndex(empty),
+      sync: { status: 'loading', progress: null, mode: null, error: null },
+      ready: false,
+      persisted: true,
+    });
+    renderApp('/library?section=tracks');
+    await screen.findByRole('radiogroup', { name: 'Library section' });
+    expect(screen.queryByText(/\d+ songs?$/)).not.toBeInTheDocument();
+    libraryStore.set({
+      ...libraryStore.get(),
+      ready: true,
+      sync: { status: 'idle', progress: null, mode: null, error: null },
+    });
+    expect(await screen.findByText('0 songs')).toBeInTheDocument();
   });
 
   it('signed out: one sentence and the Sign in primary', async () => {

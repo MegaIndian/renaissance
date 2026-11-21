@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
+import { useScrollContainer } from './ScrollContainer';
 import { focusRing } from './focus';
 
 export interface MenuItem {
@@ -19,7 +20,9 @@ export interface MenuItem {
 
 /**
  * A popover menu with full keyboard support: arrows move, Home and End jump, Escape and outside
- * clicks close, focus returns to the trigger. Items are plain buttons with `role="menuitem"`.
+ * clicks close, focus returns to the trigger. Items are plain buttons with `role="menuitem"`. The
+ * list opens below the trigger, or above it when the scroll container's visible area has no room
+ * below (the last rows of a phone list) and more room above.
  */
 export function Menu({
   label,
@@ -43,6 +46,19 @@ export function Menu({
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const scroller = useScrollContainer();
+
+  // Placed before paint, on the element itself: the list must exist to be measured, and a state
+  // round trip here would draw it below first.
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (!open || !el) return;
+    const above = flipsAbove(button.current, el, scroller?.current ?? null);
+    el.classList.toggle('bottom-full', above);
+    el.classList.toggle('mb-1', above);
+    el.classList.toggle('mt-1', !above);
+    el.dataset['placement'] = above ? 'above' : 'below';
+  }, [open, scroller]);
 
   useEffect(() => {
     if (!open) return;
@@ -127,6 +143,7 @@ export function Menu({
           className={`absolute z-20 mt-1 flex min-w-48 max-w-72 flex-col rounded-md border border-border bg-card p-1 shadow-low ${
             align === 'end' ? 'right-0' : 'left-0'
           }`}
+          data-placement="below"
         >
           {items.map((item) => (
             <button
@@ -162,4 +179,27 @@ export function Menu({
       ) : null}
     </div>
   );
+}
+
+/** The gap between the trigger and the list, in CSS pixels (`mt-1` / `mb-1`). */
+const GAP_PX = 4;
+
+/**
+ * Whether the list fits better above the trigger: it would cross the scroll container's visible
+ * bottom (the viewport's when there is no container) and the room above is larger.
+ */
+export function flipsAbove(
+  trigger: HTMLElement | null,
+  menu: HTMLElement | null,
+  container: HTMLElement | null,
+): boolean {
+  if (!trigger || !menu) return false;
+  const anchor = trigger.getBoundingClientRect();
+  const height = menu.getBoundingClientRect().height;
+  const bounds = container?.getBoundingClientRect();
+  const top = bounds?.top ?? 0;
+  const bottom = bounds?.bottom ?? window.innerHeight;
+  const roomBelow = bottom - anchor.bottom;
+  const roomAbove = anchor.top - top;
+  return height + GAP_PX > roomBelow && roomAbove > roomBelow;
 }

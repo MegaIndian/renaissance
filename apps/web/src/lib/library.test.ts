@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { albums, artists, fakeAdapter, playlists, session, tracks } from '../test/fakes';
 import {
   IndexedDbLibraryStore,
+  PUSH_FETCH_LIMIT,
   addItems,
   applyUserDataChanges,
   dbName,
@@ -164,13 +165,14 @@ describe('changes while a sync runs, and changes the server pushes', () => {
     const library = adapter.library(session);
     vi.spyOn(adapter, 'library').mockReturnValue({
       ...library,
-      byIds: (kind: 'track' | 'album', ids: readonly string[]) => {
-        fetched.push(`${kind} ${ids.join(',')}`);
-        return Promise.resolve(
-          kind === 'track'
-            ? ids.filter((id) => id === 't9').map((id) => ({ ...tracks[0], id, title: 'Song 9' }))
-            : [],
-        );
+      musicByIds: (ids: readonly string[]) => {
+        fetched.push(ids.join(','));
+        return Promise.resolve({
+          tracks: ids
+            .filter((id) => id === 't9')
+            .map((id) => ({ ...tracks[0], id, title: 'Song 9' })),
+          albums: [],
+        });
       },
     } as never);
     vi.spyOn(adapter, 'subscribe').mockImplementation((_s, e) => {
@@ -183,7 +185,7 @@ describe('changes while a sync runs, and changes the server pushes', () => {
     expect(before.playCount).toBe(3);
 
     // What 10.10.7 pushes when another device hearts t2, plays it, and hearts a song the cache has
-    // never seen (outside the delta's reach, ADR 0012).
+    // never seen (outside the delta's reach, ADR 0013).
     events.onUserDataChanged?.([
       { itemId: 't2', isFavorite: true, playCount: 4, lastPlayed: '2026-11-20T01:00:00.000Z' },
       { itemId: 'al1', isFavorite: true },
@@ -198,12 +200,58 @@ describe('changes while a sync runs, and changes the server pushes', () => {
     expect(after.playCount).toBe(4);
     expect(after.lastPlayed).toBe('2026-11-20T01:00:00.000Z');
     expect(libraryStore.get().snapshot.albums[0]?.isFavorite).toBe(true);
-    expect(fetched).toEqual(['track t9,movie-1', 'album movie-1']);
+    // One request for every unknown id, whatever its kind; the film the server returns is dropped.
+    expect(fetched).toEqual(['t9,movie-1']);
+    expect(libraryStore.get().snapshot.tracks.some((t) => t.id === 'movie-1')).toBe(false);
     // The push is applied; nothing else of the row changed.
     expect(after.title).toBe('Carefree');
 
     // An empty push (no `Data`) changes nothing and fetches nothing.
     await applyUserDataChanges([]);
+    expect(fetched).toHaveLength(1);
+
+    // A push naming more unknown ids than one page fetches one page; the rest wait for the sync.
+    await applyUserDataChanges(
+      Array.from({ length: PUSH_FETCH_LIMIT + 50 }, (_, i) => ({
+        itemId: `x${i}`,
+        isFavorite: true,
+      })),
+    );
     expect(fetched).toHaveLength(2);
+    expect(fetched[1]?.split(',')).toHaveLength(PUSH_FETCH_LIMIT);
+  });
+
+  it('a playlist deleted while a sync runs stays gone on disk, so a cold start does not bring it back', async () => {
+    const { adapter } = fakeAdapter();
+    let release: () => void = () => undefined;
+    let hold = false;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const library = adapter.library(session);
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      playlists: async (...args: Parameters<typeof library.playlists>) => {
+        if (hold) await gate;
+        return library.playlists(...args);
+      },
+    });
+    const user = { ...session, userId: `deleted-${Date.now()}` };
+    await startLibrary(adapter, user);
+    expect(libraryStore.get().snapshot.playlists.some((p) => p.id === 'p1')).toBe(true);
+    hold = true;
+    const sync = refreshLibrary({ full: true });
+    patchItems('playlist', (item) => (item.id === 'p1' ? null : item));
+    expect(libraryStore.get().snapshot.playlists.some((p) => p.id === 'p1')).toBe(false);
+    release();
+    await sync;
+    expect(libraryStore.get().snapshot.playlists.some((p) => p.id === 'p1')).toBe(false);
+    stopLibrary();
+    // The cold start: what the disk holds before any sync.
+    const store = new IndexedDbLibraryStore(dbName(user));
+    await vi.waitFor(async () => {
+      expect((await store.read('playlist')).map((p) => p.id)).not.toContain('p1');
+    });
+    await store.close();
   });
 });

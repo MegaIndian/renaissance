@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { RouterProvider, createMemoryRouter } from 'react-router';
@@ -57,12 +57,13 @@ describe('Root shell', () => {
     const user = userEvent.setup();
     expect(document.documentElement.lang).toBe('en');
     await user.click(screen.getByRole('radio', { name: 'ગુજરાતી' }));
-    expect(document.documentElement.lang).toBe('gu');
-    expect(screen.getByRole('link', { name: 'હોમ' })).toBeInTheDocument();
+    // `lang` changes once the Gujarati chunk is in, together with the strings: wait for both.
+    await waitFor(() => expect(document.documentElement.lang).toBe('gu'));
+    expect(await screen.findByRole('link', { name: 'હોમ' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/^શુભ/);
     expect(localStorage.getItem('renaissance.language')).toBe('gu');
     await user.click(screen.getByRole('radio', { name: 'English' }));
-    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Home' })).toBeInTheDocument();
   });
 
   it('wraps an unknown URL in the shell with a translated sentence and a link home', () => {

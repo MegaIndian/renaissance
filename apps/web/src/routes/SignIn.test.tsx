@@ -64,8 +64,9 @@ describe('SignIn', () => {
     expect(signIn.mock.calls[0]?.[0]?.url).toBe('http://192.168.1.5:8096');
     expect(signIn.mock.calls[0]?.[1]).toEqual({ userName: 'mom', password: 'pw' });
     expect(localStorage.getItem('renaissance.lastServer')).toBe('http://192.168.1.5:8096');
-    // The heading, not the greeting: the greeting follows the clock and this test runs at every hour.
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(/, mom$/);
+    // Home's heading by name, so the wait outlives the sign-in page's own level 1 heading until the
+    // navigation commits; the name ends in ", mom" at every hour, so the clock does not matter.
+    expect(await screen.findByRole('heading', { level: 1, name: /, mom$/ })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 

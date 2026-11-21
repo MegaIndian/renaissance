@@ -27,7 +27,7 @@ export function Settings() {
   const { t, i18n } = useTranslation();
   const settings = useSettings();
   const session = useSession();
-  const { snapshot } = useLibrary();
+  const { snapshot, ready } = useLibrary();
   const navigate = useNavigate();
   const language = (supportedLanguages as readonly string[]).includes(i18n.language)
     ? (i18n.language as Language)
@@ -198,13 +198,15 @@ export function Settings() {
 
       {session.status === 'signedIn' ? (
         <Section title={t('settings.library')}>
-          <p className="text-caption text-muted-foreground">
-            {[
-              t('library.tracksCount', { count: snapshot.tracks.length }),
-              t('library.albumsCount', { count: snapshot.albums.length }),
-              t('library.artistsCount', { count: snapshot.artists.length }),
-            ].join(' · ')}
-          </p>
+          {ready ? (
+            <p className="text-caption text-muted-foreground">
+              {[
+                t('library.tracksCount', { count: snapshot.tracks.length }),
+                t('library.albumsCount', { count: snapshot.albums.length }),
+                t('library.artistsCount', { count: snapshot.artists.length }),
+              ].join(' · ')}
+            </p>
+          ) : null}
           <div className="flex items-center gap-3">
             <Button tone="secondary" onClick={() => void refreshLibrary({ full: true })}>
               {t('library.rebuild')}

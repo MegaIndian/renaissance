@@ -55,7 +55,9 @@ export function Home({ now = new Date() }: { now?: Date }) {
         })
       : t(greetingKey(now));
 
-  if (session.status !== 'signedIn') {
+  if (session.status === 'loading') {
+    // The vault is still being read: the greeting without a name and the three row headings, with
+    // the same `pending` treatment the rows get while the cache loads. No sentence says "empty" yet.
     const rows = [
       { title: t('home.mySongs'), empty: t('home.mySongsEmpty') },
       { title: t('home.recent'), empty: t('home.recentEmpty') },
@@ -64,25 +66,41 @@ export function Home({ now = new Date() }: { now?: Date }) {
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <h1 className="text-display font-semibold tracking-tight">{greeting}</h1>
-        {session.status === 'signedOut' ? (
-          <EmptyState
-            title={t('home.empty')}
-            description={t('home.emptyBody')}
-            art={
-              <span
-                aria-hidden
-                className="grid size-12 shrink-0 place-items-center rounded-pill bg-muted text-muted-foreground"
-              >
-                <Icon name="person" className="size-6" />
-              </span>
-            }
-            action={
-              <LinkButton to="/sign-in" tone="primary" className="shrink-0">
-                {t('signIn.submit')}
-              </LinkButton>
-            }
-          />
-        ) : null}
+        {rows.map((row) => (
+          <Row key={row.title} title={row.title} empty={row.empty} count={0} pending>
+            {null}
+          </Row>
+        ))}
+      </div>
+    );
+  }
+
+  if (session.status === 'signedOut') {
+    const rows = [
+      { title: t('home.mySongs'), empty: t('home.mySongsEmpty') },
+      { title: t('home.recent'), empty: t('home.recentEmpty') },
+      { title: t('home.mixes'), empty: t('home.mixesEmpty') },
+    ];
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-6">
+        <h1 className="text-display font-semibold tracking-tight">{greeting}</h1>
+        <EmptyState
+          title={t('home.empty')}
+          description={t('home.emptyBody')}
+          art={
+            <span
+              aria-hidden
+              className="grid size-12 shrink-0 place-items-center rounded-pill bg-muted text-muted-foreground"
+            >
+              <Icon name="person" className="size-6" />
+            </span>
+          }
+          action={
+            <LinkButton to="/sign-in" tone="primary" className="shrink-0">
+              {t('signIn.submit')}
+            </LinkButton>
+          }
+        />
         {rows.map((row) => (
           <section key={row.title} className="flex flex-col gap-2">
             <h2 className="text-heading font-semibold">{row.title}</h2>

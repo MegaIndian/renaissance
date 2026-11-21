@@ -235,6 +235,9 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
         if (applied.changed.length) {
           void current.store.write(patch.kind, applied.changed).catch(() => undefined);
         }
+        if (applied.removed.length) {
+          void current.store.remove(patch.kind, applied.removed).catch(() => undefined);
+        }
       }
       pendingPatches = [];
       setSnapshot(snapshot);
@@ -282,7 +285,7 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
     onLibraryChanged: () => schedule(),
     onUserDataChanged: (changes) => {
       // The push names the items: patch them now. The delta that follows cannot see a favourite
-      // or a play on 10.10.7 (ADR 0012), so this is how another device's heart reaches this one.
+      // or a play on 10.10.7 (ADR 0013), so this is how another device's heart reaches this one.
       void applyUserDataChanges(changes).catch(() => undefined);
       schedule();
     },
@@ -435,17 +438,23 @@ export async function applyUserDataChanges(changes: UserDataChange[]): Promise<v
     }
     patchItems(kind, merge, { broadcast: false });
   }
-  const missing = changes.map((c) => c.itemId).filter((id) => !known.has(id));
+  // The push names whatever any device touched, films included: one request for the unknown ids,
+  // sorted by the type the server returns, and no more than a page of them per push (a bigger
+  // batch is the delta's job).
+  const missing = changes
+    .map((c) => c.itemId)
+    .filter((id) => !known.has(id))
+    .slice(0, PUSH_FETCH_LIMIT);
   const current = active;
   if (!missing.length || !current) return;
-  const library = current.adapter.library(current.session);
-  const fetchedTracks = await library.byIds('track', missing);
-  const stillMissing = missing.filter((id) => !fetchedTracks.some((t) => t.id === id));
-  const fetchedAlbums = stillMissing.length ? await library.byIds('album', stillMissing) : [];
+  const fetched = await current.adapter.library(current.session).musicByIds(missing);
   if (active !== current) return;
-  if (fetchedTracks.length) addItems('track', fetchedTracks);
-  if (fetchedAlbums.length) addItems('album', fetchedAlbums);
+  if (fetched.tracks.length) addItems('track', fetched.tracks);
+  if (fetched.albums.length) addItems('album', fetched.albums);
 }
+
+/** Unknown ids fetched per push, at most; the ones past it reach the cache through the next sync. */
+export const PUSH_FETCH_LIMIT = 100;
 
 /** Add brand-new items (a created playlist) to the snapshot and the cache. */
 export function addItems(kind: CacheKind, items: CacheItem[]): void {

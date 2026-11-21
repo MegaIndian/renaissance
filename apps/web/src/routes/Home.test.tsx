@@ -6,6 +6,7 @@ import { LibraryIndex, buildSnapshot } from '@renaissance/core';
 
 import { setLanguage } from '../lib/i18n';
 import { libraryStore } from '../lib/library';
+import { sessionStore } from '../lib/session';
 import { settingsStore } from '../lib/settings';
 import { signInFake } from '../test/fakes';
 import { renderWithI18n } from '../test/render';
@@ -71,6 +72,30 @@ describe('Home', () => {
     libraryStore.set({ ...libraryStore.get(), ready: true });
     renderWithI18n(<Home now={new Date(2026, 10, 17, 20)} />);
     expect(screen.getByText('Your favourite songs appear here')).toBeInTheDocument();
+  });
+
+  it('while the session is still loading: the greeting and the three row headings, no empty sentence and no sign-in prompt', () => {
+    setLanguage('en');
+    settingsStore.set({ ...settingsStore.get(), mode: 'simple' });
+    sessionStore.set({
+      status: 'loading',
+      session: null,
+      adapter: null,
+      vault: null,
+      reason: null,
+    });
+    renderWithI18n(<Home now={new Date(2026, 10, 17, 8)} />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Good morning');
+    expect(screen.getByRole('region', { name: 'My songs' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Recently played' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Made for you' })).toBeInTheDocument();
+    expect(screen.queryByText('Your favourite songs appear here')).not.toBeInTheDocument();
+    expect(screen.queryByText('What you play shows up here')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Mixes/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Sign in to a server to see your music here'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument();
   });
 
   it('advanced mode adds Recently added and Most played and names the mixes phase', () => {

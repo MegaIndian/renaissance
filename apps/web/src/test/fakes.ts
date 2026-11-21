@@ -206,6 +206,7 @@ export function fakeAdapter(options: FakeAdapterOptions = {}) {
       userDataChangedSince: () => page([]),
       ids: () => Promise.resolve([]),
       byIds: () => Promise.resolve([]),
+      musicByIds: () => Promise.resolve({ tracks: [], albums: [] }),
       albumTracks: () => Promise.resolve(tracks.filter((t) => t.albumId === 'al1')),
       album: (id: string) =>
         id === 'al1'
