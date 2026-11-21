@@ -1,25 +1,31 @@
 import { NavLink } from 'react-router';
 import { useTranslation } from 'react-i18next';
 
+import { useMode } from '../lib/mode';
 import { Icon } from './Icon';
 import { focusRing } from './focus';
-import { primaryNav } from './navigation';
+import { navFor } from './navigation';
 
-/** Phone navigation (under 768 px): three tabs, as the DESIGN.md wireframe. Mirrored on mobile. */
+/**
+ * Phone navigation (under 768 px): three tabs in simple mode, four with Search in advanced. Mirrored
+ * on mobile. The tabs share the width equally and the label truncates, so four tabs at a 25 px root
+ * (a reader's zoom) still fit 390 px instead of pushing the page sideways.
+ */
 export function TabBar() {
   const { t } = useTranslation();
+  const mode = useMode();
   return (
     <nav
       aria-label={t('nav.primary')}
       className="flex justify-around border-t border-border bg-card px-2 pt-2 pb-3"
     >
-      {primaryNav.map((item) => (
+      {navFor(mode).map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
           end={item.to === '/'}
           className={({ isActive }) =>
-            `flex min-w-16 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption ${focusRing} ${
+            `flex min-w-0 flex-1 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption ${focusRing} ${
               isActive ? 'text-foreground' : 'text-muted-foreground'
             }`
           }

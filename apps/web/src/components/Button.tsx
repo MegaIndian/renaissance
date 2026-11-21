@@ -9,8 +9,12 @@ const tones = {
   primary: 'bg-primary text-primary-foreground hover:opacity-90',
   secondary: 'border border-border bg-secondary text-secondary-foreground hover:bg-muted',
   ghost: 'text-muted-foreground hover:text-foreground',
+  /** A destructive action (delete) never wears the primary blue. */
+  danger: 'bg-danger text-danger-foreground hover:opacity-90',
 } as const;
+/** Disabled: never blue (rule 1); a filled button drops to the muted fill, a ghost stays text-only. */
 const disabled = 'bg-muted text-muted-foreground cursor-not-allowed hover:opacity-100';
+const disabledGhost = 'text-muted-foreground cursor-not-allowed';
 
 export type ButtonTone = keyof typeof tones;
 
@@ -23,7 +27,7 @@ export function Button({
     <button
       type="button"
       {...props}
-      className={`${base} ${props.disabled ? disabled : tones[tone]} ${className}`}
+      className={`${base} ${props.disabled ? (tone === 'ghost' ? disabledGhost : disabled) : tones[tone]} ${className}`}
     />
   );
 }

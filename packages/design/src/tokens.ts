@@ -60,6 +60,13 @@ export const colors = {
 /** Cover-art placeholder and chart colours; six, in the mockup's order. */
 export const chart = ['#3b82f6', '#14b8a6', '#f59e0b', '#a78bfa', '#f87171', '#a3e635'] as const;
 
+/**
+ * The one ink for a label drawn on any chart swatch, in both themes. Art has no theme, and the pale
+ * swatches (amber, lime, teal) fail white at 4.5:1, so the ink is the near-black of the light theme's
+ * foreground, which passes on all six (`chartPairs` in contrast.ts measures it).
+ */
+export const chartInk = '#111118';
+
 export const radius = {
   /** Cards, inputs, segmented controls. */
   md: 10,

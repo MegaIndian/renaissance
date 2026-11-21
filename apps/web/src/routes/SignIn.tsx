@@ -1,36 +1,267 @@
+import type { Server } from '@renaissance/core';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 
+import {
+  addressHasScheme,
+  classifySignInError,
+  createAdapter,
+  isPlainHttp,
+  serverFromAddress,
+  signIn,
+  signInWithQuickConnect,
+  useLastServer,
+  withHttp,
+} from '../lib/signin';
+import { useSession } from '../lib/queries';
 import { Button } from '../components/Button';
 import { focusRing } from '../components/focus';
 
-/** Sign-in placeholder (F1). Phase 1 wires it to JellyfinAdapter.signIn; nothing is sent here. */
+/**
+ * Sign in (F1) and Quick Connect (F2). Each household member signs in as their own Jellyfin user
+ * (F86). Errors are full sentences that say what to do; the one primary is Sign in. An address
+ * without a scheme is tried on https first; when only http answers, the address is rewritten to
+ * `http://` and a notice says the password would travel in clear text, before anything is sent.
+ * A revoked token lands here with a sentence saying so.
+ */
 export function SignIn() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const session = useSession();
+  const [lastServer, rememberServer] = useLastServer();
+  const [address, setAddress] = useState(lastServer);
+  const [userName, setUserName] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const expired = session.status === 'signedOut' && session.reason === 'expired';
+  const typed = serverFromAddress(address);
+  const plainHttp = !!typed && addressHasScheme(address) && isPlainHttp(typed);
+  const [quick, setQuick] = useState<{ server: Server; code: string; secret: string } | null>(null);
+  const [quickError, setQuickError] = useState<string | null>(null);
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!quick) return;
+    const adapter = createAdapter(quick.server);
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      while (!cancelled) {
+        try {
+          if (await adapter.quickConnect.state(quick.secret)) {
+            await signInWithQuickConnect(quick.server, quick.secret);
+            rememberServer(quick.server.url);
+            if (!cancelled) void navigate('/');
+            return;
+          }
+        } catch (err) {
+          if (!cancelled) setQuickError(describe(classifySignInError(err), t));
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [quick, navigate, rememberServer, t]);
+
+  const parseServer = (): Server | null => {
+    const server = serverFromAddress(address);
+    if (!server) setError(t('signIn.errorAddress'));
+    return server;
+  };
+
+  /**
+   * An address typed without a scheme: is https answering? When it is not and plain http is, the
+   * field is rewritten to `http://` and the notice shows; nothing is sent until the next press.
+   * When neither answers the unreachable sentence shows at once: a third round trip to the same
+   * dead host would only make the user wait another timeout. Returns the server to use now, or
+   * null when the user should read what the screen says first.
+   */
+  const resolveScheme = async (server: Server): Promise<Server | null> => {
+    if (addressHasScheme(address)) return server;
+    try {
+      await createAdapter(server).ping();
+      return server;
+    } catch {
+      const http = withHttp(server);
+      try {
+        await createAdapter(http).ping();
+      } catch {
+        setError(t('signIn.errorUnreachable'));
+        return null;
+      }
+      setAddress(http.url);
+      setNotice(t('signIn.httpNotice'));
+      return null;
+    }
+  };
+
+  const submit = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    setError(null);
+    setNotice(null);
+    const typedServer = parseServer();
+    if (!typedServer) return;
+    setBusy(true);
+    try {
+      const server = await resolveScheme(typedServer);
+      if (!server) return;
+      await signIn(server, { userName: userName.trim(), password });
+      rememberServer(server.url);
+      void navigate('/');
+    } catch (err) {
+      if (alive.current) setError(describe(classifySignInError(err), t));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  const startQuickConnect = async (): Promise<void> => {
+    setError(null);
+    setQuickError(null);
+    setNotice(null);
+    const typedServer = parseServer();
+    if (!typedServer) return;
+    setBusy(true);
+    try {
+      const server = await resolveScheme(typedServer);
+      if (!server) return;
+      const adapter = createAdapter(server);
+      if (!(await adapter.quickConnect.enabled())) {
+        setQuickError(t('signIn.quickConnectUnavailable'));
+        setQuick({ server, code: '', secret: '' });
+        return;
+      }
+      const start = await adapter.quickConnect.initiate();
+      setQuick({ server, ...start });
+    } catch (err) {
+      setError(describe(classifySignInError(err), t));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  if (quick) {
+    return (
+      <div className="mx-auto flex max-w-sm flex-col gap-4">
+        <h1 className="text-heading font-semibold">{t('signIn.quickConnectTitle')}</h1>
+        <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
+          {quickError ? (
+            <p className="text-body text-danger" role="alert">
+              {quickError}
+            </p>
+          ) : (
+            <>
+              <p className="text-body text-muted-foreground">{t('signIn.quickConnectBody')}</p>
+              <p
+                className="text-center font-mono text-display font-semibold tracking-widest"
+                aria-live="polite"
+              >
+                {quick.code}
+              </p>
+              <p className="text-caption text-muted-foreground" aria-live="polite">
+                {t('signIn.quickConnectWaiting')}
+              </p>
+            </>
+          )}
+          <Button tone="ghost" onClick={() => setQuick(null)}>
+            {t('signIn.quickConnectCancel')}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex max-w-sm flex-col gap-4">
       <h1 className="text-heading font-semibold">{t('signIn.title')}</h1>
+      {session.status === 'signedIn' && session.session ? (
+        <p className="text-caption text-muted-foreground">
+          {t('signIn.signedInAs', { name: session.session.userName })}
+        </p>
+      ) : null}
+      {expired ? (
+        <p className="text-body text-danger" role="alert">
+          {t('signIn.expired')}
+        </p>
+      ) : null}
       <form
         className="flex flex-col gap-3 rounded-md border border-border bg-card p-4"
-        onSubmit={(e) => e.preventDefault()}
+        onSubmit={(e) => void submit(e)}
       >
         <Field
           id="server"
           label={t('signIn.serverUrl')}
           hint={t('signIn.serverUrlHint')}
-          type="url"
+          type="text"
+          value={address}
+          onChange={setAddress}
+          autoComplete="url"
+          inputMode="url"
         />
-        <Field id="user" label={t('signIn.userName')} type="text" />
-        <Field id="password" label={t('signIn.password')} type="password" />
-        <Button type="submit" tone="primary" disabled>
-          {t('signIn.submit')}
+        <Field
+          id="user"
+          label={t('signIn.userName')}
+          type="text"
+          value={userName}
+          onChange={setUserName}
+          autoComplete="username"
+        />
+        <Field
+          id="password"
+          label={t('signIn.password')}
+          type="password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+        />
+        {notice || plainHttp ? (
+          <p className="text-caption text-muted-foreground" role="status">
+            {notice ?? t('signIn.httpNotice')}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="text-body text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <Button type="submit" tone="primary" disabled={busy || !address.trim() || !userName.trim()}>
+          {busy ? t('signIn.signingIn') : t('signIn.submit')}
         </Button>
-        <Button tone="ghost" disabled className="text-caption">
+        <Button
+          tone="ghost"
+          className="text-caption"
+          disabled={busy || !address.trim()}
+          onClick={() => void startQuickConnect()}
+        >
           {t('signIn.quickConnect')}
         </Button>
       </form>
-      <p className="text-caption text-muted-foreground">{t('signIn.notYet')}</p>
+      <p className="text-caption text-muted-foreground">{t('signIn.perPerson')}</p>
     </div>
   );
+}
+
+function describe(
+  failure: ReturnType<typeof classifySignInError>,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  if (failure === 'credentials') return t('signIn.errorCredentials');
+  if (failure === 'unreachable') return t('signIn.errorUnreachable');
+  if (failure === 'address') return t('signIn.errorAddress');
+  return t('signIn.errorServer', { status: failure.status });
 }
 
 function Field({
@@ -38,22 +269,40 @@ function Field({
   label,
   hint,
   type,
+  value,
+  onChange,
+  autoComplete,
+  inputMode,
 }: {
   id: string;
   label: string;
   hint?: string;
   type: string;
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete: string;
+  inputMode?: 'url';
 }) {
   return (
-    <label className="flex flex-col gap-1 text-label font-medium" htmlFor={id}>
-      {label}
+    <div className="flex flex-col gap-1 text-label font-medium">
+      <label htmlFor={id}>{label}</label>
       <input
         id={id}
         type={type}
-        autoComplete={type === 'password' ? 'current-password' : 'off'}
-        className={`rounded-sm border border-input-border bg-background px-2.5 py-1.5 text-body font-normal text-foreground ${focusRing}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        inputMode={inputMode}
+        autoCapitalize="none"
+        spellCheck={false}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        className={`min-h-6 rounded-sm border border-input-border bg-background px-2.5 py-1.5 text-body font-normal text-foreground ${focusRing}`}
       />
-      {hint ? <span className="text-caption font-normal text-muted-foreground">{hint}</span> : null}
-    </label>
+      {hint ? (
+        <span id={`${id}-hint`} className="text-caption font-normal text-muted-foreground">
+          {hint}
+        </span>
+      ) : null}
+    </div>
   );
 }

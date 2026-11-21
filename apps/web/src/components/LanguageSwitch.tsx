@@ -16,7 +16,7 @@ export function LanguageSwitch() {
       label={t('settings.language')}
       value={value}
       options={options}
-      onChange={setLanguage}
+      onChange={(lng: Language) => void setLanguage(lng)}
     />
   );
 }

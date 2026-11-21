@@ -14,8 +14,13 @@ nothing in an app defines its own colour, radius or font size.
 2. **Flat cards with hairline borders.** A card is `card` background, 1 px `border`, `radius` 10 px,
    no shadow. The only shadows are the lifted now-playing art and the active pill of a segmented control.
 3. **Muted neutrals.** Greys from the token set; no pure black, no pure white text. Cover art is the only
-   saturated colour besides the primary. Placeholder art uses the six `chart` colours in order, and only
-   stands in for art that exists: an empty row shows an `EmptyState`, never a grid of coloured squares.
+   saturated colour besides the primary. Placeholder art uses the `chart` colours and only stands in
+   for art that exists: an empty row shows an `EmptyState`, never a grid of coloured squares. A
+   placeholder is hashed from the item's own id (a track, not its album, so one album without art is
+   not one solid column) and skips `chart-1`, which sits a hair from `primary`; genre and year cards
+   use all six. Any label drawn on a swatch is `chartInk` (`--chart-ink`), the one near-black that
+   passes 4.5:1 on all six in both themes (`measureChartContrast()`); never `background`, which is
+   white in the light theme.
 4. **Segmented controls, not tabs with underlines.** Filters (`All | Music | Downloaded`) are a pill group
    on a `muted` track with the active segment on `card`.
 5. **Compact type, big in simple mode.** Body 13, captions 11, labels 12, titles 15, headings 18, display
@@ -61,30 +66,30 @@ nothing in an app defines its own colour, radius or font size.
 
 ## Simple mode (the default for every profile)
 
-The home screen for Mom and Dad, and the default for everyone until they switch to advanced (in
-Settings from phase 1; `?mode=advanced` on the web today).
+The home screen for Mom and Dad, and the default for everyone until they switch to advanced in
+Settings (reached from the avatar: the gear at the top right on phones, the Settings row in the
+sidebar on desktop; `?mode=advanced` in the URL overrides for one visit, used by screenshots and e2e).
 
 ```
 ┌────────────────────────────────────────┐
 │ Good evening, Sahil                    │  display, 1.25×; morning, afternoon or evening by the clock
 │                                        │
-│ My songs                               │  heading
+│ My songs                               │  heading: this user's favourites (F12, F86)
 │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐   │  square art, 1.25× titles, horizontal scroll
 │ └──────┘ └──────┘ └──────┘ └──────┘   │
 │                                        │
-│ Recently played                        │
+│ Recently played                        │  the server's ranking, so plays from other clients count
 │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐   │
 │ └──────┘ └──────┘ └──────┘ └──────┘   │
 │                                        │
 │ Made for you                           │
-│ ┌──────┐ ┌──────┐ ┌──────┐            │  mixes, each named in words
-│ └──────┘ └──────┘ └──────┘            │
-│                                        │
-│ ┌────────────────────────────────────┐ │
-│ │ ○  Ask for anything…            🎤 │ │  Ask bar, solid focus outline, voice button (shell, every screen)
+│ ┌────────────────────────────────────┐ │  one quiet sentence until phase 4; no phase number here
 │ └────────────────────────────────────┘ │
 │ ┌────────────────────────────────────┐ │
-│ │ ▣ Drowning · A Boogie         (▶) │ │  now-playing bar, one primary button
+│ │ ○  Ask for anything…               │ │  Ask bar, solid focus outline (shell, every screen)
+│ └────────────────────────────────────┘ │
+│ ┌────────────────────────────────────┐ │
+│ │ ▣ Drowning · A Boogie      (▶) (⏭) │ │  now-playing bar, one primary button; 3 px progress hairline
 │ └────────────────────────────────────┘ │
 │  Home        Library       Requests    │  three tabs, no Search tab (the Ask bar is the search)
 └────────────────────────────────────────┘
@@ -92,34 +97,44 @@ Settings from phase 1; `?mode=advanced` on the web today).
 
 Three rows, nothing else: no genres, no sort menus, no settings on the home screen. Signed out, each row
 is one `EmptyState` card with a full sentence, and the one primary on the screen is **Sign in**; the
-sign-in card's art is the person glyph, not a placeholder square (rule 3).
-The avatar (the person glyph at the top right on phones, in the sidebar on desktop) opens sign-in today;
-from phase 1 it opens Settings.
+sign-in card's art is the person glyph, not a placeholder square (rule 3). An empty row signed in is
+one sentence that says what fills it ("Tap the heart on any song and it joins this row").
 
 ### Simple versus advanced
 
-The switch is `Account.mode` in `packages/core/src/models.ts` (`'simple' | 'advanced'`, default
-`'simple'`). **What exists today (phase 0):** the web reads `?mode=advanced` from the URL and sets
-`data-mode` on the root element (`apps/web/src/lib/document.ts`), which is the only switch; mobile
-always uses `simpleModeScale` in `useTheme`. **Phase 1** adds the Settings screen, reached from the
-avatar, with a `SegmentedControl` labelled `settings.mode` (`Simple | Advanced`, keys
-`settings.modeSimple` and `settings.modeAdvanced`, already in both catalogs) that stores the choice on
-the account on both platforms. The advanced-only rows below ship with the features they name.
+The switch is `Settings.mode` in `packages/core/src/settings.ts` (`'simple' | 'advanced'`, default
+`'simple'`), stored per browser by `apps/web/src/lib/settings.ts` and applied as `data-mode` on the
+root element, which tokens.css turns into the 1.25× root. The Settings screen shows it as a
+`SegmentedControl` labelled `settings.mode` with a sentence under it saying what changes. Mobile reads
+the same schema in phase 3. Phase numbers appear in the interface only in advanced mode (the mixes
+row, the lyrics and cast buttons, the download menu item, diagnostics).
 
-|            | Simple (default)                                                 | Advanced                                                                   |
-| ---------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Type       | 1.25× every size and spacing step (built)                        | 1× (built, `?mode=advanced` on web)                                        |
-| Home       | Greeting and three rows: My songs, Recently played, Made for you | The same rows plus Recently added, genres and the full queue (phases 1, 4) |
-| Navigation | Home, Library, Requests (phone tabs or desktop sidebar)          | Adds Search as a tab, grid and list views, sort and filter (phase 1)       |
-| Ask bar    | Yes, every screen                                                | Yes, every screen                                                          |
-| Settings   | From the avatar (phase 1)                                        | From the avatar, plus diagnostics (phases 1, 9)                            |
+|             | Simple (default)                                                             | Advanced                                                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type        | 1.25× every size and spacing step                                            | 1×                                                                                                                                                   |
+| Home        | Greeting and three rows: My songs, Recently played, Made for you             | The same rows plus Recently added and Most played; the mixes row names phase 4                                                                       |
+| Navigation  | Home, Library, Requests (phone tabs or desktop sidebar)                      | Adds Search as a tab and sidebar item (the full results page behind the Ask bar's instant list)                                                      |
+| Library     | Artists, Albums, Songs, Playlists; default sort (name); one layout per kind  | Adds Album artists, Genres, Years; grid or list; sort by name, date added, year, play count, last played, random; favourites, genre and year filters |
+| Now playing | Art, title, artist, scrubber, transport, heart, queue; lyrics and cast muted | The same plus direct or transcoded, codec, bitrate and sample rate; the muted buttons say which phase brings them                                    |
+| Ask bar     | Yes, every screen                                                            | Yes, every screen                                                                                                                                    |
+| Settings    | From the avatar: mode, theme, language, quality, account, library, about     | The same plus the diagnostics line (phase 9)                                                                                                         |
 
-## Components, mirrored on web and mobile
+### Playback and lists (phase 1)
 
-Same names on both platforms so a contributor who built one knows what to build on the other:
-`AskBar`, `TrackRow`, `AlbumCard`, `MixCard`, `NowPlayingBar`, `NowPlayingScreen`, `SegmentedControl`,
-`RequestCard`, `Sidebar` (web, desktop), `TabBar` (web under 768 px, and mobile), `EmptyState`,
-`PlaceholderArt`.
+- **The queue** (F22) is a screen (`/queue`, the queue glyph in the bar and on now playing): Now
+  playing, Up next with a drag handle per row and Move up, Move down and Remove in the row's menu for
+  the keyboard, Clear with undo, and Played earlier. Every change is a toast with an undo (rule 10).
+- **Menus** (`Menu`) are popovers with `role="menu"`: arrows move, Home and End jump, Escape closes
+  and returns focus. A disabled item that belongs to a later phase carries a one-line hint, shown only
+  in advanced mode.
+- **Dialogs** (`Dialog`, `Dialogs`) are one card, `aria-modal`, focus trapped, Escape closes; used for
+  add to playlist, new playlist, rename and delete.
+- **Lists** over the cache are virtualised (`VirtualList`); rows are 3.5 rem (`TrackRow`, 56 px at
+  the 16 px root, 70 px in simple mode, so the row grows with the type, rule 5), grids use 144 px
+  cards (`AlbumCard`, `ArtistCard`, `PlaylistCard`, `LabelCard`).
+- **The Ask bar's results** are a `listbox` under the box: up to four per kind, keyboard through
+  them, Enter plays a song or opens the full results page; recent searches when empty. Without a hub
+  the bar is the search box and says nothing about asking in words (`ask.hintSearchOnly`).
 
 ## Tokens
 
@@ -127,7 +142,7 @@ Same names on both platforms so a contributor who built one knows what to build 
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Colours (dark)            | background `#0f0f14`, foreground `#e8e8ee`, card `#17171e`, border `#2a2a35`, inputBorder `#6a6a80`, muted `#22222c`, mutedForeground `#9a9aae`, primary `#2f6fe0` on primaryForeground `#ffffff`, ring `#cfdeff`, secondary `#1f1f28`, success `#22c55e` on `#0f0f14`, danger `#f87171` on `#0f0f14` |
 | Colours (light)           | background `#ffffff`, foreground `#111118`, card `#f7f7f9`, border `#e3e3e9`, inputBorder `#8a8a9c`, muted `#eeeef2`, mutedForeground `#6b6b7e`, primary `#2563eb` on `#ffffff`, ring `#0b1a3f`, secondary `#f1f1f5`, success `#15803d` on `#ffffff`, danger `#dc2626` on `#ffffff`                   |
-| Chart and placeholder art | `#3b82f6` `#14b8a6` `#f59e0b` `#a78bfa` `#f87171` `#a3e635`                                                                                                                                                                                                                                           |
+| Chart and placeholder art | `#3b82f6` `#14b8a6` `#f59e0b` `#a78bfa` `#f87171` `#a3e635`; label ink `#111118` on every swatch                                                                                                                                                                                                      |
 | Radius                    | sm 8, md 10, lg 16, pill 999 (px; radii do not scale)                                                                                                                                                                                                                                                 |
 | Spacing                   | 4-point grid: 4, 8, 12, 16, 20, 24, 32, 40, 48 px, emitted as `--space-N` in rem                                                                                                                                                                                                                      |
 | Type                      | caption 11/14, body 13/18, label 12/16, title 15/20, heading 18/24, display 24/30 (size/line height, px at a 16 px root, emitted as `--font-size-*` and `--line-height-*` in rem); simple mode ×1.25 on the root                                                                                      |

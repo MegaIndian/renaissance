@@ -42,8 +42,10 @@ checkbox.
   enforced by commitlint. Scope by package when it helps: `feat(web): ...`.
 - `pnpm lint`, `pnpm typecheck`, `pnpm test` green locally. CI runs the same plus `pnpm audit`
   at the high level, the web and hub builds, the web browser tests (`pnpm --filter web e2e`, Playwright
-  on Chromium: focus outline and control sizes measured on the built app), the hub container image and
-  a smoke test of `/health` that checks the reported version. Coverage on `packages/core` and
+  on Chromium: focus outline and control sizes measured on the built app; the suite against a real
+  Jellyfin skips in CI and runs where the demo server is reachable, see `docs/testing.md`), the shell
+  bundle budget (`pnpm --filter web size`), the hub container image and a smoke test of `/health` that
+  checks the reported version. Coverage on `packages/core` and
   `apps/hub` must stay at 80 % or more (the test command fails under it).
 - Screens: no literal strings in JSX and no arbitrary Tailwind values (`text-[13px]`); the lint
   fails on both. Strings are catalog keys; sizes are token utilities (`text-body`, `p-4`).

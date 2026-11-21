@@ -4,8 +4,11 @@
 library, any song fetched. Web app for desktops and browsers, native app for iPhone, iPad and Android, one
 shared TypeScript core. GPL-3.0.
 
-> **Status: pre-alpha, phase 0 (scaffold).** Nothing plays yet. The repo, tooling, CI, design tokens and
-> the hub's API shape exist; features land phase by phase (see the [roadmap](docs/ROADMAP.md)).
+> **Status: pre-alpha, phase 1 (core and web).** The web app signs in to a Jellyfin server, caches the
+> library locally, searches it instantly, plays gaplessly with a persisted queue, and syncs favourites,
+> playlists and play counts with the server. The Ask bar is the search box until the hub arrives in
+> phase 2; mobile screens come in phase 3. Features land phase by phase (see the
+> [roadmap](docs/ROADMAP.md)).
 
 ## The idea
 
@@ -21,15 +24,32 @@ history never leave your house and one hub serves every phone and browser in it.
 
 ## Screenshots
 
-Phase 0, signed out, simple mode, dark. Every width, language and theme is in
-[`docs/screens/phase-0/`](docs/screens/phase-0/); the rules are in
-[`packages/design/DESIGN.md`](packages/design/DESIGN.md) and the mockup in
+Phase 1, signed in to the demo server, simple mode, dark. Every width, language, theme and mode is in
+[`docs/screens/phase-1/`](docs/screens/phase-1/) (phase 0's signed-out set is in `phase-0/`); the
+rules are in [`packages/design/DESIGN.md`](packages/design/DESIGN.md) and the mockup in
 [`docs/design/mockup-2026-11-17.html`](docs/design/mockup-2026-11-17.html).
 
 <p>
-  <img src="docs/screens/phase-0/home-phone-en-dark.png" alt="Phone home, English, dark: greeting, sign-in card, three empty rows, the Ask bar and three tabs" width="240" />
-  <img src="docs/screens/phase-0/home-desktop-en-dark.png" alt="Desktop home, English, dark: sidebar, the Ask bar as the top bar, greeting, sign-in card and three empty rows" width="620" />
+  <img src="docs/screens/phase-1/home-phone-en-dark.png" alt="Phone home, English, dark: greeting by name, My songs and Recently played rows, the Ask bar, the player bar and three tabs" width="240" />
+  <img src="docs/screens/phase-1/library-songs-desktop-en-dark.png" alt="Desktop library, Songs, English, dark: sidebar with playlists, the Ask bar as the top bar, the song list with hearts and menus, the player bar with transport and scrubber" width="620" />
 </p>
+
+## What works today (phase 1, web)
+
+- Sign in by address, user name and password, or with Quick Connect; each person in the house is their
+  own Jellyfin user, so favourites, playlists and play counts are their own. The token is encrypted in
+  the browser with a key the page cannot export ([ADR 0008](docs/adr/0008-token-vault-and-library-cache.md)).
+- The library (artists, album artists, albums, songs, genres, years, playlists) lives in a local
+  IndexedDB cache with a delta refresh, so browsing is instant and works offline; 20,000 songs scroll
+  through a virtualised list; sort and filter sit in the URL.
+- The Ask bar answers from the cache as you type (songs, albums, artists, playlists, recent searches);
+  asking in plain words arrives with the hub in phase 2.
+- Gapless playback through two media elements, direct play or Jellyfin transcoding by network class
+  and quality setting, a queue that survives reloads (play next, add to end, drag to reorder, clear,
+  history), shuffle with an album-aware option, repeat, media keys and lock-screen controls, and play
+  reporting so counts and "continue listening" work on every client.
+- Simple mode (big type, three rows on Home) is the default; Advanced in Settings adds Search, grid and
+  list views, sorting and filters, and playback details. English and Gujarati throughout.
 
 ## What you need on the server
 
@@ -54,9 +74,10 @@ pnpm --filter mobile start # Expo dev server (needs Xcode or Android Studio, or 
 Checks: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. A demo Jellyfin with Creative Commons
 music for tests and for contributors without a library: `node docker/demo/start.mjs` (needs Docker;
 it completes the Jellyfin wizard, creates the `demo` user and the music library, and prints the
-password). The hub's routes and curl lines are in [docs/hub-api.md](docs/hub-api.md); its container
-image is `apps/hub/Dockerfile`. Screenshots at phone, tablet and desktop widths are in
-`docs/screens/`.
+password). The browser suite against it, the unit layers and the bundle budget are described in
+[docs/testing.md](docs/testing.md). The hub's routes and curl lines are in
+[docs/hub-api.md](docs/hub-api.md); its container image is `apps/hub/Dockerfile`. Screenshots at
+phone, tablet and desktop widths are in `docs/screens/`.
 
 ## Repository
 

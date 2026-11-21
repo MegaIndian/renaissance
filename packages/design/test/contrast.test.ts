@@ -4,6 +4,7 @@ import {
   contrastRatio,
   contrastTable,
   controlPairs,
+  measureChartContrast,
   measureContrast,
   textPairs,
 } from '../src/contrast';
@@ -32,6 +33,13 @@ describe('contrast', () => {
       failing,
       failing.map((f) => `${f.theme} ${f.foreground}/${f.background} ${f.ratio}`).join(', '),
     ).toEqual([]);
+  });
+
+  it('the chart ink passes AA on all six swatches, so placeholder labels and genre cards read in both themes', () => {
+    const measured = measureChartContrast();
+    expect(measured).toHaveLength(6);
+    expect(measured.filter((m) => !m.passes).map((m) => `${m.swatch} ${m.ratio}`)).toEqual([]);
+    expect(Math.min(...measured.map((m) => m.ratio))).toBeGreaterThanOrEqual(4.5);
   });
 
   it('the pairs cover every foreground token', () => {
