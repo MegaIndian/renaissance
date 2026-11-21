@@ -32,13 +32,7 @@ clock. The documented deployments are all cross-origin, so the server clock neve
 - One full re-sync on the first start after this change, then deltas as before.
 - `Library.serverTime()` is gone from the adapter interface; nothing reads response headers.
 - Measured on 10.10.7 while doing this: `MinDateLastSavedForUser` filters on the item's own
-  `DateLastSaved`, which a favourite or a play does not bump, so the delta cannot see another device's
-  heart or play. ADR 0008's "favourite and play-count changes through `MinDateLastSavedForUser`"
-  over-states what the filter does. Those changes reach the cache another way: the server's
-  `UserDataChanged` push names the items (`UserDataList[{ItemId, IsFavorite, PlayCount, LastPlayedDate}]`),
-  and the app patches those rows in the cache the moment the push arrives, fetching by id the ones the
-  cache does not hold yet. The push still schedules a delta for everything else it may signal. Without
-  the socket (a proxy that drops websockets), user data from other devices waits for the 200-item
-  `DateLastSaved` page or the next full sync, as before. (Corrected 2026-11-20 after the round 3
-  review: the first text had the push only scheduling a delta, which left an item outside the 200
-  page waiting for a full sync.)
+  `DateLastSaved`, which a favourite or a play does not bump. Those changes reach the cache through the
+  200-item `DateLastSaved` page, the socket's `UserDataChanged` refresh and the next full sync; a
+  favourite toggled on another device for an item outside that page waits for one of those. ADR 0008's
+  "favourite and play-count changes through `MinDateLastSavedForUser`" over-states what the filter does.
