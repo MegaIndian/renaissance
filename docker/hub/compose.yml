@@ -13,6 +13,10 @@ services:
     # Or build from a checkout:  docker build -f apps/hub/Dockerfile -t renaissance-hub .
     container_name: renaissance-hub
     restart: unless-stopped
+    # TrueNAS's apps user. The host folder below must be writable by it before the first start:
+    #   chown -R 568:568 /mnt/HDDs/files/apps/renaissance-hub
+    # (or the dataset's ACL). Otherwise the hub starts degraded: /health answers 503 with
+    # database: "error" and SQLite's message, and every other route 503 storage_error.
     user: '568:568'
     ports:
       - '30878:8787'

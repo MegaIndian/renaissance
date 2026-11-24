@@ -139,7 +139,39 @@ tribute acts, "Halo Beyonce" puts the studio Halo above the tour recording and "
 "play something calm for cooking" or "રસોઈ માટે શાંત ગીત વગાડ" show no rows at all; a long title
 ("Kabhi Kabhie Mere Dil Mein") is not a sentence and keeps its exact row. Songs already on the
 server carry `libraryId` and come first; the rows' artists are looked up in Jellyfin too, so an
-artist query marks the songs the server has. `q` is 2 to 200 characters.
+artist query marks the songs the server has; when Jellyfin answers 401 or 503 or not at all, the
+rows come back without their library marks and a warning is logged, never a Jellyfin status in
+the hub's answer. `q` is 2 to 200 characters.
+
+Three flags tell the app what the rows are. `exact` is true when a row is the song typed: the
+title and the artist when the words name both, or, for words that are a title alone ("fireman"),
+a row with that title and no version word; false when every row is another take, a cover or
+another song (the app then offers no primary Add). `pending` is true when the full search is
+still running for these words and its answer will follow on the event stream. `busy` is true when
+MusicBrainz was over its share (503 past the client's retries) or down and the rows are Deezer's
+alone with none of them the song typed: the app says "the catalogue is busy, these are other
+versions". After such a failure the typeahead says `busy` for a minute instead of starting a full
+search on every keystroke, then tries the full search once more, its answer or its failure going
+to the typist's stream; a cached typeahead answer that never got its full search is retried the
+same way, so a panel is never left on other versions for the ten minutes it is cached.
+
+A Deezer row and a MusicBrainz recording with the same title and first credit ("Lil Wayne feat.
+Static Major" is Lil Wayne's row, and rows are deduplicated by the first credit) are one row only
+when the recording is on the album the Deezer row names (after edition tags: "Hotel California
+(2013 Remaster)" is on "Hotel California"); when the Deezer album is a compilation, a live or
+tour record, a "Vol." or a year ("Michael Jackson's This Is It"), the best recording stands in
+and the row names its studio release (Thriller); when it is a studio record none of the
+recordings found is on, the row stays Deezer's and the pipeline resolves it against that album
+when it is requested, so a plain "Fireman" on Tha Carter II never carries the chopped-and-screwed
+recording's ids. A typo only Deezer tolerates ("hotel califronia", "firman") matches within one
+edit including two letters swapped, and when none of MusicBrainz's recordings is the song typed
+while Deezer's first row spells the title another way, MusicBrainz is asked once more with
+Deezer's spelling (one extra call, in that case only). Coverage is counted on the title and
+artist; the album's words count only once the title is the one typed, so a soundtrack named after
+another song does not put its other tracks in the list, and a film tag ('(From "Dil Se")') is an
+edition tag. An album row by another artist whose title only names the asked artist goes like a
+song row does, and its artist with it; album names that mark a karaoke or workout series ("Girl
+Pop 12", "Pure Energy Workout", "Vol.", "Hits") demote a row like a live album does.
 
 The two speeds are cached apart (`catalogue:fast:` and `catalogue:search:`). The typeahead reads
 the full answer when it has the song typed (it carries MusicBrainz ids) or when neither answer
@@ -211,19 +243,21 @@ at all, `/ask` answers with the Deezer rows (marked `partial`) instead of none.
 A request is a song (`kind: track`) or an album (`kind: album`) the caller wants on the server. The
 pipeline (`apps/hub/src/fetch/pipeline.ts`) runs one request at a time:
 
-| Status        | Meaning                                                                                                                                                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `requested`   | Stored, waiting for the runner                                                                                                                                                                                                             |
-| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                                                    |
-| `downloading` | The best file is being fetched from Soulseek; `progress` is `{ unit: "percent", done, total: 100, etaSeconds? }`, the estimate from the transfer rate so far                                                                               |
-| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                                                  |
-| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                                                    |
-| `failed`      | `reason` says why: `catalogue_miss`, `catalogue_busy`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error` |
-| `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                                          |
+| Status        | Meaning                                                                                                                                                                                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested`   | Stored, waiting for the runner                                                                                                                                                                                                                                                                      |
+| `finding`     | Catalogue ids resolved; slskd searched with cleaned queries; files ranked. Albums stay here while Lidarr looks for them                                                                                                                                                                             |
+| `downloading` | The best file is being fetched from Soulseek; `progress` is `{ unit: "percent", done, total: 100, etaSeconds? }`, the estimate from the transfer rate since the first byte (a wait in the uploader's queue is not transfer time; three minutes queued with nothing sent and the next user is tried) |
+| `importing`   | The file is mapped to its MusicBrainz track and imported into Lidarr; scans are triggered                                                                                                                                                                                                           |
+| `ready`       | On the server; in the caller's collection; the `ready` event was pushed                                                                                                                                                                                                                             |
+| `failed`      | `reason` says why: `catalogue_miss`, `catalogue_busy`, `no_results`, `no_candidates`, `download_failed`, `lidarr_artist`, `lidarr_album`, `track_unmapped`, `import_failed`, `not_configured`, `interrupted`, `not_found_in_time`, `error`                                                          |
+| `cancelled`   | Stopped by the person who asked (or an admin) while `requested` or `finding`; no reason, no retry                                                                                                                                                                                                   |
 
 Album requests stay `finding` with `progress: { unit: "songs", done, total }` while Lidarr looks
 (the total from Lidarr's statistics, read back after the album is monitored, else the monitored
-release's track count: never "0 of 0"), and fail with `not_found_in_time` after
+release's track count: never "0 of 0"; an album the hub adds monitors the record as released, the
+release titled as the album with the fewest tracks, so Thriller counts nine songs and not the
+thirty-four of Thriller 40), and fail with `not_found_in_time` after
 `RENAISSANCE_ALBUM_DEADLINE_DAYS` (default 7), counted from `requestedAt`, the last time the request
 was made (a retry sets it again; it is a column of its own, so the step cap cannot lose it); the
 album is then unmonitored in Lidarr. Every ten minutes the poll also files what soularr fetched but
@@ -264,8 +298,15 @@ note on the recording, or every release being a live album, rules it out unless 
 for it), and a title that is not the same song once "feat." and edition tags are stripped is a
 `catalogue_miss` rather than a stand-in. The title is cleaned before MusicBrainz is asked, so
 "🔥 Fireman 🔥" looks up "fireman"; when MusicBrainz answers 503 or not at all through the client's
-retries, the request fails with `catalogue_busy`, worded as "try again in a minute", and Retry runs
-it again.
+retries, the hub keeps the request `finding` and runs it again itself a minute later, three times
+(the detail says so: "trying again in a minute (1 of 3)"); only then does it fail with
+`catalogue_busy`, worded as "try again in a minute", and Retry runs it again. A hub restart in
+that minute marks it `interrupted` like any in-flight single. The release a request is filed under
+is never a compilation unless the recording is on nothing else: a song tapped on a "This Is It"
+or "Number Ones" row goes under its studio album, a soundtrack that is the recording's earliest
+release is the record the song was made for ("8 Mile" for "Lose Yourself"), and the lookup reads a
+hundred recordings (MusicBrainz's maximum) because every "Billie Jean" scores alike and the one on
+Thriller can sit past the fortieth.
 
 Every status change is a row in `steps` (`at`, `status`, `reason`, `detail`), so the Requests tab can
 show (in advanced mode and to admins) what the pipeline tried: the queries and how many files each
@@ -538,8 +579,10 @@ curl -N "http://localhost:8787/events?token=$TOKEN"
 ```
 
 The `catalogue` event carries the full catalogue answer for words the typeahead had to answer
-without the song by the artist typed (MusicBrainz's turn came after the two-second wait). It goes
-to the profile that typed them; the app shows it when the box still holds those words.
+without the song by the artist typed (MusicBrainz's turn came after the two-second wait), or,
+when MusicBrainz then answered 503 past the retries or not at all, the rows the typist saw marked
+`busy`. It goes to the profile that typed them and to no house stream (an admin watching the whole
+house sees requests, not everyone's typing); the app shows it when the box still holds those words.
 
 ## Rate limit
 
@@ -555,14 +598,15 @@ for i in 1 2 3; do curl -s -o /dev/null -w '%{http_code}\n' http://localhost:878
 
 ## Errors the framework returns
 
-| Code | When                                                                       |
-| ---- | -------------------------------------------------------------------------- |
-| 404  | Unknown route, or an id that is not stored                                 |
-| 413  | Body over Fastify's 1 MiB default                                          |
-| 415  | A content type the hub has no parser for (anything but JSON or plain text) |
-| 429  | More requests than the per-address limit in a minute                       |
-| 500  | `storage_error`: the hub's own database refused a read or write            |
-| 503  | `jellyfin_unreachable`: Jellyfin did not answer the token check            |
+| Code | When                                                                                                                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 404  | Unknown route, or an id that is not stored                                                                                                                                            |
+| 413  | Body over Fastify's 1 MiB default                                                                                                                                                     |
+| 415  | A content type the hub has no parser for (anything but JSON or plain text)                                                                                                            |
+| 429  | More requests than the per-address limit in a minute                                                                                                                                  |
+| 500  | `storage_error`: the hub's own database refused a read or write                                                                                                                       |
+| 502  | `upstream_error` with `service`: a route let a Jellyfin, Lidarr, slskd, Navidrome, MusicBrainz or Deezer failure through; the service's own status and message never reach the client |
+| 503  | `jellyfin_unreachable`: Jellyfin did not answer the token check                                                                                                                       |
 
 ## The web app
 
@@ -649,6 +693,14 @@ Secrets (`*_API_KEY`, `NAVIDROME_PASSWORD`) are typed as secrets: `describe()` r
 only, request logging is off, error messages carry a path but never a query string or header. The
 container image is `apps/hub/Dockerfile` (multi-stage, `node:22-alpine`, runs as `node`, `/data`
 volume, health check on `/health`); the hub is bundled with esbuild so `@renaissance/core` is inlined
-and no TypeScript runs in the image. The release workflow publishes it as
+and no TypeScript runs in the image. `docker/hub/compose.yml` runs the container as `568:568`
+(TrueNAS's apps user) over a host bind mount, so the host folder must be writable by that user
+before the first start: `chown -R 568:568 /mnt/HDDs/files/apps/renaissance-hub` (or the dataset's
+ACL). On a root-owned folder the hub starts degraded: `/health` answers `503` with
+`database: "error"` and SQLite's message ("unable to open database file"), and every other route
+answers `503 storage_error` until the folder is fixed and the container restarted. A `SIGTERM` or
+`SIGINT` writes `renaissance-hub stopping` and then `renaissance-hub stopped` to the log; open
+event streams are ended with the server, and a close that does not finish in ten seconds is
+logged and exits 1. The release workflow publishes it as
 `ghcr.io/megaindian/renaissance-hub:<tag>` on every `v*` and `phase-*` tag and as `:edge` on every
 push to `main`; `docker/hub/compose.yml` pins a tag.

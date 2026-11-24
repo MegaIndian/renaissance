@@ -75,3 +75,26 @@ rows already answer shows no "smart answers are off" line. On phones the version
 moves into the row's subtitle before the artist, so five Firemans can be told apart. The parked
 files handed to Lidarr are kept on the request across restarts, a disc subfolder inside the album
 folder is the album's, and the minute tick never overlaps itself.
+
+Round 5 rework: the busy-catalogue seam. A MusicBrainz 503 on the album half of a search no longer
+throws the songs away; when MusicBrainz is busy and the Deezer rows hold only other versions, the
+answer says so (`busy`, `exact: false`), the app offers no primary Add and shows "The catalogue is
+busy, these are other versions", the typeahead marks the rows it could not improve and retries the
+full search once the minute is up, and a request whose lookup met the 503 is retried by the hub
+itself three times a minute apart before it asks for a tap. A song row is paired with the recording
+on its own album (a plain "Fireman" never carries the chopped-and-screwed recording's ids), a row
+whose album is a compilation is filed under the studio album (Billie Jean under Thriller, never
+"The 80s, Part 2"), "Lil Wayne feat. Static Major" is Lil Wayne's row, a soundtrack that is the
+recording's earliest release is the record the song was made for, the lookup reads a hundred
+recordings, a typo with two letters swapped matches and MusicBrainz is asked again with Deezer's
+spelling, the two-lookup merge is cut to size, albums that only name the asked artist go with their
+artists, coverage is counted on the title and artist, film tags are edition tags, karaoke and
+workout series names demote a row, and catalogue events reach the typist alone. A Jellyfin failure
+costs the typeahead its library marks, never its rows, and any upstream failure a route lets
+through is a `502 upstream_error` naming the service only. A transfer queued with nothing sent for
+three minutes moves on to the next user and the estimate runs from the first byte; an album request
+monitors the record as released and counts its songs; the stop is logged and bounded; the compose
+file says the data folder must belong to 568. In the web app a 500 from the requests list shows
+the unreachable words with a Retry, three placeholders hold the room while the first list loads, a
+ready card says where the song arrived, an Enter pressed while the session connects is sent once
+it is ready under a "Connecting…" hint that wraps, and the preview button has a 44 px target.
