@@ -153,7 +153,7 @@ function catalogueOver(
     ...extra,
   });
   const mbCalls = () =>
-    calls.filter((c) => c.url.includes('musicbrainz.org')).map((c) => new URL(c.url));
+    calls.map((c) => new URL(c.url)).filter((u) => u.hostname === 'musicbrainz.org');
   return { svc, calls, stores, mbCalls };
 }
 
