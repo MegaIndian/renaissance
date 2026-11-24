@@ -50,7 +50,10 @@
     "undoTooLate": "Too late, it is already downloading. It stays in Requests",
     "undoFailedCollection": "Couldn't undo that. It is still in your music",
     "alreadyRequested": "Already on its way, asked by {{name}}. You will see it in Requests too",
-    "alreadyRequestedMine": "Already on its way. Progress is in Requests"
+    "alreadyRequestedMine": "Already on its way. Progress is in Requests",
+    "connecting": "Connecting…",
+    "stillLooking": "Still looking for the original",
+    "catalogueBusy": "The catalogue is busy, these are other versions"
   },
   "home": {
     "mySongs": "My songs",
@@ -164,7 +167,10 @@
     "matched": "Will arrive as {{title}} by {{artist}}",
     "matchedOn": "Will arrive as {{title}} by {{artist}}, on {{album}}",
     "detailEnglish": "These details are in English",
-    "cancelFailed": "{{title}} could not be cancelled. It may have finished already"
+    "cancelFailed": "{{title}} could not be cancelled. It may have finished already",
+    "loading": "Loading requests…",
+    "arrived": "Arrived as {{title}} by {{artist}}",
+    "arrivedOn": "Arrived as {{title}} by {{artist}}, on {{album}}"
   },
   "settings": {
     "language": "Language",

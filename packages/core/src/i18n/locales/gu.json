@@ -50,7 +50,10 @@
     "undoTooLate": "મોડું થયું, તે ડાઉનલોડ થવા લાગ્યું છે. તે વિનંતીઓમાં રહેશે",
     "undoFailedCollection": "પાછું વાળી શકાયું નહીં. તે હજી તમારા સંગીતમાં છે",
     "alreadyRequested": "{{name}}એ પહેલેથી માગ્યું છે, આવી રહ્યું છે. તમને પણ વિનંતીઓમાં દેખાશે",
-    "alreadyRequestedMine": "પહેલેથી આવી રહ્યું છે. પ્રગતિ વિનંતીઓમાં દેખાશે"
+    "alreadyRequestedMine": "પહેલેથી આવી રહ્યું છે. પ્રગતિ વિનંતીઓમાં દેખાશે",
+    "connecting": "જોડાઈ રહ્યું છે…",
+    "stillLooking": "મૂળ ગીત હજી શોધાય છે",
+    "catalogueBusy": "કૅટલૉગ વ્યસ્ત છે, આ બીજાં વર્ઝન છે"
   },
   "home": {
     "mySongs": "મારાં ગીતો",
@@ -164,7 +167,10 @@
     "matched": "{{artist}}નું {{title}} તરીકે આવશે",
     "matchedOn": "{{artist}}નું {{title}} તરીકે આવશે, {{album}} પર",
     "detailEnglish": "આ વિગતો અંગ્રેજીમાં છે",
-    "cancelFailed": "{{title}} રદ કરી શકાયું નહીં. કદાચ તે પૂરું થઈ ગયું હશે"
+    "cancelFailed": "{{title}} રદ કરી શકાયું નહીં. કદાચ તે પૂરું થઈ ગયું હશે",
+    "loading": "વિનંતીઓ લોડ થાય છે…",
+    "arrived": "{{artist}}નું {{title}} તરીકે આવ્યું",
+    "arrivedOn": "{{artist}}નું {{title}} તરીકે આવ્યું, {{album}} પર"
   },
   "settings": {
     "language": "ભાષા",

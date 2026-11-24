@@ -85,6 +85,22 @@ export const CatalogueSearch = z.object({
    * the rows come from Deezer and the cache, and their ids are resolved when something is added.
    */
   partial: z.boolean().optional(),
+  /**
+   * True when a song row is the title and artist typed with no version word added. False means
+   * every row is some other take, a cover or another song: the apps then offer no primary Add.
+   * Absent on answers cached before the flag existed.
+   */
+  exact: z.boolean().optional(),
+  /**
+   * True when the full search (MusicBrainz) is still running for these words and the owner's
+   * event stream will carry its answer as a `catalogue` event: the rows shown are provisional.
+   */
+  pending: z.boolean().optional(),
+  /**
+   * True when MusicBrainz was busy or down and the rows are Deezer's alone, none of them the song
+   * typed: "the catalogue is busy, these are other versions".
+   */
+  busy: z.boolean().optional(),
 });
 export type CatalogueSearch = z.infer<typeof CatalogueSearch>;
 
