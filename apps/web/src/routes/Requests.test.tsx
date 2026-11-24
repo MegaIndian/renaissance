@@ -1,4 +1,5 @@
 import type { HubEvent } from '@renaissance/core';
+import { HubClientError } from '@renaissance/core';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -226,5 +227,64 @@ describe('Requests', () => {
     const down = fakeHub({ me: vi.fn(async () => Promise.reject(new Error('down'))) });
     renderWithI18n(<Requests />, down);
     expect(await screen.findByText("Requests can't be reached right now")).toBeInTheDocument();
+  });
+
+  it('shows three placeholders while the first list loads, and the unreachable words with a Retry when it fails (design AN, AQ)', async () => {
+    setLanguage('en');
+    let answer: ((rows: ReturnType<typeof request>[]) => void) | undefined;
+    let fail: ((error: unknown) => void) | undefined;
+    const requests = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof request>[]>((resolve, reject) => {
+          answer = resolve;
+          fail = reject;
+        }),
+    );
+    renderWithI18n(<Requests />, fakeHub({ requests }));
+    const loading = await screen.findByLabelText('Loading requests…');
+    expect(loading).toHaveAttribute('aria-busy', 'true');
+    expect(loading.children).toHaveLength(3);
+    expect(screen.queryByText('Nothing requested yet')).not.toBeInTheDocument();
+    await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    fail!(new HubClientError(500, 'storage_error', 'the database refused'));
+    expect(await screen.findByText("Requests can't be reached right now")).toBeInTheDocument();
+    expect(screen.getByText('Try again in a minute.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Requests' })).toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.setup().click(retry);
+    await waitFor(() => expect(requests).toHaveBeenCalledTimes(2));
+    answer!([request({ status: 'finding' })]);
+    expect(await screen.findByText('Fireman')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('says where a matched song arrived once it is ready (design AL)', async () => {
+    setLanguage('en');
+    const hub = fakeHub({
+      requests: vi.fn(async () => [
+        request({
+          title: 'Billie Jean',
+          artist: 'Michael Jackson',
+          album: "Michael Jackson's This Is It",
+          status: 'ready',
+          matched: { title: 'Billie Jean', artist: 'Michael Jackson', album: 'Thriller' },
+        }),
+        request({
+          id: '77777777-7777-4777-8777-777777777777',
+          title: 'Fireman',
+          artist: 'Lil Wayne',
+          status: 'finding',
+          matched: { title: 'Fireman', artist: 'Lil Wayne', album: 'Tha Carter II' },
+        }),
+      ]),
+    });
+    renderWithI18n(<Requests />, hub);
+    expect(
+      await screen.findByText('Arrived as Billie Jean by Michael Jackson, on Thriller'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Will arrive as Fireman by Lil Wayne, on Tha Carter II'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Will arrive as Billie Jean/)).not.toBeInTheDocument();
   });
 });

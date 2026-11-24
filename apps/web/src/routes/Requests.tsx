@@ -22,7 +22,9 @@ type Scope = 'mine' | 'house';
  * own words sit behind a collapsed "What happened" in advanced mode only (design B, W); those
  * detail lines are the hub's English and the panel says so in Gujarati. A request someone else
  * made and this person watches says who asked, in every scope, and offers no Cancel or Retry: the
- * hub answers 404 to anyone but the asker (design AB).
+ * hub answers 404 to anyone but the asker (design AB). While the first list is on its way three
+ * placeholders hold the room; when the list itself fails the unreachable words and a Retry
+ * replace it (design AN, AQ).
  */
 export function Requests() {
   const { t } = useTranslation();
@@ -112,7 +114,30 @@ export function Requests() {
         <EmptyState title={t('requests.signIn')} description={t('requests.signInBody')} />
       ) : status === 'unreachable' ? (
         <EmptyState title={t('requests.hubOff')} description={t('requests.hubOffBody')} />
-      ) : requests.data && requests.data.length === 0 ? (
+      ) : requests.isError ? (
+        // The list itself failed (a 500, the hub gone between the profile call and this one):
+        // the same words as the unreachable state, with a Retry that asks again (design AN).
+        <EmptyState
+          title={t('requests.hubOff')}
+          description={t('requests.hubOffBody')}
+          action={
+            <Button className="shrink-0" onClick={() => void requests.refetch()}>
+              {t('requests.retry')}
+            </Button>
+          }
+        />
+      ) : requests.data === undefined ? (
+        // The first list is on its way: three card-shaped placeholders, not a blank page (design AQ).
+        <ul className="flex flex-col gap-2" aria-busy="true" aria-label={t('requests.loading')}>
+          {[0, 1, 2].map((i) => (
+            <li
+              key={i}
+              className="h-18 animate-pulse rounded-md border border-border bg-muted"
+              aria-hidden
+            />
+          ))}
+        </ul>
+      ) : requests.data.length === 0 ? (
         <EmptyState title={t('requests.empty')} description={t('requests.emptyBody')} />
       ) : (
         <ul className="flex flex-col gap-2">
@@ -221,17 +246,22 @@ function RequestRow({
       ) : null}
       {reason ? <p className="text-caption text-danger">{reason}</p> : null}
       {request.matched ? (
+        // Future tense while it is on its way, past tense once it has arrived (design AL).
         <p className="line-clamp-2 break-words text-caption text-muted-foreground">
-          {request.matched.album
-            ? t('requests.matchedOn', {
-                title: request.matched.title,
-                artist: request.matched.artist,
-                album: request.matched.album,
-              })
-            : t('requests.matched', {
-                title: request.matched.title,
-                artist: request.matched.artist,
-              })}
+          {t(
+            request.status === 'ready'
+              ? request.matched.album
+                ? 'requests.arrivedOn'
+                : 'requests.arrived'
+              : request.matched.album
+                ? 'requests.matchedOn'
+                : 'requests.matched',
+            {
+              title: request.matched.title,
+              artist: request.matched.artist,
+              album: request.matched.album ?? '',
+            },
+          )}
         </p>
       ) : null}
       {showDetail && request.steps.length > 0 ? (

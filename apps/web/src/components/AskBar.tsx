@@ -25,7 +25,9 @@ export const TYPEAHEAD_MIN_CHARS = 2;
  * model. Enter sends the words to the hub (`POST /ask` as a stream): the library hits arrive first,
  * the model's answer under them. The results panel is capped at 60 % of the screen with its own
  * scroll and closes on Escape, a tap outside or an empty box. Without a hub session the box is
- * still the search box and the hint says to sign in.
+ * still the search box and the hint says to sign in; while the session is being set up the hint
+ * says so and an Enter waits for it. The hint wraps: at 390 px the one line that says the hub is
+ * away must be read whole (design AO, AP).
  */
 export function AskBar({
   autoFocus = false,
@@ -48,6 +50,8 @@ export function AskBar({
   const input = useRef<HTMLInputElement>(null);
   const abort = useRef<AbortController | null>(null);
   const abortTypeahead = useRef<AbortController | null>(null);
+  /** An Enter pressed while the hub session was still being set up: sent as soon as it is ready. */
+  const queued = useRef(false);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -116,7 +120,13 @@ export function AskBar({
 
   async function submit(): Promise<void> {
     const text = value.trim();
-    if (!text || !client || status !== 'ready') return;
+    if (!text || !client) return;
+    // The profile call has not answered yet: the Enter waits for it instead of vanishing (design AO).
+    if (status === 'loading') {
+      queued.current = true;
+      return;
+    }
+    if (status !== 'ready') return;
     abort.current?.abort();
     // The typeahead for these letters, in flight or still waiting its debounce, must not land
     // after the answer and refill the rows under it (design R).
@@ -145,7 +155,16 @@ export function AskBar({
     }
   }
 
+  useEffect(() => {
+    if (!ready || !queued.current) return;
+    queued.current = false;
+    void submit();
+    // `submit` reads the current box and client; only the session becoming ready should send it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
   function clear(): void {
+    queued.current = false;
     abort.current?.abort();
     setAnswer(null);
     setInstant(null);
@@ -163,9 +182,11 @@ export function AskBar({
         ? t('ask.signInFirst')
         : status === 'unreachable'
           ? t('ask.hubOff')
-          : value
-            ? t('ask.noResults')
-            : t('ask.hint');
+          : status === 'loading' && value
+            ? t('ask.connecting')
+            : value
+              ? t('ask.noResults')
+              : t('ask.hint');
   const hasResults = instant !== null || answer !== null || pending || typeahead !== null;
   const showResults = open && hasResults;
   return (
@@ -219,7 +240,7 @@ export function AskBar({
         </kbd>
       </div>
       {(compact && !value && !hasResults) || answer || typeahead ? null : (
-        <p className="truncate text-caption text-muted-foreground" aria-live="polite">
+        <p className="text-caption text-muted-foreground" aria-live="polite">
           {hint}
         </p>
       )}

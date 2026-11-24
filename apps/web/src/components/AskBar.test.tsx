@@ -501,3 +501,123 @@ describe('AskBar, round 2', () => {
     expect(screen.getAllByText('Fireman')).toHaveLength(2);
   });
 });
+
+describe('AskBar, round 5', () => {
+  const live = {
+    id: 'dz:track:9',
+    title: 'Halo (Live)',
+    artist: 'Beyoncé',
+    album: 'I Am… World Tour',
+    duration: 263,
+    preview: 'https://cdn.deezer.test/9.mp3',
+  };
+
+  it('offers no primary Add while no row is the song typed, says the list is provisional, then busy, then takes the full answer (design AM)', async () => {
+    setLanguage('en');
+    const { fakeHub } = await import('../test/hub');
+    let push: ((event: HubEventT) => void) | undefined;
+    const hub = fakeHub({
+      catalogueSearch: vi.fn(async (q: string) => ({
+        query: q,
+        songs: [live],
+        albums: [],
+        artists: [],
+        cached: false,
+        partial: true,
+        exact: false,
+        pending: true,
+      })),
+      events: vi.fn((onEvent: (event: HubEventT) => void) => {
+        push = onEvent;
+        return () => undefined;
+      }),
+    });
+    renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = await screen.findByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'halo beyonce');
+    expect(await screen.findByText('Halo')).toBeInTheDocument();
+    expect(screen.getByText('Still looking for the original')).toBeInTheDocument();
+    const add = screen.getByRole('button', { name: 'Add' });
+    expect(add.className).not.toContain('bg-primary');
+    // The 44 px preview target around the 24 px glyph (design AT).
+    expect(
+      screen.getByRole('button', { name: 'Play a 30-second preview of Halo (Live)' }).className,
+    ).toContain('size-11');
+    // MusicBrainz was busy: the same rows come back marked so, and the line says what they are.
+    push!({
+      type: 'catalogue',
+      result: {
+        query: 'halo beyonce',
+        songs: [live],
+        albums: [],
+        artists: [],
+        cached: true,
+        partial: true,
+        exact: false,
+        busy: true,
+      },
+    });
+    expect(
+      await screen.findByText('The catalogue is busy, these are other versions'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Still looking for the original')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add' }).className).not.toContain('bg-primary');
+    // The full answer with the song itself: the primary Add is back and the line is gone.
+    push!({
+      type: 'catalogue',
+      result: {
+        query: 'halo beyonce',
+        songs: [
+          {
+            id: 'mb:recording:h2',
+            recordingId: '00000000-0000-4000-8000-000000000002',
+            title: 'Halo',
+            artist: 'Beyoncé',
+            album: 'I Am… Sasha Fierce',
+          },
+          live,
+        ],
+        albums: [],
+        artists: [],
+        cached: false,
+        exact: true,
+      },
+    });
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Add' })).toHaveLength(2));
+    const tones = screen
+      .getAllByRole('button', { name: 'Add' })
+      .map((b) => b.className.includes('bg-primary'));
+    expect(tones).toEqual([true, false]);
+    expect(screen.queryByText(/catalogue is busy/)).not.toBeInTheDocument();
+  });
+
+  it('keeps an Enter pressed while the session is still connecting and sends it once ready; the hint says so and wraps (design AO, AP)', async () => {
+    setLanguage('en');
+    const { fakeHub, admin } = await import('../test/hub');
+    let signIn: (() => void) | undefined;
+    const hub = fakeHub({
+      me: vi.fn(
+        () =>
+          new Promise<typeof admin>((resolve) => {
+            signIn = () => resolve(admin);
+          }),
+      ),
+    });
+    renderWithI18n(<AskBar />, hub);
+    const user = userEvent.setup();
+    const input = screen.getByRole('searchbox', { name: 'Ask for anything' });
+    await user.type(input, 'play something calm for cooking{Enter}');
+    const hint = screen.getByText('Connecting…');
+    expect(hint.className).not.toContain('truncate');
+    expect(screen.queryByText(/Nothing matches yet/)).not.toBeInTheDocument();
+    expect(hub.askStreaming).not.toHaveBeenCalled();
+    signIn!();
+    await waitFor(() => expect(hub.askStreaming).toHaveBeenCalledTimes(1));
+    expect(hub.askStreaming).toHaveBeenCalledWith(
+      { text: 'play something calm for cooking', language: 'en' },
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+  });
+});

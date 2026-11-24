@@ -23,7 +23,7 @@ import { focusRing } from './focus';
  * cards with what each action did (or, for the app's own actions, what tapping will do) and an undo,
  * then the one line that says why. Under them the rows of the mockup, with 34 px art, title,
  * artist · album · duration, an Add on songs the server does not have (the first one primary, DESIGN.md
- * rule 1), a ghost Play on ones it does, and the 30-second preview. None of the rows needs the model:
+ * rule 1, when the hub found the song typed), a ghost Play on ones it does, and the 30-second preview. None of the rows needs the model:
  * they come from the library and the catalogue, and the hub has already pruned the ones that do not
  * answer the words typed.
  */
@@ -53,7 +53,16 @@ export function AskResults({
   const albums = rows?.albums ?? [];
   const artists = (rows?.artists ?? []).slice(0, 2);
   const count = hits.length + songs.length + albums.length + artists.length;
-  const firstAdd = songs.findIndex((s) => !s.libraryId);
+  // The one blue Add goes on the first addable row only when the hub says a row is the song
+  // typed (`exact`); when every row is some other take, a cover or another song, every Add is
+  // secondary and a line says why (design AM). Answers cached before the flag existed carry no
+  // `exact` and keep the old rule.
+  const firstAdd = rows?.exact === false ? -1 : songs.findIndex((s) => !s.libraryId);
+  const provisional = rows?.busy
+    ? t('ask.catalogueBusy')
+    : rows?.pending && rows.exact === false
+      ? t('ask.stillLooking')
+      : '';
   const off = answer?.model === 'off';
   const nothing = answer && count === 0 && answer.actions.length === 0;
   // Nothing to show: the hub's own line when it gave one (a sentence with the model off), else
@@ -88,6 +97,7 @@ export function AskResults({
       {count > 0 ? (
         <section className="flex flex-col gap-1">
           <h2 className="sr-only">{t('ask.results')}</h2>
+          {provisional ? <p className="text-caption text-muted-foreground">{provisional}</p> : null}
           <ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-card">
             {hits.map((hit, index) => (
               <LibraryRow key={hit.id} hit={hit} index={index} />
@@ -430,15 +440,20 @@ function Preview({ src, title }: { src: string; title: string }) {
       () => setPlaying(false),
     );
   }
+  // A 44 px hit area around a 24 px glyph (design AT): the button is the target, the ring is drawn.
   return (
     <button
       type="button"
       aria-label={playing ? t('ask.stopPreview') : t('ask.preview', { title })}
       aria-pressed={playing}
       onClick={toggle}
-      className={`grid size-6 shrink-0 place-items-center rounded-pill border border-border text-muted-foreground hover:text-foreground ${focusRing} ${playing ? 'bg-muted text-foreground' : ''}`}
+      className={`-my-2 grid size-11 shrink-0 place-items-center rounded-pill text-muted-foreground hover:text-foreground ${focusRing}`}
     >
-      <Icon name="play" className="size-3" />
+      <span
+        className={`grid size-6 place-items-center rounded-pill border border-border ${playing ? 'bg-muted text-foreground' : ''}`}
+      >
+        <Icon name="play" className="size-3" />
+      </span>
     </button>
   );
 }
