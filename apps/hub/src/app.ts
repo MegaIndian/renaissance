@@ -27,6 +27,7 @@ import { createRunner } from './fetch/runner.js';
 import { slskdClient } from './fetch/slskd.js';
 import type { SlskdClient } from './fetch/slskd.js';
 import { createHealthState } from './health.js';
+import { HttpError } from './http.js';
 import type { Fetch } from './http.js';
 import { jellyfinLibrary } from './jellyfin/library.js';
 import type { JellyfinLibrary } from './jellyfin/library.js';
@@ -75,9 +76,25 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     trustProxy: config.trustProxy,
     // Never log request bodies or headers: they may carry tokens or what the user typed.
     logController: new LogController({ disableRequestLogging: true }),
+    // A stop must not wait for an open `/events` stream to leave: its connection is ended with
+    // the rest (production AK).
+    forceCloseConnections: true,
   });
   const log: Logger = app.log;
   const doFetch = options.fetch ?? fetch;
+  // An upstream failure a route did not catch is a hub-side 502 that names the service and
+  // nothing else: Fastify's default would answer with Jellyfin's or Lidarr's own status and
+  // message, so a revoked token read as the hub's 401 and a path leaked (production AI).
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof HttpError) {
+      request.log.error(
+        { service: error.service, status: error.status, url: request.url.split('?')[0] },
+        'upstream call failed inside a route',
+      );
+      return reply.code(502).send({ error: 'upstream_error', service: error.service });
+    }
+    return reply.send(error);
+  });
 
   const stores = options.stores ?? createStores(config.databasePath);
   const bus = createEventBus();
@@ -281,6 +298,7 @@ export async function buildDegradedApp(options: {
     logger: options.logger ?? false,
     trustProxy: options.config.trustProxy,
     logController: new LogController({ disableRequestLogging: true }),
+    forceCloseConnections: true,
   });
   app.log.error({ error: options.error.message }, 'database unusable; serving degraded');
   app.get('/health', async (_request, reply) => {

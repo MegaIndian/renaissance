@@ -572,6 +572,7 @@ describe('pipeline: a single', () => {
         },
         pollAlbums: async () => {},
         abandon: async () => undefined,
+        dueRetries: () => [],
       },
       stores: t.stores,
       bus: t.bus,

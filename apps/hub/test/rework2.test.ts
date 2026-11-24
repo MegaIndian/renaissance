@@ -299,7 +299,7 @@ describe('the recording choice (functionality A) and the Deezer answer (producti
     ).toBeGreaterThan(recordingScore(liveTake, { title: 'Hotel California', duration: 417 }));
   });
 
-  it('findSong reads forty recordings on the pipeline lane and the live take loses', async () => {
+  it('findSong reads a hundred recordings on the pipeline lane and the live take loses', async () => {
     const liveFirst: MbRecording[] = [
       studio('l', 'Hotel California', credit('Eagles', 'eagles-0000-0000-4000-8000-000000000021'), {
         length: 417_000,
@@ -315,7 +315,7 @@ describe('the recording choice (functionality A) and the Deezer answer (producti
     });
     const song = await svc.findSong('Hotel California', 'Eagles');
     expect(song?.recordingId).toBe('s');
-    expect(calls[0]!.url).toContain('limit=40');
+    expect(calls[0]!.url).toContain('limit=100');
   });
 
   it('never caches a Deezer failure or quota error as "nothing found", and keeps a Deezer-less full answer briefly', async () => {
@@ -958,6 +958,7 @@ describe('database errors and the preflight (functionality G; design O)', () => 
         run: async () => undefined,
         pollAlbums: async () => {},
         abandon: async () => undefined,
+        dueRetries: () => [],
       },
       stores: memoryStores(),
       bus: createEventBus(),

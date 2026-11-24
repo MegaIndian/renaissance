@@ -46,7 +46,8 @@ export function createRunner(options: {
 
   let ticking = false;
   /**
-   * Expired catalogue answers and token checks go; the album poll runs. One tick at a time: the
+   * Expired catalogue answers and token checks go; requests waiting out a busy MusicBrainz run
+   * again; the album poll runs. One tick at a time: the
    * poll can wait on Lidarr for longer than the interval, and a second tick over the first would
    * finish the same album twice (production AG).
    */
@@ -62,17 +63,20 @@ export function createRunner(options: {
         options.health?.markDatabase(false, message);
         log.error({ error: message }, 'database write failed (health is degraded)');
       }
+      for (const id of pipeline.dueRetries()) enqueue(id);
       await pipeline.pollAlbums();
     } finally {
       ticking = false;
     }
   }
 
+  function enqueue(id: string): void {
+    queue.push(id);
+    if (!running) running = drain();
+  }
+
   return {
-    enqueue(id: string): void {
-      queue.push(id);
-      if (!running) running = drain();
-    },
+    enqueue,
     pending(): number {
       return queue.length + (running ? 1 : 0);
     },

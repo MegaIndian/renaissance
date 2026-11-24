@@ -491,8 +491,20 @@ describe('the primary row for a plain title (functionality Q, R; design AH, AI, 
       ],
     );
     expect(pickRelease(tie)?.title).toBe('First Album');
-    // The release named on the row still beats them all.
-    expect(pickRelease(rec, 'Number Ones')?.title).toBe('Number Ones');
+    // The release named on the row beats them all when it is a record of its own; a compilation
+    // named on the row never becomes where a song is filed (design AL).
+    expect(pickRelease(rec, 'Number Ones')?.title).toBe('Thriller');
+    expect(pickRelease(rec, "Michael Jackson's This Is It")?.title).toBe('Thriller');
+    const later = recording(
+      'l',
+      'Song',
+      [wayne],
+      [
+        { title: 'First Album', date: '2005-01-01' },
+        { title: 'Second Album', date: '2010-01-01' },
+      ],
+    );
+    expect(pickRelease(later, 'Second Album')?.title).toBe('Second Album');
   });
 });
 
@@ -791,12 +803,20 @@ describe('titles in file names and in requests (functionality U, W)', () => {
       lidarrDownloadsDir: '/downloads',
       log: recordingLogger(),
       sleep: instantSleep,
+      catalogueBusyRetryMs: 0,
     });
     const gujarati = stores.requests.create(
       { kind: 'track', title: 'ગીત', artist: 'Someone' },
       sahil.id,
     );
-    expect(await busyPipeline.run(gujarati.id)).toMatchObject({
+    // The hub waits a busy catalogue out itself first (production AL); after its own retries
+    // the request fails with the reason the apps word as "try again in a minute".
+    expect(await busyPipeline.run(gujarati.id)).toMatchObject({ status: 'finding' });
+    for (let i = 0; i < 3; i++) {
+      expect(busyPipeline.dueRetries()).toEqual([gujarati.id]);
+      await busyPipeline.run(gujarati.id);
+    }
+    expect(stores.requests.get(gujarati.id)).toMatchObject({
       status: 'failed',
       reason: 'catalogue_busy',
     });
@@ -1071,6 +1091,7 @@ describe('the production minors (AE, AF, AG)', () => {
     let release: () => void = () => {};
     let polls = 0;
     const pipeline = {
+      dueRetries: () => [],
       pollAlbums: async () => {
         polls += 1;
         await new Promise<void>((resolve) => {

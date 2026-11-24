@@ -1,6 +1,7 @@
 /**
  * The push channel (F63, F87): request status changes go to the profile that asked, and to admins
- * watching the whole house. In memory; a reconnecting app lists `/requests` to catch up.
+ * watching the whole house; a late catalogue answer goes to the typist alone. In memory; a
+ * reconnecting app lists `/requests` to catch up.
  */
 import type { HubEvent } from '@renaissance/core';
 
@@ -25,6 +26,9 @@ export function createEventBus() {
     },
     publish(profile: string, event: HubEvent): void {
       for (const l of mine.get(profile) ?? []) l(event);
+      // A catalogue answer is for the one who typed the words; the house streams carry requests,
+      // not everyone's typeahead (functionality AG).
+      if (event.type === 'catalogue') return;
       for (const l of house) l(event);
     },
     /** Keepalives for every open stream. */

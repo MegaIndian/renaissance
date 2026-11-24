@@ -6,15 +6,19 @@
  * much of the query they cover and how much of their own title and artist the query covers, the
  * exact title and artist first; rows below a threshold are dropped, and the threshold is stricter
  * when the words read as a sentence, so a sentence shows rows only when one of them is the title
- * itself. Words match on a prefix (the typeahead sends "firem") and within one typo ("firman").
- * A row whose title or artist carries a version word (live, remix, karaoke, tribute, "made
- * famous", clean) the query did not ask for is another song than the one typed and ranks under
- * every plain row (design AA), and so does a row whose album is a live, tour or compilation
- * record (design AH). The title is compared after its edition tags are stripped ("Hotel California
- * (2013 Remaster)" is the title "Hotel California"), and a title is exact only when it covers the
- * words typed that are not the artist's (functionality Q). Once the song by the artist is in the
- * list, rows by other artists whose title merely names that artist go (design AI). None of this is
- * a model: it is token overlap.
+ * itself. Words match on a prefix (the typeahead sends "firem") and within one typo ("firman",
+ * "califronia": two letters swapped are one edit). Coverage is counted on the title and the
+ * artist; the album's words count only once the title is the one typed (functionality AE). A row
+ * whose title or artist carries a version word (live, remix, karaoke, tribute, "made famous",
+ * clean) the query did not ask for is another song than the one typed and ranks under every plain
+ * row (design AA), and so does a row whose album is a live, tour or compilation record or a
+ * karaoke or workout series (design AH, AS). The title is compared after its edition tags are
+ * stripped ("Hotel California (2013 Remaster)" is the title "Hotel California"), and a title is
+ * exact only when it covers the words typed that are not the artist's (functionality Q); the
+ * artist is exact when the words name it whole or its first credit ("Lil Wayne feat. Static
+ * Major", functionality Z). Once the song by the artist is in the list, rows by other artists
+ * whose title merely names that artist go, albums too and their artists with them (design AI,
+ * functionality AC). None of this is a model: it is token overlap.
  */
 import type {
   CatalogueAlbum,
@@ -31,35 +35,61 @@ export const MIN_COVERAGE = 0.7;
 /** For a sentence: the row must be the title (and artist) itself. */
 export const SENTENCE_COVERAGE = 0.75;
 
-/** Levenshtein distance, capped: only "is it within one edit" is ever asked. */
-function withinOneEdit(a: string, b: string): boolean {
+/**
+ * Damerau-Levenshtein distance, capped: only "is it within one edit" is ever asked. Two adjacent
+ * letters swapped ("califronia" for "california") are one edit, the typo people make most
+ * (functionality AA).
+ */
+export function withinOneEdit(a: string, b: string): boolean {
   if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    const diffs: number[] = [];
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diffs.push(i);
+    if (diffs.length <= 1) return true;
+    const [x, y] = diffs;
+    return diffs.length === 2 && y === x! + 1 && a[x!] === b[y] && a[y] === b[x!];
+  }
+  const [long, short] = a.length > b.length ? [a, b] : [b, a];
   let i = 0;
   let j = 0;
-  let edits = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
+  let skipped = false;
+  while (i < long.length && j < short.length) {
+    if (long[i] === short[j]) {
       i += 1;
       j += 1;
       continue;
     }
-    if (edits > 0) return false;
-    edits = 1;
-    if (a.length > b.length) i += 1;
-    else if (b.length > a.length) j += 1;
-    else {
-      i += 1;
-      j += 1;
-    }
+    if (skipped) return false;
+    skipped = true;
+    i += 1;
   }
-  return edits + (a.length - i) + (b.length - j) <= 1;
+  return true;
 }
 
-/** A typed word stands for a row's word when equal, a prefix of it, or one typo away (4+ letters). */
+/**
+ * The first credited artist: "Lil Wayne" for "Lil Wayne feat. Static Major", "Simon" for "Simon &
+ * Garfunkel". A song is that artist's whatever the credit appends, so the primary credit is what
+ * the typed artist is compared with and what a row is deduplicated by (functionality Z).
+ */
+export function primaryArtist(name: string): string {
+  const first = name.split(/\s*(?:,|&|\+|\/|\b(?:feat|ft|featuring|with)\b\.?)\s*/i)[0] ?? name;
+  return normalize(first) || normalize(name);
+}
+
+/**
+ * A typed word stands for a row's word when equal, a prefix of it, or one typo away. Five letters
+ * at least for the typo: four-letter words are one edit from too many others ("live", "love",
+ * "life"), and "Love of My Life" must not be the title typed as "live".
+ */
+export const FUZZY_MIN_LETTERS = 5;
 export function wordMatches(typed: string, word: string): boolean {
   if (typed === word) return true;
   if (typed.length >= 2 && word.startsWith(typed)) return true;
-  return typed.length >= 4 && word.length >= 4 && withinOneEdit(typed, word);
+  return (
+    typed.length >= FUZZY_MIN_LETTERS &&
+    word.length >= FUZZY_MIN_LETTERS &&
+    withinOneEdit(typed, word)
+  );
 }
 
 function covered(want: readonly string[], have: readonly string[]): number {
@@ -77,6 +107,10 @@ export interface ScoredRow<T> {
   score: number;
   /** The title and the artist are both the words typed, and no version word was added to them. */
   exact: boolean;
+  /** The title (edition tags stripped) is the words typed that are not the artist's. */
+  exactTitle: boolean;
+  /** No version word in the title, the artist or the album that the query did not ask for. */
+  plain: boolean;
 }
 
 /**
@@ -106,9 +140,16 @@ export const VERSION_PHRASES = [
  * all answer the words, it never drops one.
  */
 export const ALBUM_VERSION_WORDS = new Set(
-  'live concert tour unplugged session sessions karaoke tribute'.split(' '),
+  'live concert tour unplugged session sessions karaoke tribute hits vol workout'.split(' '),
 );
-export const ALBUM_VERSION_PHRASES = ['year mix', 'pop hits', 'made famous', 'in the style of'];
+/** Karaoke and workout series name themselves by genre and number: "Girl Pop 12", "Pure Energy Workout" (design AS). */
+export const ALBUM_VERSION_PHRASES = [
+  'year mix',
+  'pop hits',
+  'girl pop',
+  'made famous',
+  'in the style of',
+];
 /** How far a version word pushes a row: under every plain row that covers the words at all. */
 export const VERSION_PENALTY = 60;
 
@@ -153,14 +194,32 @@ export function scoreRow<T>(
 ): ScoredRow<T> {
   const plainTitle = comparableTitle(names.title);
   const artistTokens = names.artist ? tokens(names.artist) : [];
-  const rowTokens = [...tokens(names.title), ...artistTokens, ...tokens(names.extra ?? '')];
-  const coverage = covered(query, rowTokens);
+  const albumTokens = tokens(names.extra ?? '');
   // The query lost its filler ("in", "the"), so a title is compared by its content words too:
   // "Rolling in the Deep" is the exact title for "rolling deep adele".
   const titleIn = covered(contentTokens(plainTitle), query);
+  // Coverage comes from the title and the artist. The album's words count only once the title is
+  // the one typed ("fireman tha carter ii" keeps Fireman), never on their own: "Love of My Life"
+  // from the Bohemian Rhapsody soundtrack is not an answer to "bohemian rhapsody queen"
+  // (functionality AE).
+  const rowTokens = [
+    ...tokens(names.title),
+    ...artistTokens,
+    ...(titleIn === 1 ? albumTokens : []),
+  ];
+  const coverage = covered(query, rowTokens);
   // Half the artist's words at least: one fuzzy word out of five ("that" for "Phat" in "Gordon
-  // Goodwin's Big Phat Band") is noise, and must not put that row over Deezer's first.
-  const artistCovered = artistTokens.length > 0 ? covered(artistTokens, query) : 0;
+  // Goodwin's Big Phat Band") is noise, and must not put that row over Deezer's first. The first
+  // credit alone counts as the whole artist: "Lil Wayne feat. Static Major" is Lil Wayne's row
+  // (functionality Z).
+  const primaryTokens = names.artist ? tokens(primaryArtist(names.artist)) : [];
+  const artistCovered =
+    artistTokens.length > 0
+      ? Math.max(
+          covered(artistTokens, query),
+          primaryTokens.length < artistTokens.length ? covered(primaryTokens, query) : 0,
+        )
+      : 0;
   const artistIn = artistCovered >= 0.5 ? artistCovered : 0;
   const exactArtist = artistTokens.length > 0 && artistIn === 1;
   // The title must also cover the words typed that are not the artist's: "California" by Hotel
@@ -176,14 +235,23 @@ export function scoreRow<T>(
     ...versionWords(`${names.title} ${names.artist ?? ''}`, query),
     ...(names.extra ? albumVersionWords(names.extra, query) : []),
   ];
+  // The album is a tiebreak between rows that answer the words alike, worth less than a word and
+  // counted on whole words only (a fuzzy "that" for "Phat" is noise here too); a single named
+  // after the song says nothing more than its title did.
+  const albumIn =
+    albumTokens.length > 0 && comparableTitle(names.extra ?? '') !== plainTitle
+      ? query.filter((q) => albumTokens.includes(q)).length / query.length
+      : 0;
   const score =
     (exactTitle && exactArtist ? 100 : 0) +
     (exactTitle ? 20 : 0) +
     coverage * 10 +
     titleIn * 5 +
-    artistIn * 5 -
+    artistIn * 5 +
+    albumIn * 2 -
     (versions.length > 0 ? VERSION_PENALTY : 0);
-  return { row, coverage, score, exact: exactTitle && exactArtist && versions.length === 0 };
+  const plain = versions.length === 0;
+  return { row, coverage, score, exact: exactTitle && exactArtist && plain, exactTitle, plain };
 }
 
 /** True when every content word of a title (edition tags stripped) is among the words typed. */
@@ -200,6 +268,38 @@ export function hasExactRow(
   const words = contentTokens(query);
   if (words.length === 0) return false;
   return result.songs.some((s) => scoreRow(s, words, { title: s.title, artist: s.artist }).exact);
+}
+
+/**
+ * True when the rows include the song typed, as the apps understand it (design AM): the title and
+ * the artist when the words name both, else, for words that are a title alone ("fireman", "hotel
+ * california"), a row with that title and no version word. Words that split into a title and an
+ * artist none of the rows is ("set fire to the rain adele" over tribute acts) have no such row,
+ * and neither do words that name an artist alone.
+ */
+export function isSongTyped(
+  query: string,
+  result: { songs: readonly Pick<CatalogueSong, 'title' | 'artist' | 'album'>[] },
+): boolean {
+  if (hasExactRow(query, result)) return true;
+  const words = contentTokens(query);
+  if (words.length === 0) return false;
+  const artistNamed = result.songs.some((s) => {
+    const artist = tokens(s.artist);
+    return artist.length > 0 && artist.length < words.length && covered(artist, words) === 1;
+  });
+  if (artistNamed) return false;
+  return result.songs.some((s) => {
+    const scored = scoreRow(s, words, {
+      title: s.title,
+      artist: s.artist,
+      ...(s.album ? { extra: s.album } : {}),
+    });
+    if (!scored.exactTitle || !scored.plain) return false;
+    // Words left over from the title are an artist nobody in the list is.
+    const titleWords = tokens(s.title);
+    return words.every((w) => titleWords.some((t) => wordMatches(w, t) || wordMatches(t, w)));
+  });
 }
 
 function order<T>(scored: ScoredRow<T>[], keep: (s: ScoredRow<T>) => boolean): T[] {
@@ -238,7 +338,7 @@ export function relevantRows<T extends Pick<CatalogueSearch, 'songs' | 'albums' 
     .filter((s) => s.exact)
     .map((s) => tokens(s.row.artist))
     .filter((a) => a.length > 0);
-  const namesAskedArtist = (s: ScoredRow<CatalogueSong>): boolean =>
+  const namesAskedArtist = (s: ScoredRow<{ title: string; artist: string }>): boolean =>
     exactArtists.some(
       (artist) =>
         normalize(s.row.artist) !== artist.join(' ') && covered(artist, tokens(s.row.title)) === 1,
@@ -251,13 +351,16 @@ export function relevantRows<T extends Pick<CatalogueSearch, 'songs' | 'albums' 
     songs.map((s) => `${normalize(s.album ?? '')}|${normalize(s.artist)}`),
   );
   const songArtists = new Set(songs.map((s) => normalize(s.artist)));
+  // The same rule for albums: "Lil Wayne A Milli" by DeShawn and "HALO (Beyonce Cover)" by a
+  // tribute act are not the asked artist's records, and their artists go with them (functionality AC).
   const albums = order(
     result.albums.map((a: CatalogueAlbum) =>
       scoreRow(a, words, { title: a.title, artist: a.artist }),
     ),
     (s) =>
-      s.coverage >= threshold ||
-      songAlbums.has(`${normalize(s.row.title)}|${normalize(s.row.artist)}`),
+      (s.coverage >= threshold ||
+        songAlbums.has(`${normalize(s.row.title)}|${normalize(s.row.artist)}`)) &&
+      !(exactArtists.length > 0 && namesAskedArtist(s)),
   );
   for (const a of albums) songArtists.add(normalize(a.artist));
   const artists = order(

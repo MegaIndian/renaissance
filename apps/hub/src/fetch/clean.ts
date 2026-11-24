@@ -3,12 +3,14 @@
  * must be the words a sharer would have in the path: no "feat.", no remaster tags, no punctuation.
  * The Soulseek server also returns nothing for some short tokens ("Lil", seen 2026-11-17: "Lil
  * Wayne Fireman" gave 0 files, "Wayne Fireman" 520), so the alternatives drop a leading "Lil".
+ * A film tag in brackets ('Chaiyya Chaiyya (From "Dil Se")', the way Deezer names Bollywood
+ * songs) is an edition tag too: the title is the words before it (functionality AF).
  */
 import { normalize } from '../text.js';
 
 const FEATURE = /\s*[([]?\s*(?:feat|ft|featuring|with)\.?\s+[^)\]]*[)\]]?/gi;
 const TAGS =
-  /\s*[([][^)\]]*(?:remaster|remastered|deluxe|edition|version|mono|stereo|bonus|anniversary|explicit|clean|radio edit|single|album|original mix|live|acoustic|demo)[^)\]]*[)\]]/gi;
+  /\s*[([][^)\]]*(?:remaster|remastered|deluxe|edition|version|mono|stereo|bonus|anniversary|explicit|clean|radio edit|single|album|original mix|live|acoustic|demo|\bfrom\b)[^)\]]*[)\]]/gi;
 const DASH_TAGS =
   /\s+-\s+(?:\d{4}\s+)?(?:remaster|remastered|deluxe|live|acoustic|radio edit|single version|album version)\b.*$/i;
 

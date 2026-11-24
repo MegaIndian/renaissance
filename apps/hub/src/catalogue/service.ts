@@ -13,6 +13,9 @@
  * title and artist typed, both speeds ask once more with the words split into a title and an
  * artist (the artist the rows name, or the words left over from an exact title) before ranking,
  * so a tribute act or a live take never stands first for a song the plain search listed others for.
+ * Every answer says whether a row is the song typed (`exact`), whether the full search is still
+ * running for it (`pending`) and whether MusicBrainz was busy and the rows are other versions
+ * (`busy`), so the apps never put the one primary Add on a radio edit or a live take (design AM).
  */
 import type {
   CatalogueAlbum,
@@ -23,7 +26,7 @@ import type {
 
 import type { CacheStore } from '../db/cache.js';
 import { cleanTitle } from '../fetch/clean.js';
-import { sleep as realSleep } from '../http.js';
+import { HttpError, isBusy, sleep as realSleep } from '../http.js';
 import { contentTokens, looksLikeSentence, normalize, tokenOverlap, tokens } from '../text.js';
 import type { DeezerAlbum, DeezerArtist, DeezerClient, DeezerTrack } from './deezer.js';
 import type {
@@ -35,15 +38,29 @@ import type {
 } from './musicbrainz.js';
 import { fullSearchQuery, recordingQuery, releaseGroupQuery } from './musicbrainz.js';
 import { LimiterBusyError } from './rate-limiter.js';
-import { comparableTitle, hasExactRow, relevantRows, titleInQuery } from './relevance.js';
+import {
+  comparableTitle,
+  hasExactRow,
+  isSongTyped,
+  primaryArtist,
+  relevantRows,
+  titleInQuery,
+} from './relevance.js';
 
 export const SEARCH_TTL_MS = 24 * 60 * 60_000;
 export const LOOKUP_TTL_MS = 7 * 24 * 60 * 60_000;
 export const FAST_TTL_MS = 10 * 60_000;
-/** How many recordings a title-and-artist lookup reads before choosing: live and mixtape versions come first as often as not. */
-export const LOOKUP_LIMIT = 40;
+/**
+ * How many recordings a title-and-artist lookup reads before choosing (MusicBrainz's maximum):
+ * every "Billie Jean" scores alike in its search, and the recording on Thriller, with its 294
+ * releases, sat past the fortieth of 154 while a compilation-only copy sat in the first forty
+ * (design AL). One call either way.
+ */
+export const LOOKUP_LIMIT = 100;
 /** How many recordings the full search reads before pruning: the song by the artist can sit past the first dozen. */
-export const SEARCH_LIMIT = 25;
+export const SEARCH_LIMIT = 50;
+/** How long after MusicBrainz answered 503 past the retries the typeahead says "busy" instead of asking again. */
+export const BUSY_MS = 60_000;
 /** How many rows of each kind an answer carries, after pruning. */
 export const ROW_LIMITS = { songs: 8, albums: 4, artists: 3 } as const;
 /**
@@ -93,7 +110,7 @@ const yearOf = (date: string | undefined): number | undefined => {
  * (design AK). Used to choose between two editions of the same song, never to drop a row.
  */
 export const COLLECTION_TITLE =
-  /\b(live|concert|tour|unplugged|session|sessions|mix|megamix|remix|remixes|karaoke|tribute|hits|best of|greatest|collection|anthology|essential|essentials|soundtrack|ost|this is it|year|\d{4})\b/i;
+  /\b(live|concert|tour|unplugged|session|sessions|mix|megamix|remix|remixes|karaoke|tribute|hits|best of|greatest|collection|anthology|essential|essentials|soundtrack|ost|this is it|year|vol|volume|\d{4})\b/i;
 
 /**
  * Which of two Deezer tracks with the same title and artist is the one people mean: the one on an
@@ -147,7 +164,7 @@ export function fromDeezer(
   }
   for (const hit of artistHits) addArtist(hit);
   for (const track of tracks) {
-    const key = `${normalize(track.title)}|${normalize(track.artist.name)}`;
+    const key = `${normalize(track.title)}|${primaryArtist(track.artist.name)}`;
     const seen = songs.get(key);
     songs.set(key, seen ? betterDeezerTrack(seen, track) : track);
     if (!albums.has(albumKey(track.album.title, track.artist.name))) {
@@ -234,10 +251,14 @@ export function creditName(credit: MbArtistCredit[] | undefined): string {
  * the recording itself (functionality R).
  */
 export const VERSION_NOTE =
-  /\b(live|remix|rmx|mix|edit|demo|instrumental|karaoke|acoustic|unplugged|rehearsal|take|version|dub|radio|clean|censored|explicit)\b/i;
+  /\b(live|remix|rmx|mix|edit|demo|instrumental|karaoke|acoustic|unplugged|rehearsal|take|version|dub|radio|clean|censored|explicit|chopped|screwed|slowed|sped)\b/i;
 
-/** Notes on a recording that say it is the plain one, not a version of it. */
-export const PLAIN_NOTE = /\b(album version|original version|original|explicit|uncensored)\b/gi;
+/**
+ * Notes on a recording that say it is the plain one, not a version of it: "album version",
+ * "single version", MusicBrainz's "album / single version" on Billie Jean (design AL).
+ */
+export const PLAIN_NOTE =
+  /\b(album(?: ?\/ ?single)? version|single version|original version|original|explicit|uncensored)\b/gi;
 
 /** How canonical a release is: official studio albums and singles first, live, mixtapes and bootlegs last. */
 export function releaseScore(r: NonNullable<MbRecording['releases']>[number]): number {
@@ -271,17 +292,55 @@ function releaseTime(r: NonNullable<MbRecording['releases']>[number]): number {
   return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }
 
+/** A release that collects recordings made for other records: by its group's types, or by its name when the types say nothing. */
+export function isCollection(r: NonNullable<MbRecording['releases']>[number]): boolean {
+  const secondary = r['release-group']?.['secondary-types'] ?? [];
+  if (secondary.some((t) => /compilation|live|dj-mix|mixtape|bootleg|remix|demo/i.test(t)))
+    return true;
+  const groupTitle = r['release-group']?.title ?? '';
+  return (
+    secondary.length === 0 && (COLLECTION_TITLE.test(groupTitle) || COLLECTION_TITLE.test(r.title))
+  );
+}
+
+/** A release whose group is a soundtrack and nothing else: the record a song was made for, as often as not. */
+function isSoundtrack(r: NonNullable<MbRecording['releases']>[number]): boolean {
+  const secondary = r['release-group']?.['secondary-types'] ?? [];
+  return secondary.length > 0 && secondary.every((t) => /soundtrack/i.test(t));
+}
+
 /**
  * Prefer an official release that is an album or single over compilations, live albums and
  * bootlegs, the earliest of them when they tie (the album the song was made for came out before
- * the collections that reissued it, design AK); the release named by the caller (the album on the
- * row they tapped) beats them all.
+ * the collections that reissued it, design AK). The release named by the caller (the album on the
+ * row they tapped) beats them all, unless that release is itself a collection: a song tapped on
+ * "Michael Jackson's This Is It" or "The 80s, Part 2" is filed under Thriller, never under the
+ * compilation (design AL). A soundtrack that is the recording's earliest release is the record the
+ * song was made for ("8 Mile" for "Lose Yourself"), so its type costs it nothing there
+ * (functionality Z).
  */
 export function pickRelease(rec: MbRecording, preferAlbum?: string) {
+  const releases = rec.releases ?? [];
   const wanted = preferAlbum ? normalize(cleanTitle(preferAlbum)) : '';
+  const earliest = Math.min(...releases.map(releaseTime));
+  // A single named after the song is the song's own packaging, not where people file it: when
+  // the recording is also on a studio album, the album is preferred over that single even when
+  // the row named the single ("Lollipop" the single over Tha Carter III, functionality Z).
+  const songTitle = normalize(cleanTitle(rec.title));
+  const hasAlbum = releases.some(
+    (r) => r['release-group']?.['primary-type'] === 'Album' && !isCollection(r),
+  );
+  const selfTitledSingle = (r: NonNullable<MbRecording['releases']>[number]): boolean =>
+    r['release-group']?.['primary-type'] === 'Single' &&
+    normalize(cleanTitle(r.title)) === songTitle &&
+    hasAlbum;
   const scoreOf = (r: NonNullable<MbRecording['releases']>[number]): number =>
-    releaseScore(r) + (wanted && normalize(cleanTitle(r.title)) === wanted ? 100 : 0);
-  return [...(rec.releases ?? [])].sort(
+    releaseScore(r) +
+    (wanted && !isCollection(r) && !selfTitledSingle(r) && normalize(cleanTitle(r.title)) === wanted
+      ? 100
+      : 0) +
+    (isSoundtrack(r) && releaseTime(r) === earliest ? 6 : 0);
+  return [...releases].sort(
     (a, b) => scoreOf(b) - scoreOf(a) || releaseTime(a) - releaseTime(b),
   )[0];
 }
@@ -440,6 +499,7 @@ export function catalogueService(options: {
   deezer: DeezerClient;
   cache: CacheStore;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
   fastWaitMs?: number;
   /**
    * Told when a typeahead answered without the song by the artist typed and the full search found
@@ -449,6 +509,7 @@ export function catalogueService(options: {
 }) {
   const { musicBrainz, deezer, cache } = options;
   const sleep = options.sleep ?? realSleep;
+  const now = options.now ?? Date.now;
   const fastWaitMs = options.fastWaitMs ?? FAST_WAIT_MS;
   /** The same words typed on two phones at once cost one search. */
   const inFlight = new Map<string, Promise<CatalogueSearch>>();
@@ -481,6 +542,25 @@ export function catalogueService(options: {
   }
 
   /**
+   * MusicBrainz's answer to a second recording query, merged into the first by id. A call the
+   * limiter drops (the typist moved on) or MusicBrainz refuses adds nothing.
+   */
+  async function moreRecordings(
+    have: MbRecording[],
+    query: string,
+    limits: { owner?: string; batch?: string },
+  ): Promise<MbRecording[]> {
+    const more = await musicBrainz
+      .searchRecordings(query, SEARCH_LIMIT, limits)
+      .catch((error: unknown) => {
+        if (error instanceof LimiterBusyError || error instanceof HttpError) return [];
+        throw error;
+      });
+    const seen = new Set(have.map((r) => r.id));
+    return [...have, ...more.filter((r) => !seen.has(r.id))];
+  }
+
+  /**
    * The full search: MusicBrainz with the words and every title-and-artist split of them, every
    * recording and every Deezer track pruned by the words typed before the list is cut, the Deezer
    * rows the recordings did not match kept as rows of their own (they carry the song when
@@ -493,20 +573,23 @@ export function catalogueService(options: {
   ): Promise<CatalogueSearch> {
     const batch = normalize(query);
     const limits = who.owner ? { owner: who.owner, batch } : {};
-    const [recordings, groups, deezerAnswer] = await Promise.all([
+    const [firstRecordings, groups, deezerAnswer] = await Promise.all([
       musicBrainz.searchRecordings(fullSearchQuery(query), SEARCH_LIMIT, limits),
       // The albums wait a second behind the recordings on MusicBrainz's lane; when the typist's
-      // next letters drop that call, the songs already found still make the answer.
+      // next letters drop that call, or MusicBrainz answers it 503 past the retries, the songs
+      // already found still make the answer: the albums are the optional half (functionality X).
       musicBrainz.searchReleaseGroups(query, 6, limits).catch((error: unknown) => {
-        if (error instanceof LimiterBusyError) return [];
+        if (error instanceof LimiterBusyError || error instanceof HttpError) return [];
         throw error;
       }),
       deezerOrNothing(deezer.search(query, 15, limits)),
     ]);
+    let recordings = firstRecordings;
     const fromMusicBrainz = (tracks: DeezerTrack[]): CatalogueSong[] => {
-      // One recording per title and artist: the one on the best release, never a live, clean or
-      // compilation-only recording MusicBrainz happened to list first (functionality R).
-      const best = new Map<string, { rec: MbRecording; score: number }>();
+      // Every recording of a title by an artist (the first credit: "Lil Wayne feat. Static Major"
+      // is Lil Wayne's), best first by `recordingScore`: never a live, clean or compilation-only
+      // recording MusicBrainz happened to list first (functionality R, Z).
+      const byKey = new Map<string, { rec: MbRecording; score: number }[]>();
       // The plain recording for a title once its edition tags are stripped: a Deezer "Hotel
       // California (2013 Remaster)" is the Eagles' "Hotel California" row, not a row of its own.
       const plain = new Map<string, string>();
@@ -514,14 +597,16 @@ export function catalogueService(options: {
         if (rec.video) continue;
         const artist = creditName(rec['artist-credit']);
         if (!rec.title || !artist) continue;
-        const dedupe = `${normalize(rec.title)}|${normalize(artist)}`;
+        const dedupe = `${normalize(rec.title)}|${primaryArtist(artist)}`;
         const score = recordingScore(rec, { title: query });
-        const have = best.get(dedupe);
-        if (!have || score > have.score) best.set(dedupe, { rec, score });
-        const cleaned = `${comparableTitle(rec.title)}|${normalize(artist)}`;
+        const list = byKey.get(dedupe) ?? [];
+        list.push({ rec, score });
+        byKey.set(dedupe, list);
+        const cleaned = `${comparableTitle(rec.title)}|${primaryArtist(artist)}`;
         if (!plain.has(cleaned) || comparableTitle(rec.title) === normalize(rec.title))
           plain.set(cleaned, dedupe);
       }
+      for (const list of byKey.values()) list.sort((a, b) => b.score - a.score);
       // Deezer's order is popularity and the tiebreak between rows that answer the words alike
       // (functionality Q): the songs Deezer also lists first, in its order, each with its
       // MusicBrainz recording when one matched, then the recordings Deezer did not have.
@@ -533,15 +618,41 @@ export function catalogueService(options: {
         songs.push(song);
       };
       for (const song of fromDeezer(tracks).songs) {
-        const raw = `${normalize(song.title)}|${normalize(song.artist)}`;
-        const dedupe = best.has(raw)
+        const raw = `${normalize(song.title)}|${primaryArtist(song.artist)}`;
+        const dedupe = byKey.has(raw)
           ? raw
-          : plain.get(`${comparableTitle(song.title)}|${normalize(song.artist)}`);
-        const rec = dedupe ? best.get(dedupe)?.rec : undefined;
-        if (rec && dedupe) push(dedupe, songFromRecording(rec, tracks));
+          : plain.get(`${comparableTitle(song.title)}|${primaryArtist(song.artist)}`);
+        const candidates = dedupe ? (byKey.get(dedupe) ?? []) : [];
+        // The Deezer row names an album. The recording on that album is the one it stands for
+        // (a plain "Fireman" on Tha Carter II, not the chopped-and-screwed one MusicBrainz lists
+        // under the same title); when the album is a collection, the best recording stands in
+        // and names its studio release, unless MusicBrainz's list holds no recording of the song
+        // on any studio record (every "Billie Jean" scores alike and the Thriller one can sit
+        // past the fiftieth), in which case the row stays Deezer's too; when the album is a
+        // studio record none of the recordings is on, the row stays Deezer's and the pipeline
+        // resolves it against that album when it is requested, rather than carry ids that would
+        // file the song under another record or a compilation (functionality Z, design AL).
+        const album = song.album ?? '';
+        const wanted = normalize(cleanTitle(album));
+        const onAlbum = candidates.find(({ rec }) =>
+          (rec.releases ?? []).some(
+            (r) => !isCollection(r) && normalize(cleanTitle(r.title)) === wanted,
+          ),
+        );
+        const best = candidates[0];
+        const onStudioRecord = (rec: MbRecording): boolean =>
+          (rec.releases ?? []).some((r) => !isCollection(r));
+        if (onAlbum && dedupe) push(dedupe, songFromRecording(onAlbum.rec, tracks, album));
+        else if (
+          dedupe &&
+          best &&
+          (!album || COLLECTION_TITLE.test(album)) &&
+          (onStudioRecord(best.rec) || !album)
+        )
+          push(dedupe, songFromRecording(best.rec, tracks));
         else push(raw, song);
       }
-      for (const [dedupe, { rec }] of best) push(dedupe, songFromRecording(rec, tracks));
+      for (const [dedupe, list] of byKey) push(dedupe, songFromRecording(list[0]!.rec, tracks));
       return songs;
     };
     let deezerTracks = deezerAnswer ?? [];
@@ -554,22 +665,70 @@ export function catalogueService(options: {
         true,
       ));
     }
-    const songs = fromMusicBrainz(deezerTracks);
+    let songs = fromMusicBrainz(deezerTracks);
+    // A typo only Deezer tolerates ("hotel califronia"): MusicBrainz's query has no fuzzy term, so
+    // when none of its recordings is the song typed and Deezer's first row spells the title
+    // another way, MusicBrainz is asked once more with Deezer's spelling (functionality AA).
+    const top = fromDeezer(deezerTracks).songs[0];
+    const typed = tokens(query);
+    if (
+      top &&
+      !hasExactRow(query, { songs: songs.filter((s) => s.recordingId) }) &&
+      !contentTokens(comparableTitle(top.title)).every((t) => typed.includes(t))
+    ) {
+      recordings = await moreRecordings(
+        recordings,
+        recordingQuery(cleanTitle(top.title) || top.title, top.artist),
+        limits,
+      );
+      songs = fromMusicBrainz(deezerTracks);
+    }
     const albums = groups
       .map((g) => albumFromReleaseGroup(g, deezerTracks))
       .filter((a): a is CatalogueAlbum => !!a);
-    const result: CatalogueSearch = limitRows(
-      relevantRows(query, {
-        query,
-        songs,
-        artists: artistsFromCredits(recordings, groups, deezerTracks),
-        albums,
-        cached: false,
-      }),
-    );
+    const ranked = relevantRows(query, {
+      query,
+      songs,
+      artists: artistsFromCredits(recordings, groups, deezerTracks),
+      albums,
+      cached: false,
+    });
+    const result: CatalogueSearch = { ...limitRows(ranked), exact: isSongTyped(query, ranked) };
     // Without Deezer the rows lack art and previews: keep that answer only briefly.
     cache.set(key, result, deezerAnswer ? SEARCH_TTL_MS : FAST_TTL_MS);
     return result;
+  }
+
+  /** When MusicBrainz last answered 503 past the retries (or not at all): the typeahead says "busy" until then. */
+  let busyUntil = 0;
+
+  /**
+   * The full search that a typeahead could not wait for, watched to its end: the full answer with
+   * the song by the artist goes to the typist's open panel as a `catalogue` event (design AH);
+   * MusicBrainz busy or down goes there too, as the rows already shown marked `busy`, so the panel
+   * can say the list is other versions and offer no primary Add (design AM).
+   */
+  function watchLate(
+    query: string,
+    who: SearchOptions,
+    shown: CatalogueSearch,
+    full: Promise<CatalogueSearch>,
+  ): void {
+    if (!who.owner || !options.onLateAnswer) return;
+    const owner = who.owner;
+    const tell = options.onLateAnswer;
+    full.then(
+      (late) => {
+        if (isSongTyped(query, late)) tell(owner, late);
+      },
+      (error: unknown) => {
+        if (error instanceof LimiterBusyError && error.code === 'superseded') return;
+        if (error instanceof LimiterBusyError || isBusy(error, 'musicbrainz')) {
+          const { pending: _pending, ...rows } = shown;
+          tell(owner, { ...rows, busy: true, exact: false });
+        }
+      },
+    );
   }
 
   async function fastSearch(query: string, who: SearchOptions): Promise<CatalogueSearch> {
@@ -593,33 +752,33 @@ export function catalogueService(options: {
         false,
       ));
     }
-    const result: CatalogueSearch = limitRows(
-      relevantRows(query, {
-        query,
-        ...fromDeezer(tracks, albums ?? []),
-        cached: false,
-        partial: true,
-      }),
-    );
+    const ranked = relevantRows(query, {
+      query,
+      ...fromDeezer(tracks, albums ?? []),
+      cached: false,
+      partial: true,
+    });
+    const result: CatalogueSearch = { ...limitRows(ranked), exact: isSongTyped(query, ranked) };
     // A quota hit or an outage is not "nothing found": only an answer Deezer gave is remembered.
     if (plain !== undefined) cache.set(key, result, FAST_TTL_MS);
     // The rows named a title and an artist but none is the song by that artist (Deezer's catalogue
     // lacks some originals altogether): ask MusicBrainz (the full search, shared with any Enter
     // that follows) and wait briefly for it. Its answer, when it comes in time, is the one shown;
     // either way it lands in the cache for the next letters.
-    if (split && !hasExactRow(query, result) && !looksLikeSentence(query)) {
-      const full = startFull(query, who).catch(() => undefined);
-      const winner = await Promise.race([full, sleep(fastWaitMs).then(() => undefined)]);
+    if (split && !hasExactRow(query, ranked) && !looksLikeSentence(query)) {
+      if (now() < busyUntil) return { ...result, busy: true, exact: false };
+      const full = startFull(query, who);
+      const winner = await Promise.race([
+        full.catch(() => undefined),
+        sleep(fastWaitMs).then(() => undefined),
+      ]);
       if (winner) return winner;
-      // Too slow for this keystroke: the panel shows the Deezer rows now and, when MusicBrainz
-      // answers with the song, the owner's stream carries the full answer to it (design AH). The
-      // cache already prefers that answer for the next keystroke on the same words.
-      if (who.owner && options.onLateAnswer) {
-        const owner = who.owner;
-        void full.then((late) => {
-          if (late && hasExactRow(query, late)) options.onLateAnswer!(owner, late);
-        });
-      }
+      // Too slow for this keystroke: the panel shows the Deezer rows now, marked provisional, and
+      // the owner's stream carries the full answer, or the busy mark, when MusicBrainz is done
+      // (design AH, AM). The cache already prefers that answer for the next keystroke.
+      const shown: CatalogueSearch = { ...result, pending: true };
+      watchLate(query, who, shown, full);
+      return shown;
     }
     return result;
   }
@@ -629,7 +788,14 @@ export function catalogueService(options: {
     const key = fullKey(query);
     const running = inFlight.get(key);
     if (running) return running;
-    const promise = fetchSearch(query, key, who).finally(() => inFlight.delete(key));
+    const promise = fetchSearch(query, key, who)
+      .catch((error: unknown) => {
+        // MusicBrainz over its share or down: the typeahead says so for a minute rather than
+        // starting a full search on every keystroke that lands on the same words.
+        if (isBusy(error, 'musicbrainz')) busyUntil = now() + BUSY_MS;
+        throw error;
+      })
+      .finally(() => inFlight.delete(key));
     inFlight.set(key, promise);
     return promise;
   }
@@ -647,6 +813,25 @@ export function catalogueService(options: {
     const fast = cache.get<CatalogueSearch>(fastKey(query));
     if (full && (!fast || hasExactRow(query, full) || !hasExactRow(query, fast))) return full;
     return fast;
+  }
+
+  /**
+   * A cached typeahead answer that never got its full search (MusicBrainz was busy, or the
+   * typist's letters dropped it): while MusicBrainz is known to be busy the rows are marked so;
+   * otherwise the full search is tried again once, its answer or its failure going to the
+   * typist's stream, so a panel is never left on other versions for the ten minutes the fast
+   * answer is cached (design AM).
+   */
+  function fromFastCache(query: string, cached: CatalogueSearch, who: SearchOptions) {
+    const shown: CatalogueSearch = { ...cached, cached: true };
+    const settled = !!cache.get<CatalogueSearch>(fullKey(query));
+    if (settled || hasExactRow(query, cached) || looksLikeSentence(query)) return shown;
+    if (!guessSplit(query, cached.songs)) return shown;
+    if (now() < busyUntil) return { ...shown, busy: true, exact: false };
+    const full = startFull(query, who);
+    const pending: CatalogueSearch = { ...shown, pending: true, exact: false };
+    watchLate(query, who, pending, full);
+    return pending;
   }
 
   /** The recording for a title and artist, none when nothing is close enough (`catalogue_miss`). */
@@ -691,7 +876,11 @@ export function catalogueService(options: {
       const query = q.trim().replace(/\s+/g, ' ');
       const key = fullKey(query);
       const cached = who.fast ? cachedForFast(query) : cache.get<CatalogueSearch>(key);
-      if (cached) return { ...cached, cached: true };
+      if (cached) {
+        return who.fast && cached.partial
+          ? fromFastCache(query, cached, who)
+          : { ...cached, cached: true };
+      }
       const running = inFlight.get(key);
       if (running) return running;
       return who.fast ? fastSearch(query, who) : startFull(query, who);

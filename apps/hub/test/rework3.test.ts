@@ -485,7 +485,9 @@ describe('the full search rows and the cache (production Z; design P, AA; functi
         },
       ],
     };
-    expect(pickRelease(rec)?.id).toBe('rel-remix');
+    // The soundtrack is the recording's earliest release: the record the song was made for, so
+    // its type costs it nothing and it leads the later remix album (functionality Z).
+    expect(pickRelease(rec)?.id).toBe('rel-3');
     expect(pickRelease(rec, '3')?.id).toBe('rel-3');
     const { svc } = catalogueOver({
       '/recording?': () => ({ recordings: [rec] }),
@@ -493,7 +495,7 @@ describe('the full search rows and the cache (production Z; design P, AA; functi
     const song = await svc.findSong('Why This Kolaveri Di', 'Dhanush', { album: '3' });
     expect(song).toMatchObject({ album: '3', releaseId: 'rel-3' });
     const plain = await svc.findSong('Why This Kolaveri Di', 'Dhanush');
-    expect(plain?.album).toBe('The Bollywood Remix Project');
+    expect(plain?.album).toBe('3');
   });
 });
 

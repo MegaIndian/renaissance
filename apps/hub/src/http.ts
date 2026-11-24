@@ -72,4 +72,16 @@ export async function httpJson<T = unknown>(
   }
 }
 
+/**
+ * True when `service` was over its share (503, past the client's retries) or gave no answer at
+ * all (status 0: a timeout or a connection refused): "busy", worded as "try again in a minute".
+ */
+export function isBusy(error: unknown, service: string): boolean {
+  return (
+    error instanceof HttpError &&
+    error.service === service &&
+    (error.status === 503 || error.status === 0)
+  );
+}
+
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

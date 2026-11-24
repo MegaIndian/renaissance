@@ -1,6 +1,7 @@
 import { buildApp, buildDegradedApp } from './app.js';
 import { describe, loadConfig } from './config.js';
 import { DatabaseUnavailableError } from './db/index.js';
+import { installStop } from './stop.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -13,11 +14,7 @@ async function main(): Promise<void> {
   });
   app.log.info({ integrations: describe(config) }, 'renaissance-hub starting');
   await app.listen({ host: config.host, port: config.port });
-  const stop = (): void => {
-    void app.close().then(() => process.exit(0));
-  };
-  process.on('SIGTERM', stop);
-  process.on('SIGINT', stop);
+  installStop(app);
 }
 
 main().catch((error: unknown) => {

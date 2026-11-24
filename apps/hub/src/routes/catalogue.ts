@@ -3,7 +3,8 @@
  * when the words were looked up before, else Deezer rows (`partial: true`); MusicBrainz is asked on
  * Enter and when a song is added, never per keystroke. Deezer calls are spaced through their own
  * limiter, so the typist's older prefix is dropped (`503 superseded`) and a full queue answers
- * `503 busy`; the app keeps the rows it has and asks again.
+ * `503 busy`; the app keeps the rows it has and asks again. A Jellyfin failure costs the rows
+ * their library marks, never the rows.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -51,9 +52,24 @@ export async function catalogueRoutes(
       if (deps.library.configured && request.callerToken) {
         const token = request.callerToken;
         const artists = [...new Set(result.songs.map((s) => s.artist))].slice(0, 4);
+        // Jellyfin down, restarting or refusing the token must not take the catalogue rows with
+        // it: the typeahead is the whole add path with the model off. Its hits are marked when it
+        // answers and left out, with a warning, when it does not (production AI).
+        const orNothing = <T>(call: Promise<T>, empty: T): Promise<T> =>
+          call.catch((error: unknown) => {
+            request.log.warn(
+              { error: error instanceof Error ? error.message : String(error) },
+              'library lookup failed; typeahead answered from the catalogue alone',
+            );
+            return empty;
+          });
         const [instant, byArtist] = await Promise.all([
-          deps.library.search(token, parsed.data.q, 10),
-          deps.library.tracksByArtists(token, artists).catch(() => []),
+          orNothing(deps.library.search(token, parsed.data.q, 10), {
+            tracks: [],
+            albums: [],
+            artists: [],
+          }),
+          orNothing(deps.library.tracksByArtists(token, artists), []),
         ]);
         const sameSong = (
           t: { title: string; artist?: string | undefined },

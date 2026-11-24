@@ -21,7 +21,8 @@ import { askTools } from '@renaissance/core';
 import { createI18n } from '@renaissance/core/i18n';
 
 import { LimiterBusyError } from '../catalogue/rate-limiter.js';
-import { relevantRows } from '../catalogue/relevance.js';
+import { isSongTyped, relevantRows } from '../catalogue/relevance.js';
+import { limitRows } from '../catalogue/service.js';
 import type { CatalogueService } from '../catalogue/service.js';
 import type { Stores } from '../db/index.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
@@ -470,14 +471,20 @@ export function createEngine(deps: EngineDeps) {
       const lookup = (words: string): Promise<CatalogueSearch | undefined> =>
         catalogue.search(words, who).catch(async (error: unknown) => {
           // The queue is full, or MusicBrainz is over its share (503 past the client's retries)
-          // or down: the Deezer rows stand in, marked partial, rather than an empty panel.
+          // or down: the Deezer rows stand in, marked partial, rather than an empty panel. When
+          // none of them is the song typed they are other versions, and the answer says so
+          // (`busy`), so the app offers no primary Add on a radio edit or a live take and shows
+          // the "catalogue was busy" line instead (functionality Y, design AM).
           if (!(error instanceof LimiterBusyError)) {
             log.warn(
               { error: error instanceof Error ? error.message : String(error) },
               'catalogue lookup failed; answering from the typeahead rows',
             );
           }
-          return catalogue.search(words, { ...who, fast: true }).catch(() => undefined);
+          const fast = await catalogue.search(words, { ...who, fast: true }).catch(() => undefined);
+          if (!fast || isSongTyped(words, fast)) return fast;
+          const { pending: _pending, ...rows } = fast;
+          return { ...rows, busy: true, exact: false };
         });
       // The phrase as typed is looked up when one word was stripped ("play that funky music"):
       // "can you please get me …" is never part of a title, and a whole sentence sent to
@@ -492,10 +499,16 @@ export function createEngine(deps: EngineDeps) {
       // Merged, the rows are pruned and ordered for the title once more, so a phrase row that only
       // names the artist ("Lil Wayne Fireman" by DJ Symphony) goes when the song by the artist is
       // there; the title lookup's own rows, already pruned for these words, are never taken away.
-      const cat =
+      // The merge is cut to the row limits like any one answer (functionality AB).
+      const merged =
         forPhrase && forTitle
-          ? mergeCatalogue(relevantRows(query, mergeCatalogue(forPhrase, forTitle)), forTitle)
+          ? limitRows(
+              mergeCatalogue(relevantRows(query, mergeCatalogue(forPhrase, forTitle)), forTitle),
+            )
           : (forTitle ?? forPhrase);
+      const cat: CatalogueSearch | undefined = merged
+        ? { ...merged, exact: !merged.busy && isSongTyped(query, merged) }
+        : undefined;
       const withCatalogue = cat ? { catalogue: cat } : {};
       const rows = cat ? cat.songs.length + cat.albums.length + cat.artists.length : 0;
       const hits = instant.tracks.length + instant.albums.length + instant.artists.length;

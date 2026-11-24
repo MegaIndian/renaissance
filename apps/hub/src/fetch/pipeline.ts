@@ -16,7 +16,7 @@ import type { Stores } from '../db/index.js';
 import { lastRequestedAt } from '../db/requests.js';
 import type { RequestUpdate } from '../db/requests.js';
 import type { EventBus } from '../events/bus.js';
-import { HttpError, sleep as realSleep } from '../http.js';
+import { isBusy, sleep as realSleep } from '../http.js';
 import type { JellyfinLibrary } from '../jellyfin/library.js';
 import type { Logger } from '../log.js';
 import { normalize, tokenOverlap, tokens } from '../text.js';
@@ -76,11 +76,24 @@ export interface PipelineDeps {
   missingTransferPolls?: number;
   /** How often an album poll looks in the download folders for files Lidarr refused to import. */
   arrivalCheckMs?: number;
+  /** How long a transfer may sit queued at the uploader with nothing sent before the next user is tried. */
+  queuedTimeoutMs?: number;
+  /** How long a request whose catalogue lookup met a busy MusicBrainz waits before it runs again. */
+  catalogueBusyRetryMs?: number;
   /** Writes are logged, not sent (the clients do that); the mapping step uses MusicBrainz tracks. */
   dryRun?: boolean;
 }
 
 export const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+/**
+ * A transfer "Queued, Remotely" with nothing sent after this long moves on to the next user: a
+ * slow uploader's queue is not worth the download timeout, and the estimate must not count the
+ * wait as transfer time (functionality AD).
+ */
+export const QUEUED_TIMEOUT_MS = 3 * 60_000;
+/** A MusicBrainz 503 on a request's lookup is retried by the hub itself, this many times a minute apart (production AL). */
+export const CATALOGUE_BUSY_RETRIES = 3;
+export const CATALOGUE_BUSY_RETRY_MS = 60_000;
 export const TRACKS_TIMEOUT_MS = 90_000;
 export const ALBUM_DEADLINE_MS = 7 * 24 * 60 * 60_000;
 export const MISSING_TRANSFER_POLLS = 5;
@@ -115,6 +128,19 @@ export function mapTrack(
   if (want.duration === undefined) return pool[0];
   const target = want.duration * 1000;
   return [...pool].sort((a, b) => Math.abs(a.duration - target) - Math.abs(b.duration - target))[0];
+}
+
+/**
+ * The edition an album request means: a release titled as the album itself (no "Deluxe", no
+ * "40") with the fewest tracks, so bonus-track reissues and anniversary boxes are not what the
+ * progress counts or Lidarr looks for; else the release with the fewest tracks; nothing when
+ * Lidarr lists none (design AR).
+ */
+export function standardRelease(album: LidarrAlbum): LidarrRelease | undefined {
+  const releases = (album.releases ?? []).filter((r) => r.trackCount > 0);
+  const plain = releases.filter((r) => cleanTitle(r.title) === cleanTitle(album.title));
+  const pool = plain.length > 0 ? plain : releases;
+  return [...pool].sort((a, b) => a.trackCount - b.trackCount)[0];
 }
 
 /** Our MusicBrainz release when Lidarr knows it, else the monitored one, else the first. */
@@ -181,12 +207,7 @@ export function lookupTitle(title: string): string {
  */
 export function reasonFor(error: unknown): string {
   if (error instanceof PipelineError) return error.reason;
-  if (
-    error instanceof HttpError &&
-    error.service === 'musicbrainz' &&
-    (error.status === 503 || error.status === 0)
-  )
-    return 'catalogue_busy';
+  if (isBusy(error, 'musicbrainz')) return 'catalogue_busy';
   return 'error';
 }
 
@@ -205,6 +226,9 @@ export function createPipeline(deps: PipelineDeps) {
   const { stores, bus, log } = deps;
   const sleep = deps.sleep ?? realSleep;
   const now = deps.now ?? Date.now;
+  /** Requests whose lookup met a busy MusicBrainz: how often, and when each runs again. */
+  const busyTries = new Map<string, number>();
+  const busyRetryAt = new Map<string, number>();
 
   /** The row as it is now; throws `gone` when it was removed or the asker cancelled it. */
   function live(id: string): MusicRequest {
@@ -364,9 +388,20 @@ export function createPipeline(deps: PipelineDeps) {
     const looked = await lidarr.lookupAlbum(releaseGroupId);
     if (!looked)
       throw new PipelineError('lidarr_album', `Lidarr cannot find release group ${releaseGroupId}`);
+    // An album request fetches the record as it was released, not the edition with the most
+    // tracks Lidarr would monitor by default (Thriller, not the 34-track Thriller 40), and the
+    // progress counts that edition's songs (design AR).
+    const standard = monitored ? standardRelease(looked) : undefined;
+    const releases = standard
+      ? (looked.releases ?? []).map((r) => ({
+          ...r,
+          monitored: r.foreignReleaseId === standard.foreignReleaseId,
+        }))
+      : looked.releases;
     try {
       return await lidarr.addAlbum({
         ...looked,
+        ...(releases ? { releases } : {}),
         monitored,
         artistId: artist.id,
         artist: { ...looked.artist, ...artist },
@@ -482,6 +517,8 @@ export function createPipeline(deps: PipelineDeps) {
       }
       const started = now();
       const deadline = started + timeoutMs;
+      const queuedTimeout = deps.queuedTimeoutMs ?? QUEUED_TIMEOUT_MS;
+      let firstByteAt: number | undefined;
       let lastPercent = -1;
       let misses = 0;
       for (;;) {
@@ -510,17 +547,27 @@ export function createPipeline(deps: PipelineDeps) {
           await removeTransfer(slskd, req, username, t.id);
           break;
         }
+        const bytes = t.bytesTransferred ?? 0;
+        if (bytes > 0 && firstByteAt === undefined) firstByteAt = now();
         if (now() > deadline) {
           lastFailure = `${baseName(filename)} from ${username}: not finished after ${Math.round(timeoutMs / 60_000)} minutes`;
           await removeTransfer(slskd, req, username, t.id);
           break;
         }
-        const bytes = t.bytesTransferred ?? 0;
+        // Still in the uploader's queue with nothing sent: another user is a better bet than the
+        // rest of the download timeout (functionality AD).
+        if (bytes === 0 && now() - started > queuedTimeout) {
+          lastFailure = `${baseName(filename)} from ${username}: still ${t.state} with nothing sent after ${Math.round(queuedTimeout / 60_000)} minutes`;
+          await removeTransfer(slskd, req, username, t.id);
+          break;
+        }
         const percent = size > 0 && bytes > 0 ? Math.min(99, Math.floor((bytes / size) * 100)) : 0;
         if (percent !== lastPercent) {
           lastPercent = percent;
           const value: RequestProgress = { unit: 'percent', done: percent, total: 100 };
-          const eta = etaSeconds(bytes, size, now() - started);
+          // The rate is measured from the first byte, not from the enqueue: a wait in the queue
+          // is not transfer time.
+          const eta = etaSeconds(bytes, size, now() - (firstByteAt ?? now()));
           if (eta !== undefined) value.etaSeconds = eta;
           progress(req.id, value);
         }
@@ -921,7 +968,9 @@ export function createPipeline(deps: PipelineDeps) {
       if (!req) return undefined;
       try {
         update(id, { status: 'finding' });
-        return req.kind === 'track' ? await runTrack(req) : await runAlbum(req);
+        const done = req.kind === 'track' ? await runTrack(req) : await runAlbum(req);
+        busyTries.delete(id);
+        return done;
       } catch (error) {
         const reason = reasonFor(error);
         const detail = error instanceof Error ? error.message : String(error);
@@ -936,6 +985,29 @@ export function createPipeline(deps: PipelineDeps) {
             if (note) log.info({ request: id, note }, 'album unmonitored after a late cancel');
           }
           return undefined;
+        }
+        // MusicBrainz over its share: the hub tries again itself, a minute later, a few times,
+        // before it asks a person to tap Retry (production AL). The row stays `finding` with the
+        // reason in its detail; the minute tick re-enqueues it.
+        if (reason === 'catalogue_busy') {
+          const tries = (busyTries.get(id) ?? 0) + 1;
+          if (tries <= CATALOGUE_BUSY_RETRIES) {
+            busyTries.set(id, tries);
+            busyRetryAt.set(id, now() + (deps.catalogueBusyRetryMs ?? CATALOGUE_BUSY_RETRY_MS));
+            log.warn({ request: id, detail, attempt: tries }, 'catalogue busy; will try again');
+            try {
+              return update(id, {
+                status: 'finding',
+                detail: `The music catalogue was busy (${detail}); trying again in a minute (${tries} of ${CATALOGUE_BUSY_RETRIES})`,
+              });
+            } catch {
+              busyTries.delete(id);
+              busyRetryAt.delete(id);
+              return undefined;
+            }
+          }
+          busyTries.delete(id);
+          busyRetryAt.delete(id);
         }
         log.error({ request: id, reason, detail }, 'request failed');
         try {
@@ -1018,6 +1090,22 @@ export function createPipeline(deps: PipelineDeps) {
     /** Called when an album request is cancelled: Lidarr stops looking. Returns a detail line. */
     abandon(req: MusicRequest): Promise<string | undefined> {
       return unmonitorAlbum(req);
+    },
+
+    /**
+     * The requests whose minute after a busy MusicBrainz has passed, each once, still `finding`
+     * and not cancelled meanwhile: the runner enqueues them on its tick (production AL).
+     */
+    dueRetries(): string[] {
+      const due: string[] = [];
+      for (const [id, at] of busyRetryAt) {
+        if (at > now()) continue;
+        busyRetryAt.delete(id);
+        const row = stores.requests.get(id);
+        if (row?.status === 'finding') due.push(id);
+        else busyTries.delete(id);
+      }
+      return due;
     },
   };
 }
