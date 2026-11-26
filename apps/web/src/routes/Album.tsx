@@ -2,7 +2,7 @@ import { groupByDisc, sortItems } from '@renaissance/core';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 
-import { addToQueue, playNext, playNow } from '../lib/actions';
+import { addToQueue, playNext, playNow, sourceOf } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
 import { titleOf } from '../lib/names';
@@ -84,14 +84,20 @@ export function AlbumPage() {
           </p>
           <p className="text-caption text-muted-foreground">{meta}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Button tone="primary" disabled={!tracks.length} onClick={() => playNow(tracks, 0)}>
+            <Button
+              tone="primary"
+              disabled={!tracks.length}
+              onClick={() => playNow(tracks, 0, sourceOf('album', id))}
+            >
               <Icon name="play" className="size-4" />
               {t('album.play')}
             </Button>
             <Button
               tone="secondary"
               disabled={!tracks.length}
-              onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+              onClick={() =>
+                playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0, sourceOf('album', id))
+              }
             >
               <Icon name="shuffle" className="size-4" />
               {t('album.shuffle')}
@@ -104,13 +110,13 @@ export function AlbumPage() {
                   key: 'next',
                   label: t('queue.playNext'),
                   icon: 'next',
-                  onSelect: () => playNext(tracks, t),
+                  onSelect: () => playNext(tracks, t, sourceOf('album', id)),
                 },
                 {
                   key: 'queue',
                   label: t('queue.addToQueue'),
                   icon: 'queue',
-                  onSelect: () => addToQueue(tracks, t),
+                  onSelect: () => addToQueue(tracks, t, sourceOf('album', id)),
                 },
                 {
                   key: 'playlist',
@@ -165,7 +171,7 @@ export function AlbumPage() {
                       subtitle={track.artistName !== album.artistName ? track.artistName : ''}
                       playing={track.id === currentId}
                       paused={paused}
-                      onPlay={() => playNow(tracks, index)}
+                      onPlay={() => playNow(tracks, index, sourceOf('album', id))}
                     />
                   </li>
                 );

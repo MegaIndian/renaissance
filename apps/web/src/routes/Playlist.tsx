@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 
 import { playlistNameOf, titleOf } from '../lib/names';
-import { addToQueue, playNext, playNow } from '../lib/actions';
+import { addToQueue, playNext, playNow, sourceOf } from '../lib/actions';
 import { movePlaylistEntry, removeFromPlaylist } from '../lib/playlist-actions';
 import { openDialog } from '../lib/dialogs';
 import { usePlaylistTracks, useLibrary } from '../lib/queries';
@@ -85,14 +85,20 @@ export function PlaylistPage() {
               .join(' · ')}
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Button tone="primary" disabled={!tracks.length} onClick={() => playNow(tracks, 0)}>
+            <Button
+              tone="primary"
+              disabled={!tracks.length}
+              onClick={() => playNow(tracks, 0, sourceOf('playlist', id))}
+            >
               <Icon name="play" className="size-4" />
               {t('album.play')}
             </Button>
             <Button
               tone="secondary"
               disabled={!tracks.length}
-              onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+              onClick={() =>
+                playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0, sourceOf('playlist', id))
+              }
             >
               <Icon name="shuffle" className="size-4" />
               {t('album.shuffle')}
@@ -112,14 +118,14 @@ export function PlaylistPage() {
                   label: t('queue.playNext'),
                   icon: 'next',
                   disabled: !tracks.length,
-                  onSelect: () => playNext(tracks, t),
+                  onSelect: () => playNext(tracks, t, sourceOf('playlist', id)),
                 },
                 {
                   key: 'queue',
                   label: t('queue.addToQueue'),
                   icon: 'queue',
                   disabled: !tracks.length,
-                  onSelect: () => addToQueue(tracks, t),
+                  onSelect: () => addToQueue(tracks, t, sourceOf('playlist', id)),
                 },
                 {
                   key: 'delete',
@@ -164,7 +170,7 @@ export function PlaylistPage() {
                 index={i}
                 playing={entry.id === currentId}
                 paused={paused}
-                onPlay={() => playNow(tracks, i)}
+                onPlay={() => playNow(tracks, i, sourceOf('playlist', id))}
                 dragHandleProps={{ 'aria-label': t('queue.dragHandle'), role: 'img' }}
                 menuExtra={[
                   {

@@ -1,4 +1,4 @@
-import type { Track } from '@renaissance/core';
+import type { ListenSource, Track } from '@renaissance/core';
 import { useEffect, useState } from 'react';
 
 import { playNow } from '../lib/actions';
@@ -35,10 +35,13 @@ export function TrackList({
   tracks,
   showNumber = false,
   hideAlbumLink = false,
+  source,
 }: {
   tracks: Track[];
   showNumber?: boolean;
   hideAlbumLink?: boolean;
+  /** Where these songs are, for the listening log (F47). */
+  source?: ListenSource;
 }) {
   const player = usePlayer();
   const rowHeight = useTrackRowHeight();
@@ -58,7 +61,7 @@ export function TrackList({
           hideAlbumLink={hideAlbumLink}
           playing={track.id === currentId}
           paused={paused}
-          onPlay={() => playNow(tracks, i)}
+          onPlay={() => playNow(tracks, i, source)}
         />
       )}
     />

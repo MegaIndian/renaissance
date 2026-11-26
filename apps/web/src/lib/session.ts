@@ -54,7 +54,8 @@ function deviceId(): string {
   }
 }
 
-function deviceName(): string {
+/** The name this browser signs in under ("Chrome on Windows"); the listening log records it too. */
+export function deviceName(): string {
   const ua = navigator.userAgent;
   const browser = /Firefox\//.test(ua)
     ? 'Firefox'

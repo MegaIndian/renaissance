@@ -1,10 +1,12 @@
 import { supportedLanguages } from '@renaissance/core/i18n';
 import type { Language } from '@renaissance/core/i18n';
 import type { Settings as SettingsValue, StreamingQuality } from '@renaissance/core';
+import type { TFunction } from 'i18next';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
+import { clearHistory, restoreHistory, useHistory } from '../lib/history';
 import { setLanguage } from '../lib/i18n';
 import { refreshLibrary } from '../lib/library';
 import { useSettings } from '../lib/mode';
@@ -12,7 +14,8 @@ import { networkFor } from '../lib/network';
 import { useLibrary, useSession } from '../lib/queries';
 import { signOut } from '../lib/session';
 import { updateSettings } from '../lib/settings';
-import { Button } from '../components/Button';
+import { toast } from '../lib/toast';
+import { Button, LinkButton } from '../components/Button';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { SyncStatus } from '../components/SyncStatus';
 import { focusRing } from '../components/focus';
@@ -21,13 +24,15 @@ declare const __APP_VERSION__: string;
 
 /**
  * Settings (F67 shape, F84 switch, F27 quality, F5 token note): mode, appearance, language, playback
- * quality per network, album-aware shuffle, account and sign-out, library refresh, about.
+ * quality per network, album-aware shuffle, account and sign-out, library refresh, the listening
+ * history switch and clear (F47), about.
  */
 export function Settings() {
   const { t, i18n } = useTranslation();
   const settings = useSettings();
   const session = useSession();
   const { snapshot, ready, sync } = useLibrary();
+  const history = useHistory();
   // No count line while the cache is read or the first sync runs over an empty cache: it would say 0.
   const showCount =
     ready &&
@@ -231,6 +236,45 @@ export function Settings() {
         </Section>
       ) : null}
 
+      {session.status === 'signedIn' ? (
+        <Section title={t('settings.history')}>
+          <label className="flex items-start gap-3 text-body" htmlFor="listening-log">
+            <span className="grid size-6 shrink-0 place-items-center">
+              <input
+                id="listening-log"
+                type="checkbox"
+                checked={settings.listeningLog}
+                onChange={(e) => updateSettings({ listeningLog: e.target.checked })}
+                className={`size-4 accent-primary ${focusRing}`}
+              />
+            </span>
+            <span className="flex flex-col">
+              <span className="font-medium">{t('settings.listeningLog')}</span>
+              <span className="text-caption text-muted-foreground">
+                {t('settings.listeningLogHelp')}
+              </span>
+            </span>
+          </label>
+          {history.ready ? (
+            <p className="text-caption text-muted-foreground">
+              {t('history.playsCount', { count: history.count })}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <LinkButton to="/history" tone="secondary">
+              {t('settings.openHistory')}
+            </LinkButton>
+            <Button
+              tone="secondary"
+              disabled={!history.ready || history.count === 0}
+              onClick={() => void clearWithUndo(t)}
+            >
+              {t('settings.clearHistory')}
+            </Button>
+          </div>
+        </Section>
+      ) : null}
+
       <Section title={t('settings.about')}>
         <p className="text-body">
           {t('settings.version', {
@@ -244,6 +288,20 @@ export function Settings() {
       </Section>
     </div>
   );
+}
+
+/** Clear the listening log; the toast says how many plays went and its undo puts them back. */
+async function clearWithUndo(t: TFunction): Promise<void> {
+  const failed = () => toast(t('error.failed'), { tone: 'danger' });
+  try {
+    const removed = await clearHistory();
+    if (!removed) return;
+    toast(t('history.cleared', { count: removed.length }), {
+      undo: () => void restoreHistory(removed).catch(failed),
+    });
+  } catch {
+    failed();
+  }
 }
 
 /** A visible caption over a control group, the same `text-label` the quality selects carry (design AC). */

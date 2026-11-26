@@ -9,6 +9,7 @@ import type {
   AudioEvent,
   AudioPort,
   JellyfinAdapter,
+  ListenEvent,
   PlaybackReport,
   Playlist,
   Session,
@@ -247,4 +248,30 @@ export function signInFake(options: FakeAdapterOptions = {}) {
   });
   vi.spyOn(playerModule, 'getPlayer').mockReturnValue(player);
   return { adapter, calls, player, audio, snapshot, emptyQueue };
+}
+
+let n = 0;
+/** One play in the listening log, a full song of t1 by default. */
+export function listen(extra: Partial<ListenEvent> = {}): ListenEvent {
+  n += 1;
+  return {
+    id: `l${String(n).padStart(4, '0')}`,
+    serverId: session.server.id,
+    userId: session.userId,
+    trackId: 't1',
+    artistIds: ['a1'],
+    title: 'Sneaky Snitch',
+    artistName: 'Kevin MacLeod',
+    trackDuration: 120,
+    at: '2026-11-20T10:00:00.000Z',
+    endedAt: '2026-11-20T10:02:00.000Z',
+    listened: 120,
+    position: 120,
+    completed: true,
+    skipped: false,
+    endReason: 'ended',
+    source: { kind: 'library' },
+    device: 'Chrome on Mac',
+    ...extra,
+  };
 }

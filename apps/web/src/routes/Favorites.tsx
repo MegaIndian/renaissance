@@ -12,6 +12,8 @@ import { Row, RowItem } from '../components/Row';
 import { SignedOut } from '../components/SignedOut';
 import { TrackList } from './Library';
 
+const FAVORITES = { kind: 'favorites' } as const;
+
 /** Favourites (F12): this user's hearts on songs, albums and artists, synced with Jellyfin. */
 export function Favorites() {
   const { t } = useTranslation();
@@ -50,14 +52,18 @@ export function Favorites() {
         <h1 className="text-heading font-semibold">{t('favorites.title')}</h1>
         {tracks.length ? (
           <>
-            <Button tone="primary" className="min-h-6 py-1" onClick={() => playNow(tracks, 0)}>
+            <Button
+              tone="primary"
+              className="min-h-6 py-1"
+              onClick={() => playNow(tracks, 0, FAVORITES)}
+            >
               <Icon name="play" className="size-3.5" />
               {t('home.playAll')}
             </Button>
             <Button
               tone="secondary"
               className="min-h-6 py-1"
-              onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+              onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0, FAVORITES)}
             >
               <Icon name="shuffle" className="size-3.5" />
               {t('home.shuffleAll')}
@@ -89,7 +95,7 @@ export function Favorites() {
       {tracks.length ? (
         <section className="flex flex-col gap-2" aria-label={t('library.tracks')}>
           <h2 className="text-heading font-semibold">{t('library.tracks')}</h2>
-          <TrackList tracks={tracks} />
+          <TrackList tracks={tracks} source={FAVORITES} />
         </section>
       ) : null}
     </div>

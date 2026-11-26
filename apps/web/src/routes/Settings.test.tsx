@@ -4,11 +4,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryIndex, buildSnapshot } from '@renaissance/core';
 
+import { historyStore, recordListen, resetHistoryForTests, startHistory } from '../lib/history';
 import { setLanguage } from '../lib/i18n';
 import { libraryStore } from '../lib/library';
 import { settingsStore, updateSettings } from '../lib/settings';
 import { renderApp } from '../test/render';
-import { signInFake } from '../test/fakes';
+import { listen, session, signInFake } from '../test/fakes';
+import { toastStore } from '../lib/toast';
 import { setViewport } from '../test/setup';
 
 describe('Settings', () => {
@@ -18,7 +20,9 @@ describe('Settings', () => {
       theme: 'system',
       wifiQuality: 'lossless',
       albumAwareShuffle: false,
+      listeningLog: true,
     });
+    resetHistoryForTests();
     setLanguage('en');
   });
 
@@ -79,6 +83,38 @@ describe('Settings', () => {
       sync: { status: 'idle', progress: null, mode: null, error: null },
     });
     expect(await screen.findByText('0 songs · 0 albums · 0 artists')).toBeInTheDocument();
+  });
+
+  it('turns the listening history off and clears it, with an undo', async () => {
+    setLanguage('en');
+    signInFake();
+    await startHistory({ ...session, userId: 'settings-user' });
+    renderApp('/settings');
+    const user = userEvent.setup();
+    const section = await screen.findByRole('region', { name: 'Listening history' });
+    const clear = within(section).getByRole('button', { name: 'Clear history' });
+    expect(clear).toBeDisabled();
+    expect(within(section).getByRole('link', { name: 'Open history' })).toHaveAttribute(
+      'href',
+      '/history',
+    );
+    await recordListen(listen({ userId: 'settings-user' }));
+    expect(await within(section).findByText('1 play')).toBeInTheDocument();
+    await user.click(clear);
+    await waitFor(() => expect(historyStore.get().count).toBe(0));
+    expect(toastStore.get()?.message).toBe('Cleared 1 play from history');
+    toastStore.get()?.undo?.();
+    await waitFor(() => expect(historyStore.get().count).toBe(1));
+
+    const toggle = within(section).getByRole('checkbox', {
+      name: /Keep a listening history on this device/,
+    });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(settingsStore.get().listeningLog).toBe(false);
+    expect(JSON.parse(localStorage.getItem('renaissance.settings') ?? '{}').listeningLog).toBe(
+      false,
+    );
   });
 
   it('the theme, language and network groups have a visible caption, not only an aria-label (design AC)', async () => {

@@ -48,6 +48,10 @@ export function Sidebar() {
             <Icon name="heart" />
             {t('nav.favorites')}
           </NavLink>
+          <NavLink to="/history" className={({ isActive }) => item(isActive)}>
+            <Icon name="history" />
+            {t('nav.history')}
+          </NavLink>
           {playlists.slice(0, 8).map((playlist) => (
             <NavLink
               key={playlist.id}

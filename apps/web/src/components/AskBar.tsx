@@ -105,7 +105,7 @@ export function AskBar({
     switch (hit.kind) {
       case 'track':
         rememberRecent(value);
-        playNow([hit.item]);
+        playNow([hit.item], 0, { kind: 'search' });
         setValue('');
         break;
       case 'album':
