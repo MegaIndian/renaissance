@@ -49,7 +49,7 @@ jobs:
         run: pnpm --filter mobile typecheck
       - name: Expo SDK versions (apps/mobile stays on what expo@58 pins; fails on any drift)
         run: pnpm --filter mobile exec expo install --check
-      - name: Test (coverage floor 80 % on core and hub)
+      - name: Test (coverage floors; core and hub 80 %, web 82 / 77 / 77 / 84 %)
         run: pnpm test
       - name: Build web
         run: pnpm --filter web build

@@ -92,6 +92,9 @@ test.describe('against the demo Jellyfin', () => {
     return items.Items.map((i) => i.Name);
   }
 
+  /** The browser device ids this run signed in with; their records are deleted after each test. */
+  const devices = new Set<string>();
+
   async function signIn(page: Page): Promise<void> {
     await page.goto('/sign-in?lang=en&theme=dark');
     await page.getByRole('textbox', { name: 'Server address' }).fill(url ?? '');
@@ -99,6 +102,15 @@ test.describe('against the demo Jellyfin', () => {
     await page.getByLabel('Password').fill(password ?? '');
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.getByRole('heading', { level: 1 })).toContainText(`, ${userName}`);
+    const deviceId = await page.evaluate(() => localStorage.getItem('renaissance.deviceId'));
+    if (deviceId) devices.add(deviceId);
+  }
+
+  /** Remove a device record (and its sessions) from the server; one already gone is fine. */
+  async function deleteDevice(id: string, token: string): Promise<void> {
+    await api(`/Devices?id=${encodeURIComponent(id)}`, { method: 'DELETE' }, token).catch(
+      () => undefined,
+    );
   }
 
   async function openTracks(page: Page, mode = 'simple'): Promise<void> {
@@ -129,6 +141,23 @@ test.describe('against the demo Jellyfin', () => {
       if (u.Name.startsWith('e2e-user-'))
         await api(`/Users/${u.Id}`, { method: 'DELETE' }, state.token);
     }
+  });
+
+  // Every browser context signs in from a fresh device id: without this each run would leave a
+  // "Renaissance / Chrome" device record per test on the server (func AK).
+  test.afterEach(async () => {
+    if (!devices.size) return;
+    const { token } = await serverState();
+    for (const id of devices) await deleteDevice(id, token);
+    devices.clear();
+  });
+
+  // The suite's own API device ids go last, with a token that is revoked by the same call.
+  test.afterAll(async () => {
+    if (!configured) return;
+    const auth = await authenticate(userName ?? '', password ?? '');
+    await deleteDevice('pw-e2e-other', auth.AccessToken);
+    await deleteDevice('pw-e2e', auth.AccessToken);
   });
 
   test('signs in, browses the four tracks and the artist by every id, plays one, and a reload is not a play', async ({
