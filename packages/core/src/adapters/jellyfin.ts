@@ -94,6 +94,11 @@ export interface JellyfinAdapterOptions {
   WebSocket?: typeof WebSocket;
   /** Milliseconds before a request is abandoned as unreachable; tests shorten these. */
   timeouts?: Partial<RequestTimeouts>;
+  /**
+   * The containers this device plays directly, in the universal endpoint's `Container` syntax;
+   * anything else is transcoded to mp3. Defaults to `UNIVERSAL_CONTAINERS` (what browsers play).
+   */
+  containers?: string;
 }
 
 export interface RequestTimeouts {
@@ -907,7 +912,7 @@ export class JellyfinAdapter implements ServerAdapter {
       UserId: session.userId,
       DeviceId: this.options.deviceId,
       api_key: session.token,
-      Container: UNIVERSAL_CONTAINERS,
+      Container: this.options.containers ?? UNIVERSAL_CONTAINERS,
       TranscodingContainer: 'mp3',
       TranscodingProtocol: 'http',
       AudioCodec: 'mp3',
