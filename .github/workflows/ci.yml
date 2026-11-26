@@ -41,7 +41,7 @@ jobs:
         run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
       - name: Audit (high and above; allowlist in pnpm-workspace.yaml)
         run: pnpm audit --audit-level high
-      - name: Lint
+      - name: Lint (every package, mobile included)
         run: pnpm lint
       - name: Typecheck (core, design, web, hub)
         run: pnpm typecheck --filter=!mobile
@@ -49,7 +49,7 @@ jobs:
         run: pnpm --filter mobile typecheck
       - name: Expo SDK versions (apps/mobile stays on what expo@58 pins; fails on any drift)
         run: pnpm --filter mobile exec expo install --check
-      - name: Test (coverage floors; core and hub 80 %, web 82 / 77 / 77 / 84 %)
+      - name: Test (coverage floors; core and hub 80 %, web 82 / 77 / 77 / 84 %, mobile 70 / 55 / 68 / 73 %)
         run: pnpm test
       - name: Build web
         run: pnpm --filter web build
