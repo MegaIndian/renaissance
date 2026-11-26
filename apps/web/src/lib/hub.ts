@@ -170,7 +170,9 @@ export function rowStatusText(status: RowStatus, t: TFunction): string {
     case 'failed':
       return status.code === 'offline' || status.code === 'http_error'
         ? t('catalogue.hubAway')
-        : t('catalogue.failed');
+        : status.request?.reason === 'not_configured'
+          ? t('catalogue.notConfigured')
+          : t('catalogue.failed');
     case 'onItsWay': {
       const p = status.request.progress;
       const step =

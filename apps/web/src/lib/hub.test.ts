@@ -156,6 +156,9 @@ describe('what a row says', () => {
     expect(status({ status: 'importing' })).toBe('On its way · Adding to the library');
     expect(status({ status: 'ready' })).toBe('Ready');
     expect(status({ status: 'failed', reason: 'no_results' })).toBe('Not found; tap to try again');
+    expect(status({ status: 'failed', reason: 'not_configured' })).toBe(
+      'The hub is not set up to fetch music yet',
+    );
     const r = request();
     const watching = (mine: boolean) =>
       rowStatusText(

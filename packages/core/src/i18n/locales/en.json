@@ -32,6 +32,7 @@
     "ready": "Ready",
     "failed": "Not found; tap to try again",
     "hubAway": "The hub is not answering; tap to try again",
+    "notConfigured": "The hub is not set up to fetch music yet",
     "onItsWay": "On its way",
     "step": {
       "requested": "Waiting its turn",
