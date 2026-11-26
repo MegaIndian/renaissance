@@ -38,13 +38,6 @@ export interface LibraryState {
   persisted: boolean;
 }
 
-export interface Timers {
-  setTimeout: (fn: () => void, ms: number) => unknown;
-  clearTimeout: (handle: unknown) => void;
-  setInterval: (fn: () => void, ms: number) => unknown;
-  clearInterval: (handle: unknown) => void;
-}
-
 export interface LibraryPlatform {
   /** Open this user's store; `persisted: false` when the platform refused storage (memory instead). */
   openStore(key: string): Promise<{ store: PlatformLibraryStore; persisted: boolean }>;
@@ -57,7 +50,6 @@ export interface LibraryPlatform {
   };
   /** Where swallowed errors go (a debug log); nothing by default. */
   log?(where: string, error: unknown): void;
-  timers?: Timers;
 }
 
 export const REFRESH_INTERVAL_MS = 15 * 60_000;
@@ -128,225 +120,221 @@ interface Active {
   retry: (ms: number) => void;
 }
 
-const globalTimers: Timers = {
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
-  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-  setInterval: (fn, ms) => setInterval(fn, ms),
-  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
-};
+/** What the platform holds: the observable state and the lifecycle calls. */
+export interface LibraryController {
+  readonly state: Store<LibraryState>;
+  /** The signed-in user's store key, or null when stopped. */
+  readonly key: string | null;
+  refresh(options?: { full?: boolean }): Promise<void>;
+  start(adapter: ServerAdapter, session: Session): Promise<void>;
+  stop(): void;
+  broadcastChange(): void;
+  patchItems(kind: CacheKind, update: Update, options?: { broadcast?: boolean }): void;
+  addItems(kind: CacheKind, items: CacheItem[]): void;
+  applyUserDataChanges(changes: UserDataChange[]): Promise<void>;
+}
 
-export class LibraryController {
-  readonly state: Store<LibraryState> = createStore<LibraryState>(initialState());
-  private readonly platform: LibraryPlatform;
-  private readonly timers: Timers;
-  private active: Active | null = null;
-  private syncing: Promise<void> | null = null;
+/**
+ * A closure rather than a class: the web shell carries this module, and closure locals minify where
+ * property names would not (the shell's first-load budget is 200 kB).
+ */
+export function createLibraryController(platform: LibraryPlatform): LibraryController {
+  const state = createStore<LibraryState>(initialState());
+  let active: Active | null = null;
+  let syncing: Promise<void> | null = null;
   /** Whether the running sync is a full one, so a Rebuild during it is not chained twice. */
-  private syncingFull = false;
+  let syncingFull = false;
   /**
    * Ids a server push named that could not be fetched (a timeout, a 401 mid-flight). The delta that
    * follows cannot see them (ADR 0013), so the next refresh fetches them itself (prod AH).
    */
-  private missedIds = new Set<string>();
+  let missedIds = new Set<string>();
   /**
    * Local patches made while a sync is in flight. The sync built its snapshot from a read that began
    * before the patch, so each is replayed on the result before it is shown.
    */
-  private pendingPatches: { kind: CacheKind; update: Update }[] = [];
-  private retryDelay = RETRY_FIRST_MS;
+  let pendingPatches: { kind: CacheKind; update: Update }[] = [];
+  let retryDelay = RETRY_FIRST_MS;
   /** Bumped by every start and stop, so a start that lost the race while opening its store gives up. */
-  private generation = 0;
+  let generation = 0;
 
-  constructor(platform: LibraryPlatform) {
-    this.platform = platform;
-    this.timers = platform.timers ?? globalTimers;
+  function log(where: string): (error: unknown) => void {
+    return (error) => platform.log?.(where, error);
   }
 
-  private log(where: string): (error: unknown) => void {
-    return (error) => this.platform.log?.(where, error);
+  function setSnapshot(snapshot: LibrarySnapshot): void {
+    state.set((s) => ({ ...s, snapshot, index: new LibraryIndex(snapshot), ready: true }));
   }
 
-  private setSnapshot(snapshot: LibrarySnapshot): void {
-    this.state.set((s) => ({ ...s, snapshot, index: new LibraryIndex(snapshot), ready: true }));
-  }
-
-  private patchSync(patch: Partial<SyncState>): void {
-    this.state.set((s) => ({ ...s, sync: { ...s.sync, ...patch } }));
-  }
-
-  /** The signed-in user's store key, or null when stopped. */
-  get key(): string | null {
-    return this.active?.key ?? null;
+  function patchSync(patch: Partial<SyncState>): void {
+    state.set((s) => ({ ...s, sync: { ...s.sync, ...patch } }));
   }
 
   /**
    * Refresh from the server; one at a time, later calls join the running one. A full rebuild asked
    * for while a delta runs follows it instead of being dropped (func AE).
    */
-  refresh(options: { full?: boolean } = {}): Promise<void> {
-    const current = this.active;
+  function refresh(options: { full?: boolean } = {}): Promise<void> {
+    const current = active;
     if (!current) return Promise.resolve();
-    if (this.syncing) {
-      if (options.full && !this.syncingFull) {
-        return this.syncing.then(() => this.refresh({ full: true }));
+    if (syncing) {
+      if (options.full && !syncingFull) {
+        return syncing.then(() => refresh({ full: true }));
       }
-      return this.syncing;
+      return syncing;
     }
-    this.patchSync({ status: 'syncing', error: null, progress: null });
+    patchSync({ status: 'syncing', error: null, progress: null });
     const mine: Promise<void> = syncLibrary(
       current.adapter.library(current.session),
       current.store,
       {
         ...(options.full ? { full: true } : {}),
-        onProgress: (progress) => this.patchSync({ progress }),
+        onProgress: (progress) => patchSync({ progress }),
         signal: current.abort.signal,
       },
     )
       .then((result) => {
-        if (this.active !== current) return;
-        this.retryDelay = RETRY_FIRST_MS;
+        if (active !== current) return;
+        retryDelay = RETRY_FIRST_MS;
         let snapshot = result.snapshot;
-        for (const patch of this.pendingPatches) {
+        for (const patch of pendingPatches) {
           const applied = applyPatch(snapshot, patch.kind, patch.update);
           snapshot = applied.snapshot;
           // The disk copy may hold the server's row from the sync; the patch is the newer truth.
           if (applied.changed.length) {
-            void current.store
-              .write(patch.kind, applied.changed)
-              .catch(this.log('cache write failed'));
+            void current.store.write(patch.kind, applied.changed).catch(log('cache write failed'));
           }
           if (applied.removed.length) {
             void current.store
               .remove(patch.kind, applied.removed)
-              .catch(this.log('cache remove failed'));
+              .catch(log('cache remove failed'));
           }
         }
-        this.pendingPatches = [];
-        this.setSnapshot(snapshot);
-        this.patchSync({ status: 'idle', progress: null, mode: result.mode });
-        void this.fetchMissed(current);
+        pendingPatches = [];
+        setSnapshot(snapshot);
+        patchSync({ status: 'idle', progress: null, mode: result.mode });
+        void fetchMissed(current);
       })
       .catch((error: unknown) => {
-        if (this.active !== current) return;
-        this.patchSync({
+        if (active !== current) return;
+        patchSync({
           status: 'error',
           progress: null,
           error: error instanceof Error ? error.message : String(error),
         });
-        this.state.set((s) => ({ ...s, ready: true }));
+        state.set((s) => ({ ...s, ready: true }));
         // An outage does not wait for the fifteen-minute timer: try again soon, backing off.
-        current.retry(this.retryDelay);
-        this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_MS);
+        current.retry(retryDelay);
+        retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
       })
       .finally(() => {
         // A sync that lost the race (sign-out, then a new sign-in) must not clear the new user's.
-        if (this.syncing === mine) {
-          this.syncing = null;
-          this.pendingPatches = [];
+        if (syncing === mine) {
+          syncing = null;
+          pendingPatches = [];
         }
       });
-    this.syncing = mine;
-    this.syncingFull = options.full === true;
+    syncing = mine;
+    syncingFull = options.full === true;
     return mine;
   }
 
   /** Fetch what earlier pushes named and could not get; a failure keeps the ids for the next time. */
-  private async fetchMissed(current: Active): Promise<void> {
-    if (!this.missedIds.size) return;
-    const ids = [...this.missedIds].slice(0, PUSH_FETCH_LIMIT);
-    this.missedIds = new Set([...this.missedIds].filter((id) => !ids.includes(id)));
+  async function fetchMissed(current: Active): Promise<void> {
+    if (!missedIds.size) return;
+    const ids = [...missedIds].slice(0, PUSH_FETCH_LIMIT);
+    missedIds = new Set([...missedIds].filter((id) => !ids.includes(id)));
     try {
       const fetched = await current.adapter.library(current.session).musicByIds(ids);
-      if (this.active !== current) return;
-      if (fetched.tracks.length) this.addItems('track', fetched.tracks);
-      if (fetched.albums.length) this.addItems('album', fetched.albums);
+      if (active !== current) return;
+      if (fetched.tracks.length) addItems('track', fetched.tracks);
+      if (fetched.albums.length) addItems('album', fetched.albums);
     } catch (error) {
-      if (this.active === current) for (const id of ids) this.missedIds.add(id);
-      this.platform.log?.('missed ids fetch failed', error);
+      if (active === current) for (const id of ids) missedIds.add(id);
+      platform.log?.('missed ids fetch failed', error);
     }
   }
 
   /** Called when the session changes: open this user's store, show it, then refresh. */
-  async start(adapter: ServerAdapter, session: Session): Promise<void> {
+  async function start(adapter: ServerAdapter, session: Session): Promise<void> {
     const key = libraryKey(session);
-    if (this.active?.key === key) return;
-    this.stop();
-    const mine = ++this.generation;
-    this.patchSync({ status: 'loading', progress: null, error: null });
-    const { store, persisted } = await this.platform.openStore(key);
-    if (mine !== this.generation) {
-      void store.close?.().catch(this.log('store close failed'));
+    if (active?.key === key) return;
+    stop();
+    const mine = ++generation;
+    patchSync({ status: 'loading', progress: null, error: null });
+    const { store, persisted } = await platform.openStore(key);
+    if (mine !== generation) {
+      void store.close?.().catch(log('store close failed'));
       return;
     }
-    this.state.set((s) => ({ ...s, persisted }));
-    const timers = this.timers;
-    let timer: unknown;
-    let retryTimer: unknown;
+    state.set((s) => ({ ...s, persisted }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const schedule = (delay = 2000): void => {
-      if (timer !== undefined) timers.clearTimeout(timer);
-      timer = timers.setTimeout(() => void this.refresh(), delay);
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => void refresh(), delay);
     };
     const unsubscribe = adapter.subscribe(session, {
       onLibraryChanged: () => schedule(),
       onUserDataChanged: (changes) => {
         // The push names the items: patch them now. The delta that follows cannot see a favourite
         // or a play on 10.10.7 (ADR 0013), so this is how another device's heart reaches this one.
-        void this.applyUserDataChanges(changes).catch(this.log('push apply failed'));
+        void applyUserDataChanges(changes).catch(log('push apply failed'));
         schedule();
       },
     });
-    const interval = timers.setInterval(() => void this.refresh(), REFRESH_INTERVAL_MS);
-    const stopResume = this.platform.onResume?.(() => void this.refresh()) ?? (() => undefined);
-    const stopPeers = this.platform.peers?.listen(key, () => schedule(500)) ?? (() => undefined);
+    const interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    const stopResume = platform.onResume?.(() => void refresh()) ?? (() => undefined);
+    const stopPeers = platform.peers?.listen(key, () => schedule(500)) ?? (() => undefined);
     const abort = new AbortController();
-    this.active = {
+    active = {
       key,
       store,
       adapter,
       session,
       abort,
       retry: (ms) => {
-        if (retryTimer !== undefined) timers.clearTimeout(retryTimer);
-        retryTimer = timers.setTimeout(() => void this.refresh(), ms);
+        if (retryTimer !== undefined) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => void refresh(), ms);
       },
       stop: () => {
         // A sign-out revokes the token: a sync still paging would only collect 401s (prod AJ).
         abort.abort();
         unsubscribe();
-        timers.clearInterval(interval);
-        if (timer !== undefined) timers.clearTimeout(timer);
-        if (retryTimer !== undefined) timers.clearTimeout(retryTimer);
+        clearInterval(interval);
+        if (timer !== undefined) clearTimeout(timer);
+        if (retryTimer !== undefined) clearTimeout(retryTimer);
         stopResume();
         stopPeers();
-        void store.close?.().catch(this.log('store close failed'));
+        void store.close?.().catch(log('store close failed'));
       },
     };
     try {
       const snapshot = await loadSnapshot(store);
-      if (this.active?.key !== key) return;
-      this.setSnapshot(snapshot);
+      if (active?.key !== key) return;
+      setSnapshot(snapshot);
     } catch {
       /* an unreadable cache is rebuilt by the sync below */
     }
-    await this.refresh();
+    await refresh();
   }
 
-  stop(): void {
-    this.generation += 1;
-    this.active?.stop();
-    this.active = null;
-    this.syncing = null;
-    this.syncingFull = false;
-    this.pendingPatches = [];
-    this.missedIds = new Set();
-    this.retryDelay = RETRY_FIRST_MS;
-    this.state.set(initialState());
+  function stop(): void {
+    generation += 1;
+    active?.stop();
+    active = null;
+    syncing = null;
+    syncingFull = false;
+    pendingPatches = [];
+    missedIds = new Set();
+    retryDelay = RETRY_FIRST_MS;
+    state.set(initialState());
   }
 
   /** Tell the other instances signed in as the same user to refresh from the server. */
-  broadcastChange(): void {
-    const current = this.active;
-    if (current) this.platform.peers?.post(current.key);
+  function broadcastChange(): void {
+    const current = active;
+    if (current) platform.peers?.post(current.key);
   }
 
   /**
@@ -354,38 +342,41 @@ export class LibraryController {
    * once. Peers are told to refresh unless the caller asks to wait (an optimistic change broadcasts
    * once the server has it). A patch made while a sync runs is replayed on the sync's result.
    */
-  patchItems(kind: CacheKind, update: Update, options: { broadcast?: boolean } = {}): void {
-    const { snapshot, changed, removed } = applyPatch(this.state.get().snapshot, kind, update);
+  function patchItems(
+    kind: CacheKind,
+    update: Update,
+    options: { broadcast?: boolean } = {},
+  ): void {
+    const { snapshot, changed, removed } = applyPatch(state.get().snapshot, kind, update);
     if (!changed.length && !removed.length) return;
-    if (this.syncing) this.pendingPatches.push({ kind, update });
-    this.setSnapshot(snapshot);
-    const current = this.active;
+    if (syncing) pendingPatches.push({ kind, update });
+    setSnapshot(snapshot);
+    const current = active;
     if (!current) return;
-    if (changed.length)
-      void current.store.write(kind, changed).catch(this.log('cache write failed'));
+    if (changed.length) void current.store.write(kind, changed).catch(log('cache write failed'));
     if (removed.length) {
-      void current.store.remove(kind, removed).catch(this.log('cache remove failed'));
+      void current.store.remove(kind, removed).catch(log('cache remove failed'));
     }
-    if (options.broadcast !== false) this.broadcastChange();
+    if (options.broadcast !== false) broadcastChange();
   }
 
   /** Add brand-new items (a created playlist, a song a push named) to the snapshot and the store. */
-  addItems(kind: CacheKind, items: CacheItem[]): void {
-    const { snapshot } = this.state.get();
+  function addItems(kind: CacheKind, items: CacheItem[]): void {
+    const { snapshot } = state.get();
     const listKey = LIST_KEY[kind];
     const existing = new Set((snapshot[listKey] as CacheItem[]).map((i) => i.id));
     const fresh = [
       ...new Map(items.filter((i) => !existing.has(i.id)).map((i) => [i.id, i])).values(),
     ];
     if (!fresh.length) return;
-    this.setSnapshot({
+    setSnapshot({
       ...snapshot,
       [listKey]: [...(snapshot[listKey] as CacheItem[]), ...fresh],
     } as LibrarySnapshot);
-    const current = this.active;
+    const current = active;
     if (current) {
-      void current.store.write(kind, fresh).catch(this.log('cache write failed'));
-      this.broadcastChange();
+      void current.store.write(kind, fresh).catch(log('cache write failed'));
+      broadcastChange();
     }
   }
 
@@ -393,7 +384,7 @@ export class LibraryController {
    * What another device changed, from the server's push: patch the cached rows by id, and fetch
    * the tracks or albums the store does not hold yet. No broadcast: every instance has its socket.
    */
-  async applyUserDataChanges(changes: UserDataChange[]): Promise<void> {
+  async function applyUserDataChanges(changes: UserDataChange[]): Promise<void> {
     if (!changes.length) return;
     const byId = new Map(changes.map((c) => [c.itemId, c]));
     const merge = (item: CacheItem): CacheItem => {
@@ -411,12 +402,12 @@ export class LibraryController {
       return same ? item : next;
     };
     const known = new Set<string>();
-    const { snapshot } = this.state.get();
+    const { snapshot } = state.get();
     for (const kind of ['track', 'album', 'artist', 'playlist'] as const) {
       for (const item of snapshot[LIST_KEY[kind]] as CacheItem[]) {
         if (byId.has(item.id)) known.add(item.id);
       }
-      this.patchItems(kind, merge, { broadcast: false });
+      patchItems(kind, merge, { broadcast: false });
     }
     // The push names whatever any device touched, films included: one request for the unknown
     // ids, no more than a page of them per push (a bigger batch is the delta's job).
@@ -424,19 +415,32 @@ export class LibraryController {
       .map((c) => c.itemId)
       .filter((id) => !known.has(id))
       .slice(0, PUSH_FETCH_LIMIT);
-    const current = this.active;
+    const current = active;
     if (!missing.length || !current) return;
     let fetched: Awaited<ReturnType<ReturnType<ServerAdapter['library']>['musicByIds']>>;
     try {
       fetched = await current.adapter.library(current.session).musicByIds(missing);
     } catch (error) {
       // Kept for the next refresh: the delta cannot bring them (ADR 0013).
-      if (this.active === current) for (const id of missing) this.missedIds.add(id);
-      this.platform.log?.('push fetch failed', error);
+      if (active === current) for (const id of missing) missedIds.add(id);
+      platform.log?.('push fetch failed', error);
       return;
     }
-    if (this.active !== current) return;
-    if (fetched.tracks.length) this.addItems('track', fetched.tracks);
-    if (fetched.albums.length) this.addItems('album', fetched.albums);
+    if (active !== current) return;
+    if (fetched.tracks.length) addItems('track', fetched.tracks);
+    if (fetched.albums.length) addItems('album', fetched.albums);
   }
+  return {
+    state,
+    get key() {
+      return active?.key ?? null;
+    },
+    refresh,
+    start,
+    stop,
+    broadcastChange,
+    patchItems,
+    addItems,
+    applyUserDataChanges,
+  };
 }

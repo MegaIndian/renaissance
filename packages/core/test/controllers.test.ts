@@ -11,7 +11,7 @@ import {
 import { ServerError } from '../src/adapters/jellyfin';
 import { MemoryLibraryStore } from '../src/library-cache';
 import {
-  LibraryController,
+  createLibraryController,
   PUSH_FETCH_LIMIT,
   REFRESH_INTERVAL_MS,
   RETRY_FIRST_MS,
@@ -230,7 +230,7 @@ describe('LibraryController', () => {
   it('starts, shows the synced snapshot, and stops clean', async () => {
     const s = fakeServer();
     const { p, resume, peerListeners } = platform();
-    const c = new LibraryController(p);
+    const c = createLibraryController(p);
     await c.start(s.adapter, session);
     const state = c.state.get();
     expect(state.ready).toBe(true);
@@ -255,7 +255,7 @@ describe('LibraryController', () => {
   it('refreshes on resume, on peers, on pushes and on the interval; joins a running sync', async () => {
     const s = fakeServer();
     const { p, resume, peerListeners } = platform();
-    const c = new LibraryController(p);
+    const c = createLibraryController(p);
     await c.start(s.adapter, session);
     const first = c.refresh();
     expect(c.refresh()).toBe(first);
@@ -276,7 +276,7 @@ describe('LibraryController', () => {
 
   it('chains a full rebuild asked for during a delta', async () => {
     const s = fakeServer();
-    const c = new LibraryController(platform().p);
+    const c = createLibraryController(platform().p);
     await c.start(s.adapter, session);
     const delta = c.refresh();
     const full = c.refresh({ full: true });
@@ -288,7 +288,7 @@ describe('LibraryController', () => {
 
   it('says a failed sync and retries with a back-off', async () => {
     const s = fakeServer();
-    const c = new LibraryController(platform().p);
+    const c = createLibraryController(platform().p);
     s.setFail(new Error('down'));
     await c.start(s.adapter, session);
     expect(c.state.get().sync).toMatchObject({ status: 'error', error: 'down' });
@@ -302,7 +302,7 @@ describe('LibraryController', () => {
   it('patches at once, writes the store, tells peers, and replays a patch made mid-sync', async () => {
     const s = fakeServer();
     const { p, stores, posted } = platform();
-    const c = new LibraryController(p);
+    const c = createLibraryController(p);
     await c.start(s.adapter, session);
     const heart = (item: { id: string; isFavorite: boolean }) =>
       item.id === 't1' ? { ...item, isFavorite: true } : item;
@@ -326,7 +326,7 @@ describe('LibraryController', () => {
   it('applies pushed user data, fetches unknown ids, and keeps the ones it could not get', async () => {
     const s = fakeServer();
     s.extra.set('t9', track('t9'));
-    const c = new LibraryController(platform().p);
+    const c = createLibraryController(platform().p);
     await c.start(s.adapter, session);
     await c.applyUserDataChanges([]);
     await c.applyUserDataChanges([
@@ -347,7 +347,7 @@ describe('LibraryController', () => {
 
   it('caps the ids fetched per push', async () => {
     const s = fakeServer();
-    const c = new LibraryController(platform().p);
+    const c = createLibraryController(platform().p);
     await c.start(s.adapter, session);
     const many = Array.from({ length: PUSH_FETCH_LIMIT + 5 }, (_, i) => ({ itemId: `n${i}` }));
     await c.applyUserDataChanges(many);
@@ -359,7 +359,7 @@ describe('LibraryController', () => {
     const s = fakeServer();
     const close = vi.fn(() => Promise.resolve());
     let release: () => void = () => undefined;
-    const c = new LibraryController({
+    const c = createLibraryController({
       openStore: () =>
         new Promise((resolve) => {
           release = () =>

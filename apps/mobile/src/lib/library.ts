@@ -3,7 +3,7 @@
  * "Resumed" is the app coming back to the foreground or the network coming back. When SQLite cannot
  * open, core's `MemoryLibraryStore` holds the library for the run and it is synced in full next time.
  */
-import { LibraryController, MemoryLibraryStore, libraryKey } from '@renaissance/core';
+import { MemoryLibraryStore, createLibraryController, libraryKey } from '@renaissance/core';
 import type { CacheItem, CacheKind, Session, UserDataChange } from '@renaissance/core';
 import * as Network from 'expo-network';
 import * as SQLite from 'expo-sqlite';
@@ -39,7 +39,7 @@ export async function deleteLibrary(session: Session): Promise<void> {
   );
 }
 
-const controller = new LibraryController({
+const controller = createLibraryController({
   openStore: openLibraryStore,
   onResume: (listener) => {
     let last = AppState.currentState;
