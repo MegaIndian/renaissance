@@ -1,10 +1,10 @@
 /**
  * `GET /catalogue/search?q=`: typeahead for the one search box (F61). Answers at once: the cache
  * when the words were looked up before, else Deezer rows (`partial: true`); MusicBrainz is asked
- * with `&full=1` (the search page behind Enter) and when a song is added, never per keystroke. Deezer calls are spaced through their own
- * limiter, so the typist's older prefix is dropped (`503 superseded`) and a full queue answers
- * `503 busy`; the app keeps the rows it has and asks again. A Jellyfin failure costs the rows
- * their library marks, never the rows.
+ * with `&full=1` (the search page behind Enter) and when a song is added, never per keystroke.
+ * Deezer calls are spaced through their own limiter, so the typist's older prefix is dropped
+ * (`503 superseded`) and a full queue answers `503 busy`; the app keeps the rows it has and asks
+ * again. A Jellyfin failure costs the rows their library marks, never the rows.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
