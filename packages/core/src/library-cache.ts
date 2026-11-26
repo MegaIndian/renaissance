@@ -27,6 +27,7 @@ import {
   Playlist as PlaylistSchema,
   Track as TrackSchema,
 } from './models';
+import { CancelledError } from './server-adapter';
 import type { Library, Page, PageRequest } from './server-adapter';
 
 export type CacheKind = 'track' | 'album' | 'artist' | 'playlist';
@@ -165,6 +166,11 @@ export interface SyncOptions {
   now?: () => Date;
   /** Force the first-run path even when a sync time exists. */
   full?: boolean;
+  /**
+   * Fires when the caller no longer wants the result (a sign-out): no further page is requested,
+   * the request in flight is aborted, and the sync rejects with `CancelledError` (prod AJ).
+   */
+  signal?: AbortSignal | undefined;
 }
 
 export interface SyncResult {
@@ -211,15 +217,22 @@ function later(a: number, b: number): number {
   return Math.max(a, b);
 }
 
+/** Throws `CancelledError` once the signal has fired, so a sync stops between two requests. */
+function checkCancelled(signal: AbortSignal | undefined, what: string): void {
+  if (signal?.aborted) throw new CancelledError(what);
+}
+
 async function allPages<T>(
   fetchPage: (page: PageRequest) => Promise<Page<T>>,
   pageSize: number,
   onPage?: (total: number, done: number) => void,
   stopWhen?: (item: T) => boolean,
+  signal?: AbortSignal,
 ): Promise<T[]> {
   const out: T[] = [];
   for (let start = 0; ; start += pageSize) {
-    const page = await fetchPage({ start, limit: pageSize });
+    checkCancelled(signal, 'sync');
+    const page = await fetchPage({ start, limit: pageSize, signal });
     let stop = false;
     for (const item of page.items) {
       if (stopWhen?.(item)) {
@@ -253,22 +266,23 @@ export async function syncLibrary(
 ): Promise<SyncResult> {
   const pageSize = options.pageSize ?? 1000;
   const now = options.now ?? (() => new Date());
+  const { signal } = options;
   const stored = options.full ? null : await store.readMeta();
   const meta = stored?.watermark ? stored : null;
   const progress = (kind: CacheKind) => (total: number, done: number) =>
     options.onProgress?.({ kind, done, total });
+  const pages = <T>(
+    fetchPage: (page: PageRequest) => Promise<Page<T>>,
+    onPage?: (total: number, done: number) => void,
+    stopWhen?: (item: T) => boolean,
+  ) => allPages(fetchPage, pageSize, onPage, stopWhen, signal);
 
-  const artists = await allPages(
-    (p) => library.artists(p, { sort: 'name' }),
-    pageSize,
-    progress('artist'),
+  const artists = await pages((p) => library.artists(p, { sort: 'name' }), progress('artist'));
+  const albumArtistIds = (await pages((p) => library.albumArtists(p, { sort: 'name' }))).map(
+    (a) => a.id,
   );
-  const albumArtistIds = (
-    await allPages((p) => library.albumArtists(p, { sort: 'name' }), pageSize)
-  ).map((a) => a.id);
-  const playlists = await allPages(
+  const playlists = await pages(
     (p) => library.playlists(p, { sort: 'name' }),
-    pageSize,
     progress('playlist'),
   );
   const watermark = new Watermark(meta?.watermark);
@@ -282,16 +296,15 @@ export async function syncLibrary(
   };
 
   if (!meta) {
-    const tracks = await allPages(
+    const tracks = await pages(
       (p) => library.tracks(p, { sort: 'dateAdded', order: 'desc' }),
-      pageSize,
       progress('track'),
     );
-    const albums = await allPages(
+    const albums = await pages(
       (p) => library.albums(p, { sort: 'dateAdded', order: 'desc' }),
-      pageSize,
       progress('album'),
     );
+    checkCancelled(signal, 'sync');
     watermark.see(tracks);
     watermark.see(albums);
     const newMeta = finish();
@@ -321,22 +334,13 @@ export async function syncLibrary(
   const isOld = (item: { dateAdded?: string | undefined }) =>
     item.dateAdded !== undefined && Date.parse(item.dateAdded) < since;
   const [newTracks, newAlbums, changedUserData, editedTracks, editedAlbums] = await Promise.all([
-    allPages(
-      (p) => library.tracks(p, { sort: 'dateAdded', order: 'desc' }),
-      pageSize,
-      undefined,
-      isOld,
-    ),
-    allPages(
-      (p) => library.albums(p, { sort: 'dateAdded', order: 'desc' }),
-      pageSize,
-      undefined,
-      isOld,
-    ),
-    allPages((p) => library.userDataChangedSince(mark.saved, p), pageSize),
-    library.tracks({ start: 0, limit: 200 }, { sort: 'lastSaved', order: 'desc' }),
-    library.albums({ start: 0, limit: 200 }, { sort: 'lastSaved', order: 'desc' }),
+    pages((p) => library.tracks(p, { sort: 'dateAdded', order: 'desc' }), undefined, isOld),
+    pages((p) => library.albums(p, { sort: 'dateAdded', order: 'desc' }), undefined, isOld),
+    pages((p) => library.userDataChangedSince(mark.saved, p)),
+    library.tracks({ start: 0, limit: 200, signal }, { sort: 'lastSaved', order: 'desc' }),
+    library.albums({ start: 0, limit: 200, signal }, { sort: 'lastSaved', order: 'desc' }),
   ]);
+  checkCancelled(signal, 'sync');
   const trackUpdates = dedupe([...newTracks, ...changedUserData, ...editedTracks.items]);
   const albumUpdates = dedupe([...newAlbums, ...editedAlbums.items]);
   watermark.see(trackUpdates);
@@ -352,14 +356,15 @@ export async function syncLibrary(
   let tracks: unknown[] | null = null;
   let albums: unknown[] | null = null;
   for (const kind of ['track', 'album'] as const) {
+    checkCancelled(signal, 'sync');
     const total = (
       kind === 'track'
-        ? await library.tracks({ start: 0, limit: 1 })
-        : await library.albums({ start: 0, limit: 1 })
+        ? await library.tracks({ start: 0, limit: 1, signal })
+        : await library.albums({ start: 0, limit: 1, signal })
     ).total;
     if (total === (await store.count(kind))) continue;
     const cached = await store.read(kind);
-    const serverIds = await library.ids(kind);
+    const serverIds = await library.ids(kind, { signal });
     const serverSet = new Set(serverIds);
     const cachedSet = new Set(cached.map((item) => item.id));
     const gone = cached.filter((item) => !serverSet.has(item.id)).map((item) => item.id);
@@ -368,8 +373,8 @@ export async function syncLibrary(
     if (missing.length) {
       const fetched =
         kind === 'track'
-          ? await library.byIds('track', missing)
-          : await library.byIds('album', missing);
+          ? await library.byIds('track', missing, { signal })
+          : await library.byIds('album', missing, { signal });
       watermark.see(fetched);
       await store.write(kind, fetched);
       healed += fetched.length;

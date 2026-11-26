@@ -637,6 +637,33 @@ describe('JellyfinAdapter calls', () => {
     expect((error as UnreachableError).cause).toBeInstanceOf(TypeError);
   });
 
+  it("a caller's signal aborts the request in flight and rejects as cancelled, not unreachable (prod AJ)", async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const blackHole: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        seen.push(init?.signal);
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const slow = new JellyfinAdapter(server, { ...options, fetch: blackHole });
+    const controller = new AbortController();
+    const library = slow.library(session);
+    const pending = library.tracks({ start: 0, limit: 10, signal: controller.signal });
+    const idsPending = library.ids('album', { signal: controller.signal });
+    const byIdsPending = library.byIds('track', ['x'], { signal: controller.signal });
+    await vi.waitFor(() => expect(seen).toHaveLength(3));
+    expect(seen.every((s) => s instanceof AbortSignal && !s.aborted)).toBe(true);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'CancelledError' });
+    await expect(idsPending).rejects.toMatchObject({ name: 'CancelledError' });
+    await expect(byIdsPending).rejects.toMatchObject({ name: 'CancelledError' });
+    expect(seen.every((s) => s?.aborted)).toBe(true);
+    // A signal that has already fired sends nothing at all.
+    await expect(
+      library.albums({ start: 0, limit: 10, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'CancelledError' });
+    expect(seen).toHaveLength(3);
+  });
+
   it('ping reads the public version; me reads /Users/Me and surfaces a revoked token as 401', async () => {
     const { adapter, calls } = make({
       'GET /System/Info/Public': () => ({ Version: '10.10.7' }),

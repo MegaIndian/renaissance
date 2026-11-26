@@ -33,6 +33,7 @@ import type {
   MoveResult,
   Page,
   PageRequest,
+  RequestOptions,
   PlaybackReport,
   Playlists,
   QuickConnect,
@@ -44,7 +45,7 @@ import type {
   SortKey,
   StreamQuality,
 } from '../server-adapter';
-import { UnreachableError } from '../server-adapter';
+import { CancelledError, UnreachableError } from '../server-adapter';
 import { trimTrailingSlashes } from '../url';
 import {
   JfAuthResult,
@@ -327,7 +328,8 @@ export class JellyfinAdapter implements ServerAdapter {
 
   /**
    * One call. Every request carries an `AbortSignal` so a black-holed host fails within the timeout
-   * instead of hanging a button; a timeout or a network failure becomes `UnreachableError`.
+   * instead of hanging a button; a timeout or a network failure becomes `UnreachableError`. A
+   * caller's own signal (a sync given up on sign-out) aborts the request too, as `CancelledError`.
    */
   private async fetchRaw(
     method: 'GET' | 'POST' | 'DELETE',
@@ -337,13 +339,16 @@ export class JellyfinAdapter implements ServerAdapter {
       params,
       body,
       timeout = 'request',
+      signal,
     }: {
       token?: string | undefined;
       params?: Params;
       body?: unknown;
       timeout?: keyof RequestTimeouts;
+      signal?: AbortSignal | undefined;
     } = {},
   ): Promise<Response> {
+    if (signal?.aborted) throw new CancelledError(path);
     const headers: Record<string, string> = {
       Accept: 'application/json',
       Authorization: this.authorizationHeader(token),
@@ -351,13 +356,20 @@ export class JellyfinAdapter implements ServerAdapter {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
-    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-      init.signal = AbortSignal.timeout(this.timeouts[timeout]);
-    }
+    // The timeout and the caller's signal together where the runtime can combine them (Safari
+    // 17.4 and up); the timeout alone before that, when the caller's is still checked between pages.
+    const timer =
+      typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(this.timeouts[timeout])
+        : undefined;
+    const both = signal && timer && typeof AbortSignal.any === 'function';
+    const chosen = both ? AbortSignal.any([signal, timer]) : (timer ?? signal);
+    if (chosen) init.signal = chosen;
     let response: Response;
     try {
       response = await this.fetchImpl(this.url(path, params), init);
     } catch (error) {
+      if (signal?.aborted) throw new CancelledError(path);
       const timedOut =
         error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
       throw new UnreachableError(path, timedOut ? 'timeout' : 'network', { cause: error });
@@ -462,10 +474,11 @@ export class JellyfinAdapter implements ServerAdapter {
   library(session: Session): Library {
     const token = session.token;
     const userId = session.userId;
-    const items = (params: Params) =>
+    const items = (params: Params, signal?: AbortSignal) =>
       this.request('GET', '/Items', JfItemsResult, {
         token,
         params: { userId, Recursive: true, ...params },
+        signal,
       });
     const one = (id: string, fields: string) =>
       this.request(
@@ -488,6 +501,7 @@ export class JellyfinAdapter implements ServerAdapter {
       pageOf(
         await this.request('GET', path, JfItemsResult, {
           token,
+          signal: page.signal,
           params: {
             userId,
             Fields: ARTIST_FIELDS,
@@ -501,13 +515,16 @@ export class JellyfinAdapter implements ServerAdapter {
       );
     const tracksWhere = async (params: Params, page: PageRequest = {}) =>
       pageOf(
-        await items({
-          IncludeItemTypes: 'Audio',
-          Fields: TRACK_FIELDS,
-          StartIndex: page.start,
-          Limit: page.limit,
-          ...params,
-        }),
+        await items(
+          {
+            IncludeItemTypes: 'Audio',
+            Fields: TRACK_FIELDS,
+            StartIndex: page.start,
+            Limit: page.limit,
+            ...params,
+          },
+          page.signal,
+        ),
         toTrack,
       );
     const library: Library = {
@@ -516,11 +533,14 @@ export class JellyfinAdapter implements ServerAdapter {
       artist: async (id) => toArtist(await one(id, ARTIST_FIELDS)),
       albums: async (page = {}, query = {}) =>
         pageOf(
-          await items({
-            IncludeItemTypes: 'MusicAlbum',
-            Fields: ALBUM_FIELDS,
-            ...this.queryParams(query, page),
-          }),
+          await items(
+            {
+              IncludeItemTypes: 'MusicAlbum',
+              Fields: ALBUM_FIELDS,
+              ...this.queryParams(query, page),
+            },
+            page.signal,
+          ),
           toAlbum,
         ),
       album: async (id) => toAlbum(await one(id, ALBUM_FIELDS)),
@@ -532,7 +552,7 @@ export class JellyfinAdapter implements ServerAdapter {
             SortOrder: 'Ascending',
           })
         ).items,
-      tracks: (page = {}, query = {}) => tracksWhere(this.queryParams(query, page)),
+      tracks: (page = {}, query = {}) => tracksWhere(this.queryParams(query, page), page),
       track: async (id) => toTrack(await one(id, TRACK_FIELDS)),
       genres: async () => {
         const result = await this.request('GET', '/MusicGenres', JfItemsResult, {
@@ -552,12 +572,15 @@ export class JellyfinAdapter implements ServerAdapter {
       },
       playlists: async (page = {}, query = {}) =>
         pageOf(
-          await items({
-            IncludeItemTypes: 'Playlist',
-            Fields: PLAYLIST_FIELDS,
-            ...this.queryParams({ sort: 'name', ...query }, page),
-            SortBy: query.sort === 'dateAdded' ? 'DateCreated,SortName' : 'SortName',
-          }),
+          await items(
+            {
+              IncludeItemTypes: 'Playlist',
+              Fields: PLAYLIST_FIELDS,
+              ...this.queryParams({ sort: 'name', ...query }, page),
+              SortBy: query.sort === 'dateAdded' ? 'DateCreated,SortName' : 'SortName',
+            },
+            page.signal,
+          ),
           toPlaylist,
         ),
       playlist: async (id) => toPlaylist(await one(id, PLAYLIST_FIELDS)),
@@ -656,7 +679,7 @@ export class JellyfinAdapter implements ServerAdapter {
       },
       userDataChangedSince: (since, page = {}) =>
         tracksWhere({ MinDateLastSavedForUser: since, SortBy: 'SortName' }, page),
-      ids: async (kind) => {
+      ids: async (kind, options = {}) => {
         const type = {
           track: 'Audio',
           album: 'MusicAlbum',
@@ -669,6 +692,7 @@ export class JellyfinAdapter implements ServerAdapter {
         for (let start = 0; ; start += limit) {
           const result = await this.request('GET', path, JfItemsResult, {
             token,
+            signal: options.signal,
             params: {
               userId,
               Recursive: true,
@@ -702,15 +726,22 @@ export class JellyfinAdapter implements ServerAdapter {
         }
         return { tracks, albums };
       },
-      byIds: (async (kind: 'track' | 'album', wanted: readonly string[]) => {
+      byIds: (async (
+        kind: 'track' | 'album',
+        wanted: readonly string[],
+        options: RequestOptions = {},
+      ) => {
         const out: (Track | Album)[] = [];
         const chunk = 100;
         for (let start = 0; start < wanted.length; start += chunk) {
-          const result = await items({
-            Ids: wanted.slice(start, start + chunk).join(','),
-            IncludeItemTypes: kind === 'track' ? 'Audio' : 'MusicAlbum',
-            Fields: kind === 'track' ? TRACK_FIELDS : ALBUM_FIELDS,
-          });
+          const result = await items(
+            {
+              Ids: wanted.slice(start, start + chunk).join(','),
+              IncludeItemTypes: kind === 'track' ? 'Audio' : 'MusicAlbum',
+              Fields: kind === 'track' ? TRACK_FIELDS : ALBUM_FIELDS,
+            },
+            options.signal,
+          );
           if (kind === 'track') out.push(...result.Items.map(toTrack));
           else out.push(...result.Items.map(toAlbum));
         }

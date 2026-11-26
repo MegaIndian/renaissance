@@ -350,7 +350,8 @@
     "title": "Something went wrong on this page",
     "body": "Nothing was changed. Go home and try again.",
     "offline": "You seem to be offline. Your library still works from the last refresh; playing needs the server.",
-    "failed": "That did not work. Try again."
+    "failed": "That did not work. Try again.",
+    "unreachable": "The server could not be reached. Try again when it is back."
   },
   "time": {
     "justNow": "just now",

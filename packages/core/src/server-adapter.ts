@@ -29,6 +29,17 @@ export class UnreachableError extends Error {
   }
 }
 
+/**
+ * The caller gave up on the work (a sign-out while the library was syncing): the request was
+ * aborted on purpose and nothing is wrong with the server. Nothing is shown for this one.
+ */
+export class CancelledError extends Error {
+  constructor(what: string) {
+    super(`Cancelled ${what}`);
+    this.name = 'CancelledError';
+  }
+}
+
 export type StreamQuality = 'original' | { maxBitrate: number };
 
 export interface Credentials {
@@ -52,6 +63,13 @@ export interface Page<T> {
 export interface PageRequest {
   start?: number;
   limit?: number;
+  /** Aborts the request; the adapter rejects with `CancelledError` once it fires. */
+  signal?: AbortSignal | undefined;
+}
+
+/** Options for the bulk reads a sync makes outside of pages. */
+export interface RequestOptions {
+  signal?: AbortSignal | undefined;
 }
 
 /** Sort keys every list offers (F15); each adapter maps them to its server's names. */
@@ -143,10 +161,10 @@ export interface Library {
    */
   userDataChangedSince(since: string, page?: PageRequest): Promise<Page<Track>>;
   /** Every id of a kind, cheaply, so the cache can drop what the server deleted. */
-  ids(kind: 'track' | 'album' | 'artist' | 'playlist'): Promise<string[]>;
+  ids(kind: 'track' | 'album' | 'artist' | 'playlist', options?: RequestOptions): Promise<string[]>;
   /** The items behind these ids, so the cache can fetch what a delta missed (tracks and albums). */
-  byIds(kind: 'track', ids: readonly string[]): Promise<Track[]>;
-  byIds(kind: 'album', ids: readonly string[]): Promise<Album[]>;
+  byIds(kind: 'track', ids: readonly string[], options?: RequestOptions): Promise<Track[]>;
+  byIds(kind: 'album', ids: readonly string[], options?: RequestOptions): Promise<Album[]>;
   /**
    * The music behind ids of unknown kind (a push names whatever any device touched): one request,
    * the answer sorted by the server's own type; anything that is not a song or an album is dropped.

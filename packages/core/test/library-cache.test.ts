@@ -230,6 +230,42 @@ describe('syncLibrary', () => {
     expect((await syncLibrary(undated.lib, bare)).mode).toBe('full');
   });
 
+  it('a signal that fires mid-sync stops the paging, reaches every page request, and rejects as cancelled (prod AJ)', async () => {
+    const tracks = Array.from({ length: 50 }, (_, i) => t(`t${i}`, 1 + (i % 9)));
+    const { lib, calls } = fakeLibrary({
+      tracks,
+      albums: [album('al1')],
+      artists: [artist('a1')],
+      playlists: [],
+    });
+    const controller = new AbortController();
+    const signals: (AbortSignal | undefined)[] = [];
+    const original = lib.tracks.bind(lib);
+    lib.tracks = (p, q) => {
+      signals.push(p?.signal);
+      // The second page of songs is where the user signs out.
+      if ((p?.start ?? 0) === 10) controller.abort();
+      return original(p, q);
+    };
+    const store = new MemoryLibraryStore();
+    await expect(
+      syncLibrary(lib, store, { pageSize: 10, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'CancelledError' });
+    // Two pages of songs went out (the abort landed during the second), none after, no albums.
+    expect(calls.filter((c) => c.startsWith('tracks dateAdded')).length).toBe(2);
+    expect(calls.filter((c) => c.startsWith('albums')).length).toBe(0);
+    expect(signals.every((s) => s === controller.signal)).toBe(true);
+    // Nothing was written: the store is as it was.
+    expect(await store.readMeta()).toBeNull();
+    expect(await store.count('track')).toBe(0);
+    // A signal that fired before the sync began sends no request.
+    const fresh = fakeLibrary({ tracks, albums: [], artists: [], playlists: [] });
+    await expect(
+      syncLibrary(fresh.lib, store, { pageSize: 10, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'CancelledError' });
+    expect(fresh.calls).toEqual([]);
+  });
+
   it('a corrupt record in the store is skipped, not fatal', async () => {
     const store = new MemoryLibraryStore();
     await store.write('track', [track('ok'), { id: 'bad' } as unknown as Track]);
