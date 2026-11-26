@@ -7,13 +7,17 @@ import { useLibrary, useSession } from '../lib/queries';
 import { recentSearchesStore } from '../lib/recent';
 import { useStoreValue } from '../lib/useStore';
 import { AlbumCard, ArtistCard, PlaylistCard } from '../components/Cards';
+import { CatalogueResults } from '../components/CatalogueResults';
 import { EmptyState } from '../components/EmptyState';
 import { Row, RowItem } from '../components/Row';
 import { SignedOut } from '../components/SignedOut';
 import { focusRing } from '../components/focus';
 import { TrackList } from './Library';
 
-/** The full results page behind the Ask bar's instant list (F11): every match, by kind. */
+/**
+ * The full results page behind the Ask bar's instant list (F11): every match in the library, by
+ * kind, then the catalogue for what the library does not have (F61).
+ */
 export function Search() {
   const { t } = useTranslation();
   const [params] = useSearchParams();
@@ -92,6 +96,7 @@ export function Search() {
           ) : null}
         </>
       ) : null}
+      {term ? <CatalogueResults term={term} /> : null}
     </div>
   );
 }

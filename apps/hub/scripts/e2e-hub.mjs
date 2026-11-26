@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * The hub as the browser tests see it: the real server (routes, CORS, the request service, the
- * pipeline in dry-run mode, the household database in memory) in front of stand-ins for Jellyfin,
- * MusicBrainz, Deezer, slskd and Lidarr, routed by hostname, so Playwright can add a song, undo it
- * and cancel it through real DELETE requests from a real page. Nothing outside this process is
- * contacted. Started by `apps/web/playwright.config.ts`; token `e2e-token`, port 8787 (the web
- * app's default hub address for the host it is served from).
+ * The hub as the browser tests see it (F61): the real server (routes, CORS, the request service,
+ * the pipeline, the household database in memory) in front of stand-ins for every outside service,
+ * so Playwright can type in the box, tap a song and watch it go from "on its way" to "Ready".
+ * MusicBrainz and Deezer answer through a fetch stand-in routed by hostname; slskd, Lidarr and
+ * Navidrome are the unit tests' in-memory fakes (a download takes two transfer polls); Jellyfin's
+ * library holds one song, "Carefree" by Kevin MacLeod, so its row is added at once. Nothing outside
+ * this process is contacted. Started by `apps/web/playwright.config.ts`; token `e2e-token`, port
+ * 8787 (the web app's default hub address for the host it is served from).
  *
  *   node --disable-warning=ExperimentalWarning --import tsx apps/hub/scripts/e2e-hub.mjs
  */
@@ -13,78 +15,94 @@ import { buildApp } from '../src/app.ts';
 import { staticAuthenticator } from '../src/auth/authenticator.ts';
 import { loadConfig } from '../src/config.ts';
 import { createStores } from '../src/db/index.ts';
+import { FLAC, fakeLidarr, fakeNavidrome, fakeSlskd, ids, response } from '../test/fakes.ts';
 
 const port = Number(process.env.E2E_HUB_PORT ?? 8787);
 const origins = process.env.E2E_WEB_ORIGINS ?? 'http://127.0.0.1:4173,http://localhost:4173';
-const profile = { id: 'u-e2e', name: 'Sahil', role: 'admin', mode: 'simple', language: 'en' };
+/** The Jellyfin user the page signs in as (the page's Jellyfin stand-in answers with the same). */
+const profile = { id: 'u-e2e', name: 'Sahil', role: 'member', mode: 'simple', language: 'en' };
 
+const wayne = { name: 'Lil Wayne', artist: { id: ids.artist, name: 'Lil Wayne' } };
 const recording = {
-  id: '3f3d2a1e-5c5e-4a1a-9b1e-7f0c4a6d2b10',
+  id: ids.recording,
   title: 'Fireman',
-  length: 263_000,
-  'artist-credit': [
-    {
-      name: 'Lil Wayne',
-      artist: { id: 'ac9a487a-d9d2-4f27-bb23-0f4686488345', name: 'Lil Wayne' },
-    },
-  ],
+  length: 183_000,
+  'artist-credit': [wayne],
   releases: [
     {
-      id: 'c0ffee00-0000-4000-8000-000000000003',
+      id: ids.release,
       title: 'Tha Carter II',
       status: 'Official',
       date: '2005-12-06',
-      'release-group': {
-        id: '8ea5d7a4-0b31-4b2a-9b7f-0d6c0f4e0c11',
-        title: 'Tha Carter II',
-        'primary-type': 'Album',
-      },
+      'release-group': { id: ids.releaseGroup, title: 'Tha Carter II', 'primary-type': 'Album' },
     },
   ],
 };
 const deezerTrack = (id, title, artist, album) => ({
   id,
   title,
-  duration: 263,
+  duration: 183,
+  preview: `https://cdn.e2e/preview-${id}.mp3`,
   artist: { id: id * 10, name: artist },
-  album: { id: id * 100, title: album },
+  album: { id: id * 100, title: album, cover_medium: `https://cdn.e2e/cover-${id}.jpg` },
 });
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** Every outside service, by hostname. slskd searches never complete: a request stays `finding`. */
-const standIn = async (input, init = {}) => {
+/** MusicBrainz and Deezer, by hostname. */
+const standIn = async (input) => {
   const url = new URL(typeof input === 'string' ? input : input.url);
-  const method = init.method ?? 'GET';
+  const words = (url.searchParams.get('query') ?? url.searchParams.get('q') ?? '').toLowerCase();
   switch (url.hostname) {
     case 'musicbrainz.org':
-      if (url.pathname.endsWith('/recording')) return json({ recordings: [recording] });
+      if (url.pathname.endsWith('/recording'))
+        return json({ recordings: words.includes('fireman') ? [recording] : [] });
       if (url.pathname.endsWith('/release-group')) return json({ 'release-groups': [] });
       if (url.pathname.includes('/release/')) return json({ ...recording.releases[0], media: [] });
       return json({});
     case 'api.deezer.com':
-      if (url.pathname === '/search')
-        return json({
-          data: [
-            deezerTrack(1, 'Fireman', 'Lil Wayne', 'Tha Carter II'),
-            deezerTrack(2, 'Fireman', 'Elliphant', 'Living Life Golden'),
-          ],
-        });
+      if (url.pathname === '/search') {
+        if (words.includes('fireman'))
+          return json({
+            data: [
+              deezerTrack(1, 'Fireman', 'Lil Wayne', 'Tha Carter II'),
+              deezerTrack(2, 'Fireman', 'Elliphant', 'Living Life Golden'),
+            ],
+          });
+        if (words.includes('carefree'))
+          return json({ data: [deezerTrack(3, 'Carefree', 'Kevin MacLeod', 'Royalty Free')] });
+      }
       return json({ data: [] });
-    case 'slskd.e2e':
-      if (url.pathname.endsWith('/searches') && method === 'POST')
-        return json({ id: 'search-1', state: 'InProgress' }, 200);
-      if (url.pathname.endsWith('/responses')) return json([]);
-      if (method === 'DELETE') return new Response(null, { status: 204 });
-      return json({ id: 'search-1', state: 'InProgress' });
-    case 'lidarr.e2e':
-      return json([]);
     default:
-      // Jellyfin: an empty library.
-      return json({ Items: [], TotalRecordCount: 0 });
+      return json({ error: 'no stand-in' }, 404);
   }
 };
+
+/** Jellyfin's library as the hub sees it: Carefree is on the server, nothing else is. */
+const carefree = {
+  item: { Id: 'jf-carefree', Name: 'Carefree', Type: 'Audio', Artists: ['Kevin MacLeod'] },
+  hit: { id: 'jf-carefree', kind: 'track', title: 'Carefree', artist: 'Kevin MacLeod' },
+};
+const library = {
+  configured: true,
+  find: async (input) => (input.title.toLowerCase() === 'carefree' ? carefree : undefined),
+  search: async () => ({ tracks: [], albums: [], artists: [] }),
+  tracksByArtists: async () => [],
+  refresh: async () => true,
+};
+
+// A download that is under way for two polls, then done.
+const slskd = fakeSlskd({
+  results: { 'lil wayne fireman': [response('cuchillo', [{}])] },
+  transfers: {
+    [FLAC]: [
+      { state: 'InProgress', bytesTransferred: 9_000_000 },
+      { state: 'InProgress', bytesTransferred: 21_000_000 },
+      { state: 'Completed, Succeeded', bytesTransferred: 30_000_000 },
+    ],
+  },
+});
 
 const stores = createStores(':memory:');
 stores.profiles.seen(profile.id, profile.name, profile.role);
@@ -95,16 +113,15 @@ const app = await buildApp({
     RENAISSANCE_HUB_HOST: '127.0.0.1',
     RENAISSANCE_HUB_CORS_ORIGINS: origins,
     RENAISSANCE_HUB_RATE_LIMIT: '0',
-    RENAISSANCE_HUB_DRY_RUN: 'true',
     JELLYFIN_URL: 'http://jellyfin.e2e',
-    JELLYFIN_API_KEY: 'e2e',
-    SLSKD_URL: 'http://slskd.e2e',
-    SLSKD_API_KEY: 'e2e',
-    LIDARR_URL: 'http://lidarr.e2e',
-    LIDARR_API_KEY: 'e2e',
+    LIDARR_ROOT_FOLDER: '/files/media/music',
   }),
   stores,
   authenticator: staticAuthenticator({ 'e2e-token': profile }),
+  library,
+  slskd: slskd.client,
+  lidarr: fakeLidarr().client,
+  navidrome: fakeNavidrome().client,
   fetch: standIn,
 });
 await app.listen({ host: '127.0.0.1', port });

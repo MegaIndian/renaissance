@@ -3,13 +3,15 @@
  * library cache, refresh it, restore the saved queue, follow the chosen language. Signed out: stop
  * the library, clear the player and the per-user queries so nothing of one person shows for the
  * next; a sign-out the user asked for also deletes that user's library database and saved queue from
- * this browser (F86). An expired token keeps them for the same person's next sign-in. A sign-out in
+ * this browser (F86). An expired token keeps them for the same person's next sign-in. The hub (F61)
+ * follows the same session. A sign-out in
  * another tab is followed here, with the same reason, so no tab keeps a dead token alive.
  */
 import type { QueryClient } from '@tanstack/react-query';
 import type { Session } from '@renaissance/core';
 
-import { setLanguage } from './i18n';
+import { startHub } from './hub';
+import { i18n, setLanguage } from './i18n';
 import { deleteLibrary, startLibrary, stopLibrary } from './library';
 import { forgetQueue, getPlayer, restoreQueue } from './player';
 import { followOtherTabs, restoreSession, sessionStore } from './session';
@@ -39,6 +41,8 @@ export function startApp(queryClient: QueryClient): void {
   });
   // A sign-out in another tab of this browser ends the session here too (shared vault, revoked token).
   followOtherTabs();
+  // The hub follows the session: its client is built from the signed-in Jellyfin token (F61).
+  startHub(i18n.t.bind(i18n));
   const language = settingsStore.get().language;
   if (language) void setLanguage(language);
   void restoreSession();
