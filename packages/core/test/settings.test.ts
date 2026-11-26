@@ -17,6 +17,7 @@ describe('settings', () => {
       cellularQuality: 'high',
       network: 'auto',
       albumAwareShuffle: false,
+      listeningLog: true,
     });
   });
 

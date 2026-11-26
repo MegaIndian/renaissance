@@ -80,7 +80,8 @@
     "nowPlaying": "Now playing",
     "favorites": "Favourites",
     "primary": "Navigation",
-    "back": "Back"
+    "back": "Back",
+    "history": "History"
   },
   "player": {
     "play": "Play",
@@ -259,6 +260,30 @@
     "empty": "No favourites yet",
     "emptyBody": "Tap the heart on a song, album or artist and it appears here, on every device signed in as you."
   },
+  "history": {
+    "title": "History",
+    "filter": "Show",
+    "filterAll": "All",
+    "filterSkipped": "Skipped",
+    "filterCompleted": "Completed",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "skipped": "Skipped",
+    "completed": "Completed",
+    "empty": "Nothing played yet",
+    "emptyBody": "Songs you play on this device show up here, grouped by day.",
+    "emptyFiltered": "No plays match this filter.",
+    "off": "History is off",
+    "offBody": "New plays are not being kept. Turn it on in Settings.",
+    "openSettings": "Open Settings",
+    "showMore": "Show more",
+    "playAgain": "Play again",
+    "playsCount_one": "{{count, number}} play",
+    "playsCount_other": "{{count, number}} plays",
+    "cleared_one": "Cleared {{count, number}} play from history",
+    "cleared_other": "Cleared {{count, number}} plays from history",
+    "notSaved": "History could not be saved in this browser; it lasts until you close the tab."
+  },
   "track": {
     "menu": "More options for {{title}}",
     "goToAlbum": "Go to album",
@@ -318,7 +343,12 @@
     "version": "Version {{version}}",
     "licence": "Open source under GPL-3.0-or-later",
     "saved": "Saved",
-    "diagnosticsLater": "Diagnostics arrive in phase 9"
+    "diagnosticsLater": "Diagnostics arrive in phase 9",
+    "history": "Listening history",
+    "listeningLog": "Keep a listening history on this device",
+    "listeningLogHelp": "Each play is kept with the time, the device and whether you skipped it. It stays on this device, after sign-out too, and is not sent to the server.",
+    "clearHistory": "Clear history",
+    "openHistory": "Open history"
   },
   "language": {
     "en": "English",

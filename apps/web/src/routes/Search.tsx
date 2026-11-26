@@ -87,7 +87,7 @@ export function Search() {
           {results.tracks.length ? (
             <section className="flex flex-col gap-2" aria-label={t('search.tracks')}>
               <h2 className="text-heading font-semibold">{t('search.tracks')}</h2>
-              <TrackList tracks={results.tracks} />
+              <TrackList tracks={results.tracks} source={{ kind: 'search' }} />
             </section>
           ) : null}
         </>

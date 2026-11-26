@@ -13,6 +13,8 @@ import { Icon } from '../components/Icon';
 import { Row, RowItem } from '../components/Row';
 import { SyncStatus } from '../components/SyncStatus';
 
+const HOME = { kind: 'home' } as const;
+
 /**
  * Home (F7, F84). Simple mode, the default: greeting and three rows (My songs, Recently played, Made
  * for you), big type from the root scale. Advanced adds Recently added and Most played and names the
@@ -114,7 +116,7 @@ export function Home({ now = new Date() }: { now?: Date }) {
   const trackRow = (tracks: Track[]) =>
     tracks.map((track, i) => (
       <RowItem key={track.id}>
-        <TrackCard track={track} onPlay={() => playNow(tracks, i)} />
+        <TrackCard track={track} onPlay={() => playNow(tracks, i, HOME)} />
       </RowItem>
     ));
 
@@ -182,7 +184,9 @@ export function Home({ now = new Date() }: { now?: Date }) {
         <div className="flex gap-2">
           <Button
             tone="secondary"
-            onClick={() => playNow(sortItems(snapshot.tracks, 'random', 'asc', Date.now()))}
+            onClick={() =>
+              playNow(sortItems(snapshot.tracks, 'random', 'asc', Date.now()), 0, HOME)
+            }
           >
             <Icon name="shuffle" className="size-4" />
             {t('home.shuffleAll')}

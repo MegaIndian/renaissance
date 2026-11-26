@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
-import { playNow } from '../lib/actions';
+import { playNow, sourceOf } from '../lib/actions';
 import { artistNameOf } from '../lib/names';
 import {
   isNotFound,
@@ -94,14 +94,20 @@ export function ArtistPage() {
             ].join(' · ')}
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Button tone="primary" disabled={!tracks.length} onClick={() => playNow(tracks, 0)}>
+            <Button
+              tone="primary"
+              disabled={!tracks.length}
+              onClick={() => playNow(tracks, 0, sourceOf('artist', id))}
+            >
               <Icon name="play" className="size-4" />
               {t('artist.playAll')}
             </Button>
             <Button
               tone="secondary"
               disabled={!tracks.length}
-              onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+              onClick={() =>
+                playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0, sourceOf('artist', id))
+              }
             >
               <Icon name="shuffle" className="size-4" />
               {t('artist.shuffleAll')}
@@ -150,7 +156,10 @@ export function ArtistPage() {
       <section className="flex flex-col gap-2" aria-label={t('artist.topTracks')}>
         <h2 className="text-heading font-semibold">{t('artist.topTracks')}</h2>
         {tracks.length ? (
-          <TrackList tracks={tracks.slice(0, mode === 'advanced' ? 200 : 20)} />
+          <TrackList
+            tracks={tracks.slice(0, mode === 'advanced' ? 200 : 20)}
+            source={sourceOf('artist', id)}
+          />
         ) : (
           <EmptyState title={t('library.nothingHere')} quiet />
         )}

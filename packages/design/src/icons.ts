@@ -43,6 +43,8 @@ export const iconPaths = {
   arrowDown: 'M12 5v14m-6-6 6 6 6-6',
   signOut: 'M10 4H5v16h5M14 8l5 4-5 4m5-4H9',
   refresh: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',
+  /** A clock face with its hands: the listening history. */
+  history: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v4.5l3 2',
   music: 'M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   album: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
   playlist: 'M4 6h12M4 11h12M4 16h7M19 13v6a2 2 0 1 1-2-2h2V9',

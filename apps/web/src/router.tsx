@@ -55,6 +55,13 @@ export const routes: RouteObject[] = [
         ),
       },
       {
+        path: 'history',
+        lazy: lazyRoute(
+          () => import('./routes/History'),
+          (m) => m.History,
+        ),
+      },
+      {
         path: 'search',
         lazy: lazyRoute(
           () => import('./routes/Search'),

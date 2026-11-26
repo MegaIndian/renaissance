@@ -5,7 +5,7 @@
  * rule 10); a failed server call rolls the screen back and says so.
  */
 import { creditsArtist, findArtist } from '@renaissance/core';
-import type { Album, Artist, CacheItem, Playlist, Track } from '@renaissance/core';
+import type { Album, Artist, CacheItem, ListenSource, Playlist, Track } from '@renaissance/core';
 import type { TFunction } from 'i18next';
 
 import { broadcastLibraryChange, libraryStore, patchItems } from './library';
@@ -58,8 +58,14 @@ export async function toggleFavorite(
   }
 }
 
-export function playNow(tracks: Track[], startAt = 0): void {
-  getPlayer().playTracks(tracks, startAt);
+/** A listening-log source; the id is left out when the route has none. */
+export function sourceOf(kind: ListenSource['kind'], id?: string): ListenSource {
+  return id ? { kind, id } : { kind };
+}
+
+/** Play these songs from `startAt`; `source` is the screen they came from, for the listening log (F47). */
+export function playNow(tracks: Track[], startAt = 0, source?: ListenSource): void {
+  getPlayer().playTracks(tracks, startAt, source);
 }
 
 /** Added to an empty queue, the songs start playing, and the toast says that, not "added" (design AD). */
@@ -69,11 +75,11 @@ function startedMessage(tracks: Track[], t: TFunction): string {
     : t('queue.startedPlayingCount', { count: tracks.length });
 }
 
-export function playNext(tracks: Track[], t: TFunction): void {
+export function playNext(tracks: Track[], t: TFunction, source?: ListenSource): void {
   if (!tracks.length) return;
   const player = getPlayer();
   const before = player.snapshot.queue;
-  player.playNext(tracks);
+  player.playNext(tracks, source ?? { kind: 'queue' });
   const message =
     before.index < 0
       ? startedMessage(tracks, t)
@@ -85,11 +91,11 @@ export function playNext(tracks: Track[], t: TFunction): void {
   });
 }
 
-export function addToQueue(tracks: Track[], t: TFunction): void {
+export function addToQueue(tracks: Track[], t: TFunction, source?: ListenSource): void {
   if (!tracks.length) return;
   const player = getPlayer();
   const before = player.snapshot.queue;
-  player.addToEnd(tracks);
+  player.addToEnd(tracks, source ?? { kind: 'queue' });
   const message =
     before.index < 0
       ? startedMessage(tracks, t)

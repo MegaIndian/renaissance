@@ -4,6 +4,7 @@ export * from './queue';
 export * from './playback-policy';
 export * from './playback';
 export * from './play-reporting';
+export * from './listening-log';
 export * from './library-cache';
 export * from './artists';
 export * from './playlist-reorder';

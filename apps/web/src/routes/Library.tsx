@@ -24,6 +24,8 @@ import { focusRing } from '../components/focus';
 
 export { TrackList };
 
+const LIBRARY = { kind: 'library' } as const;
+
 type Section = 'artists' | 'albumArtists' | 'albums' | 'tracks' | 'genres' | 'years' | 'playlists';
 const simpleSections: Section[] = ['artists', 'albums', 'tracks', 'playlists'];
 const advancedSections: Section[] = [
@@ -238,14 +240,20 @@ export function Library() {
             {showCount ? <span>{t('library.tracksCount', { count: tracks.length })}</span> : null}
             {tracks.length ? (
               <>
-                <Button tone="primary" className="min-h-6 py-1" onClick={() => playNow(tracks, 0)}>
+                <Button
+                  tone="primary"
+                  className="min-h-6 py-1"
+                  onClick={() => playNow(tracks, 0, LIBRARY)}
+                >
                   <Icon name="play" className="size-3.5" />
                   {t('home.playAll')}
                 </Button>
                 <Button
                   tone="secondary"
                   className="min-h-6 py-1"
-                  onClick={() => playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0)}
+                  onClick={() =>
+                    playNow(sortItems(tracks, 'random', 'asc', Date.now()), 0, LIBRARY)
+                  }
                 >
                   <Icon name="shuffle" className="size-3.5" />
                   {t('home.shuffleAll')}
@@ -253,7 +261,7 @@ export function Library() {
               </>
             ) : null}
           </div>
-          {empty(tracks.length) ?? <TrackList tracks={tracks} />}
+          {empty(tracks.length) ?? <TrackList tracks={tracks} source={LIBRARY} />}
         </>
       ) : null}
       {section === 'albums' ? (
@@ -316,6 +324,12 @@ export function Library() {
               className={`inline-flex min-h-6 items-center rounded-sm text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground ${focusRing}`}
             >
               {t('nav.favorites')}
+            </Link>
+            <Link
+              to="/history"
+              className={`inline-flex min-h-6 items-center rounded-sm text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground ${focusRing}`}
+            >
+              {t('nav.history')}
             </Link>
             <Button
               tone="secondary"

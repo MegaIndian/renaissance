@@ -4,6 +4,7 @@
  * a gapless hand-over, and reports plays. The audio itself is behind `AudioPort`, a thin adapter per
  * platform (two media elements on web, RNTP on mobile). Everything here is unit-tested with a fake port.
  */
+import type { ListenEndReason, ListenSource } from './listening-log';
 import type { Track } from './models';
 import { PlaybackReporter } from './play-reporting';
 import type { NetworkClass, PlaybackSettings } from './playback-policy';
@@ -38,6 +39,24 @@ export interface AudioPort {
   on(listener: (event: AudioEvent) => void): () => void;
   destroy(): void;
 }
+
+/**
+ * A play's life as the listening log (F47) sees it: `start` when a queue entry begins playing (a
+ * restored queue starts on the first real play, as play reporting does) and `end` once, with the
+ * reason, when it stops being the one that plays. Repeat one ends and starts the same entry again.
+ */
+export type PlayEvent =
+  | { type: 'start'; track: Track; key: number; source: ListenSource; position: number }
+  | {
+      type: 'end';
+      track: Track;
+      key: number;
+      source: ListenSource;
+      position: number;
+      reason: ListenEndReason;
+    };
+
+const OTHER_SOURCE: ListenSource = { kind: 'other' };
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
 
@@ -86,6 +105,11 @@ export class Player {
   private preloaded: { key: number; url: string; playSessionId: string | undefined } | null = null;
   /** The queue key whose stream is loaded in the current slot. */
   private loadedKey: number | undefined;
+  /** Where each queued copy came from, by key; a restored queue has none and reads as `other`. */
+  private readonly sources = new Map<number, ListenSource>();
+  /** The entry the last `start` play event named, until its `end`. */
+  private active: { key: number; track: Track; source: ListenSource } | null = null;
+  private readonly playListeners = new Set<(event: PlayEvent) => void>();
 
   constructor(deps: PlayerDeps) {
     this.deps = deps;
@@ -111,10 +135,50 @@ export class Player {
     return this.store.subscribe(listener);
   }
 
+  /** Follow plays starting and ending (the listening log); returns the unsubscribe. */
+  onPlay(listener: (event: PlayEvent) => void): () => void {
+    this.playListeners.add(listener);
+    return () => this.playListeners.delete(listener);
+  }
+
   destroy(): void {
     this.stopListening();
     this.reporter?.stopped(this.snapshot.position);
+    this.endActive(this.snapshot.position, 'stopped');
     this.deps.audio.destroy();
+  }
+
+  private emitPlay(event: PlayEvent): void {
+    for (const listener of this.playListeners) {
+      try {
+        listener(event);
+      } catch {
+        // A listener's failure never reaches playback.
+      }
+    }
+  }
+
+  /** Close the open play, if any. A play that failed ends as `error` whatever moved on from it. */
+  private endActive(position: number, reason: ListenEndReason): void {
+    const active = this.active;
+    if (!active) return;
+    this.active = null;
+    this.emitPlay({
+      type: 'end',
+      ...active,
+      position,
+      reason: this.snapshot.status === 'error' ? 'error' : reason,
+    });
+  }
+
+  /** Tag the keys minted between two queue states (`nextKey` grows by one per queued copy). */
+  private tagSources(
+    before: QueueState,
+    after: QueueState,
+    source: ListenSource | undefined,
+  ): void {
+    if (!source) return;
+    for (let key = before.nextKey; key < after.nextKey; key++) this.sources.set(key, source);
   }
 
   private patch(partial: Partial<PlayerSnapshot>): void {
@@ -150,9 +214,16 @@ export class Player {
    * next track was preloaded, its slot takes over and the report carries the id its stream was
    * built with, so the server can match `Stopped` to the transcode it is running.
    */
-  private start(queue: QueueState, position = 0): void {
+  private start(queue: QueueState, position: number, reason: ListenEndReason | 'resume'): void {
     const track = Q.current(queue);
     const key = queue.keys[queue.index];
+    // Loading the same entry again after a failure continues its play rather than starting another.
+    const continues = reason === 'resume' && this.active !== null && this.active.key === key;
+    if (!continues) {
+      const { position: at, duration } = this.snapshot;
+      if (reason === 'ended') this.endActive(duration || at, 'ended');
+      else this.endActive(at, reason === 'resume' ? 'stopped' : reason);
+    }
     if (!track || key === undefined) {
       this.reporter?.stopped(this.snapshot.position);
       this.loadedKey = undefined;
@@ -196,6 +267,11 @@ export class Player {
       quality: stream.quality,
       error: null,
     });
+    if (!continues) {
+      const source = this.sources.get(key) ?? OTHER_SOURCE;
+      this.active = { key, track, source };
+      this.emitPlay({ type: 'start', track, key, source, position });
+    }
     this.deps.audio.play().catch((error: unknown) => {
       this.patch({ status: 'error', error: error instanceof Error ? error.message : 'play' });
     });
@@ -254,22 +330,27 @@ export class Player {
   private onEnded(): void {
     const queue = this.queue;
     if (queue.repeat === 'one') {
-      this.start(queue, 0);
+      this.start(queue, 0, 'ended');
       return;
     }
     const advanced = Q.next(queue);
     if (advanced === queue) {
       this.reporter?.stopped(this.snapshot.duration || this.snapshot.position);
+      this.endActive(this.snapshot.duration || this.snapshot.position, 'ended');
       this.loadedKey = undefined;
       this.patch({ status: 'ended', position: this.snapshot.duration });
       return;
     }
-    this.start(advanced, 0);
+    this.start(advanced, 0, 'ended');
   }
 
-  /** Replace the queue with these tracks and play from `startAt`. */
-  playTracks(tracks: Track[], startAt = 0): void {
-    this.start(Q.replace(this.queue, tracks, startAt, this.deps.random), 0);
+  /** Replace the queue with these tracks and play from `startAt`; `source` is where they came from. */
+  playTracks(tracks: Track[], startAt = 0, source?: ListenSource): void {
+    const before = this.queue;
+    const queue = Q.replace(before, tracks, startAt, this.deps.random);
+    this.sources.clear();
+    this.tagSources(before, queue, source);
+    this.start(queue, 0, 'replaced');
   }
 
   /**
@@ -284,6 +365,8 @@ export class Player {
       return;
     }
     this.reporter?.stopped(this.snapshot.position);
+    this.endActive(this.snapshot.position, 'stopped');
+    this.sources.clear();
     this.loadedKey = undefined;
     this.preloaded = null;
     this.deps.audio.pause();
@@ -300,20 +383,22 @@ export class Player {
     });
   }
 
-  playNext(tracks: Track[]): void {
+  playNext(tracks: Track[], source?: ListenSource): void {
     const wasEmpty = this.queue.index < 0;
     const queue = Q.playNext(this.queue, tracks);
-    if (wasEmpty) this.start(queue, 0);
+    this.tagSources(this.queue, queue, source);
+    if (wasEmpty) this.start(queue, 0, 'replaced');
     else {
       this.patch({ queue });
       this.preloadNext(queue);
     }
   }
 
-  addToEnd(tracks: Track[]): void {
+  addToEnd(tracks: Track[], source?: ListenSource): void {
     const wasEmpty = this.queue.index < 0;
     const queue = Q.addToEnd(this.queue, tracks);
-    if (wasEmpty) this.start(queue, 0);
+    this.tagSources(this.queue, queue, source);
+    if (wasEmpty) this.start(queue, 0, 'replaced');
     else {
       this.patch({ queue });
       this.preloadNext(queue);
@@ -322,7 +407,7 @@ export class Player {
 
   jumpTo(index: number): void {
     const queue = Q.jumpTo(this.queue, index);
-    if (queue !== this.queue) this.start(queue, 0);
+    if (queue !== this.queue) this.start(queue, 0, 'jump');
     else if (index === this.queue.index) void this.play();
   }
 
@@ -331,10 +416,10 @@ export class Player {
     const queue = Q.removeAt(before, index);
     if (queue === before) return;
     if (index === before.index) {
-      if (Q.current(queue)) this.start(queue, 0);
+      if (Q.current(queue)) this.start(queue, 0, 'removed');
       else {
         this.deps.audio.pause();
-        this.start(queue, 0);
+        this.start(queue, 0, 'removed');
       }
       return;
     }
@@ -353,19 +438,20 @@ export class Player {
     this.deps.audio.pause();
     this.deps.audio.preload(null);
     this.preloaded = null;
-    this.start(Q.clear(this.queue), 0);
+    this.start(Q.clear(this.queue), 0, 'cleared');
+    this.sources.clear();
   }
 
   async play(): Promise<void> {
     const { status, queue } = this.snapshot;
     if (!Q.current(queue)) return;
     if (status === 'ended') {
-      this.start(queue, 0);
+      this.start(queue, 0, 'stopped');
       return;
     }
     // After a failure the loaded stream is the broken one: load it again, as for an unloaded key.
     if (status === 'error' || this.loadedKey !== queue.keys[queue.index]) {
-      this.start(queue, this.snapshot.position);
+      this.start(queue, this.snapshot.position, 'resume');
       return;
     }
     this.patch({ status: 'loading' });
@@ -396,12 +482,13 @@ export class Player {
       if (this.queue.repeat === 'off' && Q.current(this.queue)) {
         this.deps.audio.pause();
         this.reporter?.stopped(this.snapshot.position);
+        this.endActive(this.snapshot.position, 'next');
         this.loadedKey = undefined;
         this.patch({ status: 'ended' });
       }
       return;
     }
-    this.start(queue, 0);
+    this.start(queue, 0, 'next');
   }
 
   /** Previous within the first three seconds goes back a track; later it restarts this one. */
@@ -412,7 +499,7 @@ export class Player {
     }
     const queue = Q.previous(this.queue);
     if (queue === this.queue) this.seek(0);
-    else this.start(queue, 0);
+    else this.start(queue, 0, 'previous');
   }
 
   seek(seconds: number): void {

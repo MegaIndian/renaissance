@@ -178,13 +178,3 @@ export const DownloadItem = z.object({
   pinned: z.boolean().default(false),
 });
 export type DownloadItem = z.infer<typeof DownloadItem>;
-
-export const ListenEvent = z.object({
-  trackId: z.string().min(1),
-  serverId: z.string().min(1),
-  at: z.iso.datetime(),
-  completed: z.boolean(),
-  skipped: z.boolean(),
-  device: z.string(),
-});
-export type ListenEvent = z.infer<typeof ListenEvent>;
