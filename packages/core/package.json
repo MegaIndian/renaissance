@@ -5,6 +5,7 @@
   "description": "Everything in Renaissance that is not a screen: server adapters, models, queue, playback policy, i18n catalogs.",
   "license": "GPL-3.0-or-later",
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

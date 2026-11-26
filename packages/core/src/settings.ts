@@ -30,6 +30,8 @@ export const Settings = z.object({
   /** Override the detected network class; `auto` trusts the platform. */
   network: z.enum(['auto', 'wifi', 'cellular']).default('auto'),
   albumAwareShuffle: z.boolean().default(false),
+  /** Keep the local listening log (F47); off records nothing new and keeps what is there. */
+  listeningLog: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof Settings>;
 
