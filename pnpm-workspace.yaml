@@ -4,6 +4,8 @@ packages:
 nodeLinker: hoisted
 allowBuilds:
   esbuild: true
+  # jest-haste-map's optional native file watcher (mobile Jest); its prebuilt binary is enough.
+  '@parcel/watcher': false
 # Each line below is a version the lockfile already holds that is younger than minimumReleaseAge at
 # the time of writing (all published 2026-11-17, mature on 2026-11-18 after 12:45 UTC). Without the
 # line, `pnpm install` refuses the lockfile. Delete the line once that time has passed. The two

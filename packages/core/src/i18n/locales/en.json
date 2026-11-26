@@ -68,7 +68,10 @@
     "tokenEncrypted": "Encrypted in this browser with a key the page cannot export",
     "tokenPlain": "Stored in this browser without encryption (this page is not on https or localhost)",
     "tokenNone": "Not remembered in this browser (storage is blocked); you will sign in again after a reload",
-    "signOutClears": "Sign out removes this library, the saved queue and the token from this browser."
+    "signOutClears": "Sign out removes this library, the saved queue and the token from this browser.",
+    "tokenKeychain": "Kept in this phone's keychain, readable only by this app",
+    "tokenUnsaved": "Not remembered on this phone (the keychain refused it); you will sign in again next time",
+    "signOutClearsPhone": "Sign out removes this library, the saved queue and the token from this phone."
   },
   "nav": {
     "home": "Home",
@@ -138,7 +141,7 @@
     "saveFailed": "The queue could not be saved in this browser. It lasts until this tab closes."
   },
   "status": {
-    "preAlpha": "Pre-alpha, phase 1: web playback is live; mobile screens come in phase 3."
+    "preAlpha": "Pre-alpha: playback works on the web and on phones."
   },
   "library": {
     "title": "Library",
@@ -318,7 +321,8 @@
     "version": "Version {{version}}",
     "licence": "Open source under GPL-3.0-or-later",
     "saved": "Saved",
-    "diagnosticsLater": "Diagnostics arrive in phase 9"
+    "diagnosticsLater": "Diagnostics arrive in phase 9",
+    "qualityHelpPhone": "Files this phone can play arrive untouched; anything else, or anything above the cap, is converted by Jellyfin on the fly."
   },
   "language": {
     "en": "English",
