@@ -19,8 +19,9 @@ the sign-in address rules and the persisted queue format.
    to a token-bearing request expires the session, sign out revokes the token), `address.ts`
    (`serverFromAddress`, https first, `isPlainHttp`, `classifySignInError`) and `saved-queue.ts`
    (song ids plus the queue's bookkeeping). The platform injects the store, the vault, the adapter
-   factory and what "resumed" means. The web runs its library and queue persistence on them now;
-   its session module keeps its own copy for the tab broadcast until a later change moves it.
+   factory and what "resumed" means. The phone runs on them; the web keeps its own `lib/library.ts`,
+   `lib/session.ts` and queue persistence for now: moving it onto the controller costs about 190 bytes
+   gzipped of a 200 kB shell budget that has 168 bytes left, so that move waits for room in the budget.
 2. **The token is in the platform keychain** through expo-secure-store, readable after the first
    unlock and on this device only, validated on the way back in and cleared when unreadable.
 3. **The library cache is SQLite** (expo-sqlite), one database per server and user: one table per
