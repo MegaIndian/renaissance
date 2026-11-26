@@ -70,9 +70,6 @@ export const JfQuickConnectResult = z.object({
 
 export const JfPlaylistCreated = z.object({ Id: z.string() });
 
-export const JfLyricLine = z.object({ Text: z.string(), Start: nullable(z.number()) });
-export const JfLyrics = z.object({ Lyrics: z.array(JfLyricLine).default([]) });
-
 export const JfSocketMessage = z.object({
   MessageType: z.string(),
   Data: z.unknown().optional(),

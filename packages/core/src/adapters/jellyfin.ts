@@ -51,7 +51,6 @@ import {
   JfAuthResult,
   JfItem,
   JfItemsResult,
-  JfLyrics,
   JfPlaylistCreated,
   JfQuickConnectResult,
   JfSocketMessage,
@@ -931,6 +930,8 @@ export class JellyfinAdapter implements ServerAdapter {
   }
 
   async lyrics(session: Session, trackId: string): Promise<Lyrics | null> {
+    // Only the lyrics screen asks; loading the mapping on demand keeps it out of the app shell.
+    const { JfLyrics, fromJellyfinLyrics } = await import('./jellyfin-lyrics');
     try {
       const result = await this.request(
         'GET',
@@ -938,16 +939,7 @@ export class JellyfinAdapter implements ServerAdapter {
         JfLyrics,
         { token: session.token },
       );
-      if (!result.Lyrics.length) return null;
-      const synced = result.Lyrics.every((l) => typeof l.Start === 'number');
-      return {
-        trackId,
-        synced,
-        lines: result.Lyrics.map((l) => ({
-          text: l.Text,
-          ...(typeof l.Start === 'number' ? { start: l.Start / 10_000 } : {}),
-        })),
-      };
+      return fromJellyfinLyrics(trackId, result);
     } catch (error) {
       if (error instanceof ServerError && error.status === 404) return null;
       throw error;

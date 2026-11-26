@@ -458,6 +458,55 @@ describe('JellyfinAdapter calls', () => {
     expect(await adapter.lyrics(session, 't3')).toBeNull();
   });
 
+  it('lyrics: the server offset, blank spacing, raw LRC the server could not parse, and nothing', async () => {
+    const { adapter } = make({
+      // Out of order, a blank line without a start, and a 0.5 s offset (in ticks).
+      'GET /Audio/t1/Lyrics': () => ({
+        Metadata: { Offset: 5_000_000, IsSynced: true },
+        Lyrics: [
+          { Text: 'b', Start: 30_000_000 },
+          { Text: '', Start: null },
+          { Text: 'a', Start: 2_000_000 },
+        ],
+      }),
+      // Jellyfin's text parser sends an .lrc file it could not parse as raw lines.
+      'GET /Audio/t2/Lyrics': () => ({
+        Lyrics: [
+          { Text: '[ti:Song]' },
+          { Text: '[00:01.00][00:05.00]la' },
+          { Text: '[00:03.00]di' },
+        ],
+      }),
+      'GET /Audio/t3/Lyrics': () => ({ Metadata: {}, Lyrics: [{ Text: ' ' }] }),
+      'GET /Audio/t4/Lyrics': () => ({ Lyrics: [{ Text: 'first' }, { Text: '' }, { Text: 'x' }] }),
+      'GET /Audio/t5/Lyrics': () => new Response('', { status: 500 }),
+    });
+    expect(await adapter.lyrics(session, 't1')).toEqual({
+      trackId: 't1',
+      synced: true,
+      lines: [
+        { text: 'a', start: 0 },
+        { text: 'b', start: 2500 },
+      ],
+    });
+    expect(await adapter.lyrics(session, 't2')).toEqual({
+      trackId: 't2',
+      synced: true,
+      lines: [
+        { text: 'la', start: 1000 },
+        { text: 'di', start: 3000 },
+        { text: 'la', start: 5000 },
+      ],
+    });
+    expect(await adapter.lyrics(session, 't3')).toBeNull();
+    expect(await adapter.lyrics(session, 't4')).toEqual({
+      trackId: 't4',
+      synced: false,
+      lines: [{ text: 'first' }, { text: '' }, { text: 'x' }],
+    });
+    await expect(adapter.lyrics(session, 't5')).rejects.toThrow();
+  });
+
   it('signs out and subscribes to the socket with reconnects', async () => {
     const { adapter, calls } = make({ 'POST /Sessions/Logout': () => undefined });
     await adapter.signOut(session);
