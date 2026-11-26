@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { I18nextProvider, useTranslation } from 'react-i18next';
-import { LogBox, View } from 'react-native';
+import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { Dialogs } from '@/components/Dialogs';
@@ -15,10 +15,6 @@ import { retryUnlessNotFound } from '@/lib/queries';
 import { loadRecent } from '@/lib/recent';
 import { loadSettings } from '@/lib/settings';
 import { useTheme } from '@/lib/theme';
-
-// RNTP 4.1.2 declares sleep-timer methods in JS that its iOS module does not implement; the app
-// never calls them, and the new architecture's interop layer warns about each one at startup.
-LogBox.ignoreLogs([/method signature for the JS method `\w*[Ss]leep\w*` can not be found/]);
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: retryUnlessNotFound, staleTime: 30_000 } },
@@ -69,6 +65,8 @@ function Shell() {
           headerTintColor: colors.foreground,
           headerShadowVisible: false,
           headerBackTitle: t('nav.back'),
+          // The native stack owns the status bar on iOS: light text on the dark theme.
+          statusBarStyle: scheme === 'dark' ? 'light' : 'dark',
           contentStyle: { backgroundColor: colors.background },
         }}
       >

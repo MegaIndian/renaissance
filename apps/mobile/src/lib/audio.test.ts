@@ -143,6 +143,20 @@ describe('RntpAudioPort', () => {
     expect(audio.duration()).toBe(100);
   });
 
+  it('a stream without a duration ends at the length the song is known to have', async () => {
+    const events: AudioEvent[] = [];
+    const audio = new RntpAudioPort(
+      () => ({ duration: 60 }),
+      () => Promise.resolve(),
+    );
+    audio.on((e) => events.push(e));
+    audio.load('u1');
+    await flush();
+    rntp.emit(rntp.Event.PlaybackProgressUpdated, { position: 59, duration: 0 });
+    rntp.emit(rntp.Event.PlaybackQueueEnded, {});
+    expect(events.at(-1)).toEqual({ type: 'ended' });
+  });
+
   it('a change of track it did not preload is not reported as an ending', async () => {
     const { audio, events } = port();
     audio.load('u1');

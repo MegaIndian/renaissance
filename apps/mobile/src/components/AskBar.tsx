@@ -133,7 +133,7 @@ export function AskBar({ compact = false }: { compact?: boolean }) {
             },
           ]}
         >
-          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: space[12] * 7 }}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: space[12] * 4 }}>
             {!value.trim() ? (
               <View
                 style={[styles.line, { paddingHorizontal: space[2], paddingVertical: space[1] }]}

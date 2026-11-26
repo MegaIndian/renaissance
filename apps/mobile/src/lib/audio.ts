@@ -82,8 +82,13 @@ export class RntpAudioPort implements AudioPort {
     ];
   }
 
+  /** The song's own length stands in when the stream reports none (a transcode can omit it). */
   private nearEnd(): boolean {
-    return this.lastDuration > 0 && this.lastPosition >= this.lastDuration - 2;
+    const duration =
+      this.lastDuration > 0
+        ? this.lastDuration
+        : ((this.currentUrl ? this.describe(this.currentUrl)?.duration : undefined) ?? 0);
+    return duration > 0 && this.lastPosition >= duration - 2;
   }
 
   private emit(event: AudioEvent): void {
