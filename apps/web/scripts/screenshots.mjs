@@ -8,7 +8,7 @@
  *   node scripts/screenshots.mjs phase-0    # the signed-out set from phase 0
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { chromium } from '@playwright/test';
@@ -84,6 +84,10 @@ if (phase === 'phase-0') {
     ['sign-in-phone-en-dark', '/sign-in', 'phone', 'en', 'dark', 'simple', 'signedOut'],
     ['sign-in-desktop-gu-light', '/sign-in', 'desktop', 'gu', 'light', 'simple', 'signedOut'],
     ['ask-results-desktop-en-dark', '/', 'desktop', 'en', 'dark', 'simple', 'ask'],
+    ['lyrics-phone-en-dark', '/lyrics', 'phone', 'en', 'dark', 'simple', 'lyrics'],
+    ['lyrics-tablet-gu-light', '/lyrics', 'tablet', 'gu', 'light', 'simple', 'lyrics'],
+    ['lyrics-desktop-en-dark', '/lyrics', 'desktop', 'en', 'dark', 'simple', 'lyrics'],
+    ['lyrics-plain-phone-en-light', '/lyrics', 'phone', 'en', 'light', 'simple', 'lyricsPlain'],
   );
 }
 
@@ -92,6 +96,30 @@ const preview = spawn(
   ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
   { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore' },
 );
+
+/**
+ * The demo songs are instrumental and the server may hold no lyrics files, so the lyrics shots answer
+ * `/Audio/{id}/Lyrics` from the committed demo files (docker/demo/music) in Jellyfin's shape: an
+ * .lrc file as lines with starts in ticks, a .txt file as lines without.
+ */
+const LYRICS = {
+  lyrics: ['Carefree', 'Carefree.lrc'],
+  lyricsPlain: ['Fluffing a Duck', 'Fluffing a Duck.txt'],
+};
+let lyricsFile = null;
+function jellyfinLyrics(file) {
+  const text = readFileSync(
+    fileURLToPath(new URL(`../../../docker/demo/music/Kevin MacLeod - ${file}`, import.meta.url)),
+    'utf8',
+  );
+  return text.split(/\r?\n/).flatMap((line) => {
+    if (!file.endsWith('.lrc')) return [{ Text: line }];
+    const m = /^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/.exec(line);
+    return m
+      ? [{ Text: m[3].trim(), Start: Math.round((Number(m[1]) * 60 + Number(m[2])) * 1e7) }]
+      : [];
+  });
+}
 
 async function signIn(page) {
   await page.goto(`${base}/sign-in?lang=en&theme=dark`);
@@ -124,6 +152,16 @@ try {
   const context = await browser.newContext({ viewport: viewports.desktop, deviceScaleFactor: 2 });
   const page = await context.newPage();
   let artistId = '';
+  await context.route('**/Audio/*/Lyrics', (route) =>
+    lyricsFile
+      ? route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: { 'access-control-allow-origin': '*' },
+          body: JSON.stringify({ Lyrics: jellyfinLyrics(lyricsFile) }),
+        })
+      : route.continue(),
+  );
   if (signedIn) {
     await signIn(page);
     await page.goto(`${base}/library?section=artists&lang=en&theme=dark`);
@@ -150,6 +188,19 @@ try {
     await page.setViewportSize(viewports[device]);
     await page.emulateMedia({ colorScheme: theme });
     const url = `${base}${route.replace('__ARTIST__', artistId)}${route.includes('?') ? '&' : '?'}lang=${lang}&theme=${theme}&mode=${mode}`;
+    const song = LYRICS[action];
+    lyricsFile = song ? song[1] : null;
+    if (song && signedIn) {
+      await page.goto(`${base}/library?section=tracks&lang=${lang}&theme=${theme}&mode=${mode}`);
+      await page
+        .getByRole('button', { name: new RegExp(song[0]) })
+        .first()
+        .click();
+      await page
+        .getByRole('contentinfo')
+        .getByRole('button', { name: /Pause|થોભાવો/ })
+        .waitFor({ timeout: 15_000 });
+    }
     if (action === 'play' && signedIn) {
       await page.goto(`${base}/library?section=tracks&lang=${lang}&theme=${theme}&mode=${mode}`);
       await page
@@ -174,6 +225,18 @@ try {
         .getByText(/Nothing playing|કંઈ વાગતું નથી/)
         .first()
         .waitFor({ state: 'hidden', timeout: 15_000 });
+    }
+    if (song && signedIn) {
+      // Play from the seventh line, let it settle in the middle, and pause there.
+      if (action === 'lyrics') await page.getByTestId('lyric-line').nth(6).click();
+      else await page.getByTestId('lyric-verse').first().waitFor();
+      await page.waitForTimeout(1200);
+      await page
+        .getByRole('contentinfo')
+        .getByRole('button', { name: /Pause|થોભાવો/ })
+        .click()
+        .catch(() => undefined);
+      await page.waitForTimeout(600);
     }
     if (action === 'ask' && signedIn) {
       await page.getByRole('combobox').fill('kevin');
