@@ -55,7 +55,8 @@ Checks: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. A demo Jellyfi
 music for tests and for contributors without a library: `node docker/demo/start.mjs` (needs Docker;
 it completes the Jellyfin wizard, creates the `demo` user and the music library, and prints the
 password). The hub's routes and curl lines are in [docs/hub-api.md](docs/hub-api.md); its container
-image is `apps/hub/Dockerfile`. Screenshots at phone, tablet and desktop widths are in
+image is `apps/hub/Dockerfile` and `docker/hub/compose.yml` shows it as a TrueNAS custom app. The web
+app finds the hub at `VITE_HUB_URL` (default: this host on port 8787) and sends it the Jellyfin token. Screenshots at phone, tablet and desktop widths are in
 `docs/screens/`.
 
 ## Repository
