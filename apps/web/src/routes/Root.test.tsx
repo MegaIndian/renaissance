@@ -1,10 +1,18 @@
-import { screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { I18nextProvider } from 'react-i18next';
+import { RouterProvider, createMemoryRouter } from 'react-router';
+import type { RouteObject } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { setLanguage } from '../lib/i18n';
+import { i18n, setLanguage } from '../lib/i18n';
+import { lazyRoute } from '../lib/lazy';
+import { signInFake } from '../test/fakes';
 import { renderApp } from '../test/render';
 import { setViewport } from '../test/setup';
+import { Home } from './Home';
+import { NotFound } from './NotFound';
+import { Root } from './Root';
 
 describe('Root shell', () => {
   beforeEach(() => {
@@ -19,24 +27,26 @@ describe('Root shell', () => {
     expect(within(tabs).getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(within(tabs).getByRole('link', { name: 'Library' })).toBeInTheDocument();
     expect(within(tabs).getByRole('link', { name: 'Requests' })).toBeInTheDocument();
+    expect(within(tabs).queryByRole('link', { name: 'Search' })).not.toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Language' })).toBeInTheDocument();
     const header = screen.getByRole('banner');
     expect(within(header).getByRole('link', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.getByRole('search')).toBeInTheDocument();
   });
 
-  it('on desktop shows the sidebar and the Ask bar once', () => {
+  it('on desktop shows the sidebar and the Ask bar once', async () => {
     setViewport(1280);
     renderApp('/library');
-    expect(screen.getByRole('complementary')).toBeInTheDocument();
+    expect(await screen.findByRole('complementary')).toBeInTheDocument();
     expect(screen.getAllByRole('search')).toHaveLength(1);
-    expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument();
   });
 
-  it('keeps the Ask bar on every screen', () => {
+  it('keeps the Ask bar on every screen', async () => {
     setViewport(390);
-    for (const path of ['/', '/library', '/requests', '/sign-in']) {
+    for (const path of ['/', '/library', '/requests', '/sign-in', '/settings', '/queue']) {
       const view = renderApp(path);
+      await screen.findByRole('heading', { level: 1 });
       expect(screen.getAllByRole('search')).toHaveLength(1);
       view.unmount();
     }
@@ -48,39 +58,89 @@ describe('Root shell', () => {
     const user = userEvent.setup();
     expect(document.documentElement.lang).toBe('en');
     await user.click(screen.getByRole('radio', { name: 'ગુજરાતી' }));
-    expect(document.documentElement.lang).toBe('gu');
-    expect(screen.getByRole('link', { name: 'હોમ' })).toBeInTheDocument();
+    // `lang` changes once the Gujarati chunk is in, together with the strings: wait for both.
+    await waitFor(() => expect(document.documentElement.lang).toBe('gu'));
+    expect(await screen.findByRole('link', { name: 'હોમ' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/^શુભ/);
     expect(localStorage.getItem('renaissance.language')).toBe('gu');
     await user.click(screen.getByRole('radio', { name: 'English' }));
-    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Home' })).toBeInTheDocument();
   });
 
-  it('wraps an unknown URL in the shell with a translated sentence and a link home', () => {
+  it('names every screen in the tab title, in the chosen language, and moves focus into the new screen on navigation (design AH)', async () => {
+    setViewport(1280);
+    renderApp('/library');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { level: 1, name: 'Library' });
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+    // The first paint leaves focus where the browser put it.
+    expect(document.activeElement).toBe(document.body);
+    await user.click(within(screen.getByRole('complementary')).getByRole('link', { name: 'Home' }));
+    await waitFor(() => expect(document.title).toBe('Home · Renaissance'));
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    expect(screen.getByRole('main')).toHaveAttribute('tabindex', '-1');
+    await user.click(
+      within(screen.getByRole('complementary')).getByRole('link', { name: 'Library' }),
+    );
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    // The next Tab goes into the screen (its Sign in), not back to the sidebar.
+    await user.tab();
+    expect(document.activeElement).toBe(
+      within(screen.getByRole('main')).getByRole('link', { name: 'Sign in' }),
+    );
+    await user.click(screen.getByRole('radio', { name: 'ગુજરાતી' }));
+    await waitFor(() => expect(document.title).toBe('લાઇબ્રેરી · Renaissance'));
+    await user.click(within(screen.getByRole('complementary')).getByRole('link', { name: 'હોમ' }));
+    await waitFor(() => expect(document.title).toBe('હોમ · Renaissance'));
+    await user.click(screen.getByRole('radio', { name: 'English' }));
+    await waitFor(() => expect(document.title).toBe('Home · Renaissance'));
+  });
+
+  it('an album names the tab after itself while it is open, then the route takes over again (design AH)', async () => {
+    setViewport(1280);
+    signInFake();
+    renderApp('/album/al1');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { level: 1, name: 'Royalty Free' });
+    await waitFor(() => expect(document.title).toBe('Royalty Free · Renaissance'));
+    await user.click(
+      within(screen.getByRole('complementary')).getByRole('link', { name: 'Library' }),
+    );
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+  });
+
+  it('wraps an unknown URL in the shell with a translated sentence and a link home', async () => {
     setViewport(390);
     renderApp('/nope');
-    expect(screen.getByText('There is no page at this address')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'There is no page at this address' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.title).toBe('There is no page at this address · Renaissance'),
+    );
     expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('search')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Navigation' })).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
   });
 
-  it('translates the not-found page', () => {
+  it('translates the not-found page', async () => {
     setViewport(1280);
-    setLanguage('gu');
+    await setLanguage('gu');
     renderApp('/nope');
     expect(screen.getByText('આ સરનામે કોઈ પેજ નથી')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'હોમ પર જાઓ' })).toBeInTheDocument();
   });
 
-  it('gives every control the solid focus outline (DESIGN.md rule 7)', () => {
+  it('gives every control the solid focus outline (DESIGN.md rule 7)', async () => {
     for (const [width, path] of [
       [390, '/'],
       [1280, '/sign-in'],
     ] as const) {
       setViewport(width);
       const view = renderApp(path);
+      await screen.findByRole('heading', { level: 1 });
       const controls = document.querySelectorAll<HTMLElement>('a, button, input');
       expect(controls.length).toBeGreaterThan(5);
       for (const control of controls) {
@@ -101,5 +161,93 @@ describe('Root shell', () => {
     expect(actionable[0]?.textContent).toBe('Sign in');
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).not.toHaveClass('bg-primary');
+  });
+});
+
+describe('a screen whose chunk cannot load offline', () => {
+  const online = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+  afterEach(() => {
+    if (online) Object.defineProperty(navigator, 'onLine', online);
+  });
+
+  it('says you are offline instead of "something went wrong", and loads itself when the connection returns', async () => {
+    setViewport(1280);
+    setLanguage('en');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    let attempts = 0;
+    const routes: RouteObject[] = [
+      {
+        path: '/',
+        Component: Root,
+        ErrorBoundary: NotFound,
+        HydrateFallback: () => null,
+        children: [
+          { index: true, Component: Home },
+          {
+            path: 'library',
+            lazy: lazyRoute(
+              () =>
+                ++attempts === 1
+                  ? Promise.reject(new TypeError('Failed to fetch dynamically imported module'))
+                  : Promise.resolve({ Screen: () => <h1>The library</h1> }),
+              (m) => m.Screen,
+            ),
+          },
+        ],
+      },
+    ];
+    const router = createMemoryRouter(routes, { initialEntries: ['/library?section=albums'] });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>,
+    );
+    expect(
+      await screen.findByText(
+        /You seem to be offline. Your library still works from the last refresh/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong on this page')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('search')).toBeInTheDocument();
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'The library' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.search).toBe('?section=albums');
+    expect(attempts).toBe(2);
+  });
+
+  it('any other load failure keeps the generic sentence', async () => {
+    setViewport(1280);
+    setLanguage('en');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    const routes: RouteObject[] = [
+      {
+        path: '/',
+        Component: Root,
+        ErrorBoundary: NotFound,
+        HydrateFallback: () => null,
+        children: [
+          {
+            path: 'library',
+            lazy: lazyRoute(
+              () => Promise.reject(new TypeError('Failed to fetch dynamically imported module')),
+              (m: { Screen: () => null }) => m.Screen,
+            ),
+          },
+        ],
+      },
+    ];
+    const router = createMemoryRouter(routes, { initialEntries: ['/library'] });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>,
+    );
+    expect(await screen.findByText('Something went wrong on this page')).toBeInTheDocument();
   });
 });

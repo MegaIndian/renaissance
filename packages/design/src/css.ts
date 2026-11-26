@@ -1,5 +1,6 @@
 import {
   chart,
+  chartInk,
   colors,
   font,
   motion,
@@ -29,6 +30,7 @@ export function themeVariables(theme: Theme): Record<string, string> {
   chart.forEach((c, i) => {
     out[`--chart-${i + 1}`] = c;
   });
+  out['--chart-ink'] = chartInk;
   return out;
 }
 

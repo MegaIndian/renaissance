@@ -49,11 +49,13 @@ jobs:
         run: pnpm --filter mobile typecheck
       - name: Expo SDK versions (apps/mobile stays on what expo@58 pins; fails on any drift)
         run: pnpm --filter mobile exec expo install --check
-      - name: Test (coverage floor 80 % on core and hub)
+      - name: Test (coverage floors; core and hub 80 %, web 82 / 77 / 77 / 84 %)
         run: pnpm test
       - name: Build web
         run: pnpm --filter web build
-      - name: Browser tests (focus outline and target sizes measured in Chromium)
+      - name: Shell bundle budget (200 kB gzipped first load)
+        run: pnpm --filter web size
+      - name: Browser tests (accessibility in Chromium; the Jellyfin suite skips here, see docs/testing.md)
         run: |
           pnpm --filter web exec playwright install --with-deps chromium
           pnpm --filter web e2e

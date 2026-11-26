@@ -2,7 +2,7 @@
  * WCAG 2.x contrast, computed from the tokens so the numbers in DESIGN.md are measured, not promised.
  * `textPairs` lists every text-on-surface pair the apps may draw; the test fails the build under 4.5:1.
  */
-import { colors } from './tokens';
+import { chart, chartInk, colors } from './tokens';
 import type { ColorToken, Theme } from './tokens';
 
 export function relativeLuminance(hex: string): number {
@@ -67,6 +67,14 @@ export const controlPairs: readonly ColorPair[] = [
   { foreground: 'inputBorder', background: 'background', minimum: 3 },
   { foreground: 'inputBorder', background: 'card', minimum: 3 },
 ];
+
+/** The label ink on every chart swatch (placeholder art, genre and year cards), themeless. */
+export function measureChartContrast(): { swatch: string; ratio: number; passes: boolean }[] {
+  return chart.map((swatch) => {
+    const ratio = contrastRatio(chartInk, swatch);
+    return { swatch, ratio, passes: ratio >= 4.5 };
+  });
+}
 
 export interface MeasuredPair extends ColorPair {
   theme: Theme;

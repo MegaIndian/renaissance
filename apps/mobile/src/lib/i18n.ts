@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createI18n, isLanguage } from '@renaissance/core/i18n';
+import { catalogs, createI18n, isLanguage } from '@renaissance/core/i18n';
 import type { Language } from '@renaissance/core/i18n';
 import { getLocales } from 'expo-localization';
 
@@ -11,8 +11,8 @@ function detectLanguage(): Language {
   return isLanguage(code) ? code : 'en';
 }
 
-/** One instance, initialised once by core; React reads it through I18nextProvider in app/_layout.tsx. */
-export const i18n = createI18n(detectLanguage());
+/** One instance with both catalogs bundled (no first-load budget here); React reads it through I18nextProvider in app/_layout.tsx. */
+export const i18n = createI18n(detectLanguage(), { catalogs });
 
 /**
  * The stored choice wins over the device locale, as on web (`localStorage` there). Resolves once the
