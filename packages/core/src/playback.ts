@@ -300,6 +300,20 @@ export class Player {
     });
   }
 
+  /**
+   * Put back an earlier queue (an undo). When the song playing now is still the current one there,
+   * it keeps playing and only the rest of the queue changes; otherwise the queue is restored paused.
+   */
+  revert(queue: QueueState): void {
+    const key = queue.keys[queue.index];
+    if (key !== undefined && key === this.loadedKey && key === this.queue.keys[this.queue.index]) {
+      this.patch({ queue });
+      this.preloadNext(queue);
+      return;
+    }
+    this.restore(queue, this.snapshot.position);
+  }
+
   playNext(tracks: Track[]): void {
     const wasEmpty = this.queue.index < 0;
     const queue = Q.playNext(this.queue, tracks);
