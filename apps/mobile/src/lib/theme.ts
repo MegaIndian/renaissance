@@ -2,6 +2,9 @@ import { colors, motion, radius, simpleModeScale, space, type } from '@renaissan
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo, useColorScheme } from 'react-native';
 
+import { settingsStore } from './settings';
+import { useStoreSlice } from './useStore';
+
 /** `space` at the simple-mode scale; mobile is always in simple mode (DESIGN.md, Simple versus advanced). */
 const scaledSpace = Object.fromEntries(
   Object.entries(space).map(([step, px]) => [step, px * simpleModeScale]),
@@ -25,11 +28,13 @@ export function useReducedMotion(): boolean {
 }
 
 /**
- * Tokens for the current scheme and mode. Durations are zero under reduced motion so every
+ * Tokens for the current scheme (Settings' theme, or the system's) and mode. Durations are zero under reduced motion so every
  * animation that reads `motion` from here is already off.
  */
 export function useTheme() {
-  const scheme = useColorScheme() === 'light' ? 'light' : 'dark';
+  const system = useColorScheme() === 'light' ? 'light' : 'dark';
+  const chosen = useStoreSlice(settingsStore, (s) => s.theme);
+  const scheme = chosen === 'system' ? system : chosen;
   const reducedMotion = useReducedMotion();
   const durations = reducedMotion
     ? { fast: 0, normal: 0, slow: 0, easing: motion.easing }

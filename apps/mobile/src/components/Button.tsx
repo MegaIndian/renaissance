@@ -1,10 +1,11 @@
-import { Link } from 'expo-router';
+import { useRouter } from 'expo-router';
+import type { Href } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { useTheme } from '@/lib/theme';
 
-export type ButtonTone = 'primary' | 'secondary' | 'ghost';
+export type ButtonTone = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 function useButtonStyle(tone: ButtonTone, disabled: boolean) {
   const { colors, radius, space, type, scale } = useTheme();
@@ -13,19 +14,28 @@ function useButtonStyle(tone: ButtonTone, disabled: boolean) {
       ? { backgroundColor: disabled ? colors.muted : 'transparent' }
       : tone === 'primary'
         ? { backgroundColor: colors.primary }
-        : { backgroundColor: colors.secondary, borderColor: colors.border, borderWidth: 1 };
+        : tone === 'danger'
+          ? { backgroundColor: colors.danger }
+          : { backgroundColor: colors.secondary, borderColor: colors.border, borderWidth: 1 };
   const text = disabled
     ? colors.mutedForeground
     : tone === 'primary'
       ? colors.primaryForeground
-      : tone === 'secondary'
-        ? colors.secondaryForeground
-        : colors.mutedForeground;
+      : tone === 'danger'
+        ? colors.dangerForeground
+        : tone === 'secondary'
+          ? colors.secondaryForeground
+          : colors.mutedForeground;
   return {
     box: [
       styles.box,
       fill,
-      { borderRadius: radius.sm, paddingHorizontal: space[3], paddingVertical: space[2] },
+      {
+        borderRadius: radius.sm,
+        paddingHorizontal: space[3],
+        paddingVertical: space[2],
+        gap: space[1],
+      },
     ],
     text: { color: text, fontSize: type.body.size * scale, fontWeight: '500' as const },
   };
@@ -36,11 +46,13 @@ export function Button({
   tone = 'secondary',
   title,
   disabled = false,
+  icon,
   ...props
 }: Omit<ComponentProps<typeof Pressable>, 'children' | 'style'> & {
   tone?: ButtonTone;
   title: string;
   disabled?: boolean;
+  icon?: React.ReactNode;
 }) {
   const s = useButtonStyle(tone, disabled);
   return (
@@ -51,6 +63,7 @@ export function Button({
       {...props}
       style={s.box}
     >
+      {icon}
       <Text style={s.text}>{title}</Text>
     </Pressable>
   );
@@ -63,18 +76,22 @@ export function LinkButton({
 }: {
   tone?: ButtonTone;
   title: string;
-  href: ComponentProps<typeof Link>['href'];
+  href: Href;
 }) {
+  const router = useRouter();
   const s = useButtonStyle(tone, false);
   return (
-    <Link href={href} asChild>
-      <Pressable accessibilityRole="link" style={s.box}>
-        <Text style={s.text}>{title}</Text>
-      </Pressable>
-    </Link>
+    <Pressable accessibilityRole="link" style={s.box} onPress={() => router.push(href)}>
+      <Text style={s.text}>{title}</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  box: { alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-start' },
+  box: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
 });

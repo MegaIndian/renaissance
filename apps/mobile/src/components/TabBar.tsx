@@ -5,33 +5,22 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/lib/theme';
 
-import { AskBar } from './AskBar';
 import { Icon } from './Icon';
-import { NowPlayingBar } from './NowPlayingBar';
+import { BottomShell } from './Shell';
 import { primaryNav } from './navigation';
 
 type TabBarProps = Parameters<NonNullable<ComponentProps<typeof Tabs>['tabBar']>>[0];
 
 /**
- * The phone shell under the screens: the Ask bar, the player, then three tabs, as the DESIGN.md
- * wireframe and web's TabBar: the same glyphs, the active one on a primary square.
+ * The phone shell under the screens: the toast, the Ask bar, the player, then three tabs, as the
+ * DESIGN.md wireframe and web's TabBar: the same glyphs, the active one on a primary square. It
+ * rises with the keyboard so the Ask bar and its results stay visible while typing.
  */
 export function TabBar({ state, descriptors, emitter, navigateToTab, insets }: TabBarProps) {
   const { t } = useTranslation();
   const { colors, radius, space, type, scale } = useTheme();
   return (
-    <View style={{ backgroundColor: colors.card }}>
-      <View
-        style={{
-          borderTopWidth: 1,
-          borderColor: colors.border,
-          paddingHorizontal: space[4],
-          paddingVertical: space[2],
-        }}
-      >
-        <AskBar compact />
-      </View>
-      <NowPlayingBar />
+    <BottomShell inset={false}>
       <View
         accessibilityRole="tablist"
         accessibilityLabel={t('nav.primary')}
@@ -45,8 +34,10 @@ export function TabBar({ state, descriptors, emitter, navigateToTab, insets }: T
           },
         ]}
       >
-        {state.routes.map((route, index) => {
-          const active = state.index === index;
+        {state.routes.map((route) => {
+          // Pages inside the tabs (album, artist, ...) are routes too; only the three tabs are drawn.
+          if (!primaryNav.some((item) => item.name === route.name)) return null;
+          const active = state.routes[state.index]?.key === route.key;
           const options = descriptors[route.key]?.options;
           const label = typeof options?.title === 'string' ? options.title : route.name;
           const icon = primaryNav.find((item) => item.name === route.name)?.icon ?? 'home';
@@ -95,7 +86,7 @@ export function TabBar({ state, descriptors, emitter, navigateToTab, insets }: T
           );
         })}
       </View>
-    </View>
+    </BottomShell>
   );
 }
 

@@ -5,11 +5,15 @@ export * from './playback-policy';
 export * from './playback';
 export * from './play-reporting';
 export * from './library-cache';
+export * from './library-controller';
+export * from './session-controller';
 export * from './artists';
 export * from './playlist-reorder';
 export * from './search';
 export * from './sort';
 export * from './settings';
+export * from './address';
+export * from './saved-queue';
 export * from './store';
 export {
   JellyfinAdapter,

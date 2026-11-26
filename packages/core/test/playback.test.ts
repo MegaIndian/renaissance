@@ -239,6 +239,23 @@ describe('Player', () => {
     expect(player.snapshot.queue.items).toEqual([]);
   });
 
+  it('revert puts an earlier queue back without stopping the song that is still current', () => {
+    const { audio, player } = setup();
+    player.playTracks(tracks, 0);
+    const before = player.snapshot.queue;
+    player.removeAt(2);
+    const loads = audio.log.filter((l) => l.startsWith('load')).length;
+    player.revert(before);
+    expect(player.snapshot.queue.items.map((t) => t.id)).toEqual(['1', '2', '3']);
+    expect(player.snapshot.status).toBe('playing');
+    expect(audio.log.filter((l) => l.startsWith('load')).length).toBe(loads);
+    // The current song changed since (removed while playing): the old queue comes back paused.
+    player.removeAt(0);
+    player.revert(before);
+    expect(player.snapshot.status).toBe('paused');
+    expect(player.snapshot.queue.index).toBe(0);
+  });
+
   it('empty-queue adds start playback', () => {
     const { audio, player } = setup();
     player.addToEnd([tracks[0] as (typeof tracks)[number]]);

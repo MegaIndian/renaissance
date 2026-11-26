@@ -8,6 +8,7 @@ import {
   PUSH_FETCH_LIMIT,
   addItems,
   applyUserDataChanges,
+  broadcastLibraryChange,
   dbName,
   deleteLibrary,
   libraryStore,
@@ -382,5 +383,31 @@ describe('changes while a sync runs, and changes the server pushes', () => {
       expect((await store.read('playlist')).map((p) => p.id)).not.toContain('p1');
     });
     await store.close();
+  });
+});
+
+describe('other tabs of this browser', () => {
+  afterEach(() => stopLibrary());
+
+  it('a change in one tab asks the tabs signed in as the same user to refresh', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+      const { adapter } = fakeAdapter();
+      const user = { ...session, userId: `tabs-${Date.now()}` };
+      await startLibrary(adapter, user);
+      const library = vi.spyOn(adapter, 'library');
+      const other = new BroadcastChannel('renaissance-library');
+      const heard: unknown[] = [];
+      other.onmessage = (event: MessageEvent<unknown>) => heard.push(event.data);
+      broadcastLibraryChange();
+      await vi.waitFor(() => expect(heard).toEqual([dbName(user)]));
+      other.postMessage('someone-else');
+      other.postMessage(dbName(user));
+      await vi.advanceTimersByTimeAsync(600);
+      expect(library).toHaveBeenCalled();
+      other.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
