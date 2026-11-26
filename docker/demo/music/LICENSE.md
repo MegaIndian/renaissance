@@ -15,3 +15,7 @@ Required attribution, kept here and in the demo library:
 
 The audio files are not committed to the repository; `start.mjs` downloads them from the URLs above
 into this folder and checks their size. They are used only for the demo library and tests.
+
+The two lyrics files here (`Kevin MacLeod - Carefree.lrc`, `Kevin MacLeod - Fluffing a Duck.txt`) are
+not by Kevin MacLeod: the words were written for this repository, which they share the licence of, so
+the lyrics screen has something to show. The tracks themselves are instrumental.

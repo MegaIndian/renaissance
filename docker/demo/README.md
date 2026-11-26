@@ -20,8 +20,14 @@ What the script does after `docker compose up -d`, through the Jellyfin 10.10 AP
 3. `POST /Users/AuthenticateByName` for a token.
 4. `GET /Library/VirtualFolders`; if there is no music library, `POST /Library/VirtualFolders` for
    `Music` at `/media/music`; then `POST /Library/Refresh`.
-5. Writes `config/demo-credentials.json` (mode 600, ignored by Git) and prints the credentials.
+5. Lyrics (F39, F40): `music/Kevin MacLeod - Carefree.lrc` (synced) and
+   `music/Kevin MacLeod - Fluffing a Duck.txt` (plain text) are committed beside the songs they belong
+   to, so the first scan reads them. On a re-run, `GET /Items` finds those two songs and
+   `POST /Items/{id}/Refresh` (full refresh, images and existing metadata kept) makes Jellyfin read
+   files added after the song was scanned. The words were written for the demo; the tracks are
+   instrumental.
+6. Writes `config/demo-credentials.json` (mode 600, ignored by Git) and prints the credentials.
 
 Running it again is safe: the saved password is reused, the wizard and library steps are skipped, and
-only a scan is triggered. If the server was set up by hand before this script existed, it says so and
-leaves it alone. The audio files and the Jellyfin `config/` folder are ignored by Git.
+only a scan and the two lyrics refreshes are triggered. If the server was set up by hand before this
+script existed, it says so and leaves it alone. The audio files and the Jellyfin `config/` folder are ignored by Git.

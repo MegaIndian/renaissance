@@ -14,6 +14,12 @@
  *   GET  /Library/VirtualFolders        is the library already there?
  *   POST /Library/VirtualFolders        add Music at /media/music (and refresh)
  *   POST /Library/Refresh               scan
+ *   GET  /Items                         the songs already in the library (a re-run)
+ *   POST /Items/{id}/Refresh            re-read a song whose lyrics file was added after its scan
+ *
+ * Lyrics: Jellyfin reads an .lrc or .txt file with the song's own name beside it. A first scan
+ * finds them; a library that was scanned before the files existed only reads them on a full
+ * refresh of the song, so a re-run refreshes the songs listed with `lyrics` in tracks.json.
  */
 import { randomBytes } from 'node:crypto';
 
@@ -81,6 +87,7 @@ export async function waitForServer({ fetch, baseUrl, attempts = 60, intervalMs 
  * @param {string} [o.password]     defaults to a random one
  * @param {(line: string) => void} [o.log]
  * @param {{ wizardCompleted?: boolean }} [o.publicInfo]  result of waitForServer; fetched if absent
+ * @param {string[]} [o.lyricTracks]  audio file names that have a lyrics file beside them
  */
 export async function setupJellyfin({
   fetch,
@@ -88,6 +95,7 @@ export async function setupJellyfin({
   password = randomPassword(),
   log = () => {},
   publicInfo,
+  lyricTracks = [],
 }) {
   const calls = [];
   async function call(method, path, { body, token, query } = {}) {
@@ -164,11 +172,37 @@ export async function setupJellyfin({
   }
   await call('POST', '/Library/Refresh', { token });
 
+  if (lyricTracks.length) {
+    const wanted = new Set(lyricTracks);
+    const songs = await (
+      await call('GET', '/Items', {
+        token,
+        query: { Recursive: 'true', IncludeItemTypes: 'Audio', Fields: 'Path' },
+      })
+    ).json();
+    for (const song of songs?.Items ?? []) {
+      const file = String(song.Path ?? '')
+        .split(/[\\/]/)
+        .pop();
+      if (!wanted.has(file)) continue;
+      log(`Refreshing "${song.Name}" so Jellyfin reads its lyrics file.`);
+      await call('POST', `/Items/${encodeURIComponent(song.Id)}/Refresh`, {
+        token,
+        query: {
+          metadataRefreshMode: 'FullRefresh',
+          imageRefreshMode: 'None',
+          replaceAllMetadata: 'false',
+          replaceAllImages: 'false',
+        },
+      });
+    }
+  }
+
   return { user: DEMO_USER, password, token, userId, skipped: wizardDone, calls };
 }
 
 /** A fetch that answers like a fresh server and records nothing: `--dry-run` and the tests. */
-export function fakeJellyfinFetch({ wizardCompleted = false, libraries = [] } = {}) {
+export function fakeJellyfinFetch({ wizardCompleted = false, libraries = [], songs = [] } = {}) {
   const seen = [];
   const json = (data, status = 200) =>
     new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -196,6 +230,10 @@ export function fakeJellyfinFetch({ wizardCompleted = false, libraries = [] } = 
     }
     if (url.pathname === '/Library/VirtualFolders' && method === 'GET') return json(libraries);
     if (url.pathname === '/Library/VirtualFolders' || url.pathname === '/Library/Refresh') {
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/Items' && method === 'GET') return json({ Items: songs });
+    if (/^\/Items\/[^/]+\/Refresh$/.test(url.pathname) && method === 'POST') {
       return new Response(null, { status: 204 });
     }
     return new Response('not found', { status: 404 });
