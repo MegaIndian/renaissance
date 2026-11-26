@@ -1,24 +1,84 @@
-import { rememberSearch } from '@renaissance/core';
-import type { Album, Artist, Playlist, SearchGroup, Track } from '@renaissance/core';
+import { normalize, rememberSearch } from '@renaissance/core';
+import type {
+  Album,
+  Artist,
+  CatalogueAlbum,
+  CatalogueSong,
+  LibraryIndex,
+  Playlist,
+  SearchGroup,
+  Track,
+} from '@renaissance/core';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useNavigate } from 'react-router';
+import type { NavigateFunction } from 'react-router';
 
 import { artistNameOf, playlistNameOf, titleOf } from '../lib/names';
 import { playNow } from '../lib/actions';
+import { addRow, addsStore, hubStore, requestsStore, rowStatus } from '../lib/hub';
+import type { CatalogueRow, RowStatus } from '../lib/hub';
 import { useLibrary, useSession } from '../lib/queries';
 import { recentSearchesStore, rememberRecent, clearRecent } from '../lib/recent';
+import { useCatalogue } from '../lib/useCatalogue';
 import { useStoreValue } from '../lib/useStore';
 import { shortcutKey } from '../lib/platform';
 import { Artwork, colorIndex } from './Artwork';
+import {
+  PreviewButton,
+  RemoteArt,
+  RowGlyph,
+  rowHeading,
+  rowSubtitle,
+  stopPreview,
+} from './CatalogueRow';
 import { Icon } from './Icon';
 import { focusRing, focusWithin } from './focus';
 
+/** Catalogue rows under the library hits: enough to find the song, few enough to read (F61). */
+export const CATALOGUE_SONGS = 5;
+export const CATALOGUE_ALBUMS = 3;
+
+type Hit =
+  | { kind: 'track'; item: Track }
+  | { kind: 'album'; item: Album }
+  | { kind: 'artist'; item: Artist }
+  | { kind: 'playlist'; item: Playlist }
+  | { kind: 'song'; item: CatalogueSong }
+  | { kind: 'catalogueAlbum'; item: CatalogueAlbum }
+  | { kind: 'recent'; term: string }
+  | { kind: 'all'; term: string };
+
+const isCatalogue = (hit: Hit): hit is Extract<Hit, { kind: 'song' | 'catalogueAlbum' }> =>
+  hit.kind === 'song' || hit.kind === 'catalogueAlbum';
+
+function toRow(hit: Extract<Hit, { kind: 'song' | 'catalogueAlbum' }>): CatalogueRow {
+  return hit.kind === 'song' ? { kind: 'song', item: hit.item } : { kind: 'album', item: hit.item };
+}
+
+const songKey = (title: string, artist: string) => `${normalize(title)}|${normalize(artist)}`;
+
+/** The library item a catalogue row now stands for, once it is on the server and synced. */
+export function localFor(row: CatalogueRow, index: LibraryIndex): Track | Album | undefined {
+  const want = songKey(row.item.title, row.item.artist);
+  const found = index.search(row.item.title, 20);
+  if (row.kind === 'album')
+    return found.albums.find((a) => songKey(a.title, a.artistName) === want);
+  return (
+    (row.item.libraryId ? found.tracks.find((t) => t.id === row.item.libraryId) : undefined) ??
+    found.tracks.find((t) => songKey(t.title, t.artistName) === want)
+  );
+}
+
 /**
- * The one box on every screen (F75), rendered by the shell. Phase 1 is the instant layer (F11):
+ * The one box on every screen (F75, F61), rendered by the shell. First the instant layer (F11):
  * library hits from the local index as you type, recent searches when empty, keyboard through the
- * results, Enter plays a song or opens the full search page. No hub is configured yet, so the bar
- * is the search box and says nothing about asking in words.
+ * results, Enter plays a song or opens the full search page. Under the library hits, the
+ * catalogue (songs and albums the server does not have, with art and a preview) from the hub: a
+ * tap adds one, and the row says "on its way" and then "Ready". Without a hub the box is the
+ * library search alone and says so only when it matters.
  */
 export function AskBar({
   autoFocus = false,
@@ -39,7 +99,12 @@ export function AskBar({
   const { index, ready } = useLibrary();
   const session = useSession();
   const recent = useStoreValue(recentSearchesStore);
+  const hub = useStoreValue(hubStore);
+  const adds = useStoreValue(addsStore);
+  const requests = useStoreValue(requestsStore);
   const signedIn = session.status === 'signedIn';
+  const hubOn = signedIn && hub.client !== null;
+  const { result: catalogue, failed: catalogueFailed } = useCatalogue(hubOn ? value : '');
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -66,6 +131,11 @@ export function AskBar({
     };
   }, [open]);
 
+  // A preview stops when the panel closes.
+  useEffect(() => {
+    if (!open) stopPreview();
+  }, [open]);
+
   // Kinds ordered by their best match, so "Artist 499" lists that artist first, not the songs
   // whose titles merely contain 499.
   const groups: SearchGroup[] | null = useMemo(
@@ -73,33 +143,75 @@ export function AskBar({
     [index, signedIn, value],
   );
 
-  type Hit =
-    | { kind: 'track'; item: Track }
-    | { kind: 'album'; item: Album }
-    | { kind: 'artist'; item: Artist }
-    | { kind: 'playlist'; item: Playlist }
-    | { kind: 'recent'; term: string }
-    | { kind: 'all'; term: string };
+  // Library hits first (F61): a catalogue row for a song or album the library list already shows
+  // is left out, so the panel never offers to add what is one row above.
+  const catalogueHits: Hit[] = useMemo(() => {
+    if (!catalogue || !value.trim()) return [];
+    const local = new Set<string>();
+    const localIds = new Set<string>();
+    for (const group of groups ?? []) {
+      if (group.kind === 'track')
+        for (const tr of group.items) {
+          local.add(songKey(tr.title, tr.artistName));
+          localIds.add(tr.id);
+        }
+      if (group.kind === 'album')
+        for (const al of group.items) {
+          local.add(`album:${songKey(al.title, al.artistName)}`);
+          localIds.add(al.id);
+        }
+    }
+    const songs = catalogue.songs
+      .filter(
+        (s) =>
+          !local.has(songKey(s.title, s.artist)) && !(s.libraryId && localIds.has(s.libraryId)),
+      )
+      .slice(0, CATALOGUE_SONGS)
+      .map((item): Hit => ({ kind: 'song', item }));
+    const albums = catalogue.albums
+      .filter(
+        (a) =>
+          !local.has(`album:${songKey(a.title, a.artist)}`) &&
+          !(a.libraryId && localIds.has(a.libraryId)),
+      )
+      .slice(0, CATALOGUE_ALBUMS)
+      .map((item): Hit => ({ kind: 'catalogueAlbum', item }));
+    return [...songs, ...albums];
+  }, [catalogue, groups, value]);
 
   const hits: Hit[] = useMemo(() => {
     if (!signedIn) return [];
     if (!value.trim()) return recent.map((term) => ({ kind: 'recent', term }));
-    if (!groups || !groups.length) return [];
-    return [
-      ...groups.flatMap((group): Hit[] =>
-        group.kind === 'track'
-          ? group.items.map((item) => ({ kind: 'track', item }) as const)
-          : group.kind === 'album'
-            ? group.items.map((item) => ({ kind: 'album', item }) as const)
-            : group.kind === 'artist'
-              ? group.items.map((item) => ({ kind: 'artist', item }) as const)
-              : group.items.map((item) => ({ kind: 'playlist', item }) as const),
-      ),
-      { kind: 'all', term: value.trim() },
-    ];
-  }, [recent, groups, signedIn, value]);
+    const library: Hit[] = (groups ?? []).flatMap((group): Hit[] =>
+      group.kind === 'track'
+        ? group.items.map((item) => ({ kind: 'track', item }) as const)
+        : group.kind === 'album'
+          ? group.items.map((item) => ({ kind: 'album', item }) as const)
+          : group.kind === 'artist'
+            ? group.items.map((item) => ({ kind: 'artist', item }) as const)
+            : group.items.map((item) => ({ kind: 'playlist', item }) as const),
+    );
+    if (!library.length && !catalogueHits.length) return [];
+    return [...library, ...catalogueHits, { kind: 'all', term: value.trim() }];
+  }, [recent, groups, catalogueHits, signedIn, value]);
+
+  const firstCatalogue = hits.findIndex(isCatalogue);
 
   const choose = (hit: Hit): void => {
+    if (isCatalogue(hit)) {
+      // The panel stays open: the row is where the add says what it did.
+      chooseCatalogue(toRow(hit), rowStatus(toRow(hit), adds, requests), {
+        index,
+        navigate,
+        t,
+        onPlayed: () => {
+          rememberRecent(value);
+          setValue('');
+          setOpen(false);
+        },
+      });
+      return;
+    }
     setOpen(false);
     setActive(-1);
     switch (hit.kind) {
@@ -135,13 +247,24 @@ export function AskBar({
     }
   };
 
+  const nothing = !!value.trim() && !!groups && !groups.length && !catalogueHits.length;
+  const hubAway = hubOn && (hub.status === 'unreachable' || catalogueFailed);
+  // Without the hub the box is the library search: the line says so once, whatever was typed.
   const hint = !signedIn
     ? t('ask.signInFirst')
-    : value.trim() && groups && !groups.length
-      ? ready
-        ? t('ask.noResults')
-        : t('library.syncingFirst')
-      : t('ask.hintSearchOnly');
+    : hubAway
+      ? t('catalogue.hubAwayHint')
+      : hubOn && hub.status === 'unauthorized'
+        ? t('catalogue.hubRefused')
+        : nothing
+          ? ready
+            ? hubOn
+              ? t('catalogue.noMatch')
+              : t('ask.noResults')
+            : t('library.syncingFirst')
+          : hubOn
+            ? t('ask.hintCatalogue')
+            : t('ask.hintSearchOnly');
 
   const showList = open && hits.length > 0;
 
@@ -225,7 +348,7 @@ export function AskBar({
         )}
       </div>
       {compact && !value && !showList ? null : (
-        <p className="truncate text-caption text-muted-foreground" aria-live="polite">
+        <p className="text-caption text-muted-foreground" aria-live="polite">
           {hint}
         </p>
       )}
@@ -234,7 +357,8 @@ export function AskBar({
           id={listId}
           role="listbox"
           aria-label={value.trim() ? t('ask.results') : t('ask.recent')}
-          className="absolute left-0 right-0 top-full z-20 mt-1 flex max-h-96 flex-col overflow-y-auto rounded-md border border-border bg-card p-1 shadow-low"
+          // On a phone the box sits at the bottom of the screen: the list opens upward.
+          className={`absolute left-0 right-0 z-20 flex max-h-96 flex-col overflow-y-auto rounded-md border border-border bg-card p-1 shadow-low ${compact ? 'bottom-full mb-1' : 'top-full mt-1'}`}
         >
           {!value.trim() ? (
             <div className="flex items-center justify-between px-2 py-1 text-caption text-muted-foreground">
@@ -249,22 +373,133 @@ export function AskBar({
             </div>
           ) : null}
           {hits.map((hit, i) => (
-            <ResultRow
+            <CatalogueBoundary
               key={
                 hit.kind === 'recent' || hit.kind === 'all'
                   ? `${hit.kind}-${hit.term}`
                   : `${hit.kind}-${hit.item.id}`
               }
-              id={`${listId}-${i}`}
-              hit={hit}
-              active={i === active}
-              onChoose={() => choose(hit)}
-              onHover={() => setActive(i)}
-            />
+              heading={i === firstCatalogue}
+              busy={!!catalogue?.busy}
+            >
+              {isCatalogue(hit) ? (
+                <CatalogueOption
+                  id={`${listId}-${i}`}
+                  row={toRow(hit)}
+                  status={rowStatus(toRow(hit), adds, requests)}
+                  index={i}
+                  active={i === active}
+                  onChoose={() => choose(hit)}
+                  onHover={() => setActive(i)}
+                />
+              ) : (
+                <ResultRow
+                  id={`${listId}-${i}`}
+                  hit={hit}
+                  active={i === active}
+                  onChoose={() => choose(hit)}
+                  onHover={() => setActive(i)}
+                />
+              )}
+            </CatalogueBoundary>
           ))}
         </div>
       ) : null}
     </form>
+  );
+}
+
+/** The quiet line that starts the catalogue section; not an option, so the keyboard skips it. */
+function CatalogueBoundary({
+  heading,
+  busy,
+  children,
+}: {
+  heading: boolean;
+  busy: boolean;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  if (!heading) return <>{children}</>;
+  return (
+    <>
+      <div role="presentation" className="px-2 pb-1 pt-2 text-caption text-muted-foreground">
+        {busy ? t('catalogue.headingBusy') : t('catalogue.heading')}
+      </div>
+      {children}
+    </>
+  );
+}
+
+/**
+ * A tap on a catalogue row: add it when nothing has been asked yet (or the last try failed), play
+ * it once it is here, and nothing while it is on its way (the row already says so).
+ */
+export function chooseCatalogue(
+  row: CatalogueRow,
+  status: RowStatus,
+  ctx: { index: LibraryIndex; navigate: NavigateFunction; t: TFunction; onPlayed: () => void },
+): void {
+  if (status.kind === 'none' || status.kind === 'failed') {
+    void addRow(row, ctx.t);
+    return;
+  }
+  if (status.kind !== 'ready' && status.kind !== 'already') return;
+  const local = localFor(row, ctx.index);
+  if (!local) return;
+  ctx.onPlayed();
+  if (row.kind === 'album') void ctx.navigate(`/album/${encodeURIComponent(local.id)}`);
+  else playNow([local as Track]);
+}
+
+function CatalogueOption({
+  id,
+  row,
+  status,
+  index,
+  active,
+  onChoose,
+  onHover,
+}: {
+  id: string;
+  row: CatalogueRow;
+  status: RowStatus;
+  index: number;
+  active: boolean;
+  onChoose: () => void;
+  onHover: () => void;
+}) {
+  const { t } = useTranslation();
+  const { title } = rowHeading(row);
+  const label =
+    status.kind === 'none'
+      ? row.kind === 'album'
+        ? t('catalogue.addAlbumLabel', { title: row.item.title, artist: row.item.artist })
+        : t('catalogue.addLabel', { title: row.item.title, artist: row.item.artist })
+      : undefined;
+  return (
+    <div
+      id={id}
+      role="option"
+      aria-selected={active}
+      aria-label={label}
+      onMouseEnter={onHover}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onChoose}
+      className={`flex w-full items-center gap-3 rounded-sm px-2 py-1.5 text-left text-body ${active ? 'bg-muted' : 'hover:bg-muted/60'}`}
+    >
+      <RemoteArt src={row.item.art} index={index} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-medium">{title}</span>
+        <span className="truncate text-caption text-muted-foreground">
+          {rowSubtitle(row, status, t)}
+        </span>
+      </span>
+      {row.kind === 'song' && row.item.preview ? (
+        <PreviewButton src={row.item.preview} title={row.item.title} />
+      ) : null}
+      <RowGlyph status={status} />
+    </div>
   );
 }
 
@@ -276,13 +511,7 @@ function ResultRow({
   onHover,
 }: {
   id: string;
-  hit:
-    | { kind: 'track'; item: Track }
-    | { kind: 'album'; item: Album }
-    | { kind: 'artist'; item: Artist }
-    | { kind: 'playlist'; item: Playlist }
-    | { kind: 'recent'; term: string }
-    | { kind: 'all'; term: string };
+  hit: Exclude<Hit, { kind: 'song' | 'catalogueAlbum' }>;
   active: boolean;
   onChoose: () => void;
   onHover: () => void;

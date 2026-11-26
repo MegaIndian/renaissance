@@ -31,3 +31,6 @@ export { greetingKey } from './greeting';
 export { trimTrailingSlashes } from './url';
 export type { JellyfinAdapterOptions, MoveSemantics, RequestTimeouts } from './adapters/jellyfin';
 export { DEFAULT_TIMEOUTS } from './adapters/jellyfin';
+export * from './hub';
+export { createHubClient, HubError as HubClientError, parseSseChunk } from './hub-client';
+export type { HubClient, HubClientOptions } from './hub-client';
