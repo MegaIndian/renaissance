@@ -45,3 +45,24 @@ history.
   anonymous callers and the `integrations` detail (which services and models are configured) only
   with the token. Request strings are bounded (200 characters) and the in-memory request store is
   capped (500, oldest dropped) so an unauthenticated phase-0 hub cannot be filled up.
+
+## Addendum, 2026-11-18 (phase 2 rework round 3)
+
+- **The full search is fielded.** MusicBrainz's plain search ranks songs that contain the words ahead
+  of the song by the artist, so an Enter on "fireman lil wayne" showed two junk rows and then poisoned
+  the typeahead for a day. The full search now asks for the words OR every title-and-artist split of
+  them as a boosted fielded clause in one request (the pipeline's own `recordingQuery` shape), reads
+  twenty-five recordings, keeps every Deezer track the recordings did not match as a row, prunes before
+  it cuts the list, and when no row is the exact title and artist asks Deezer once more with the words
+  split by what the rows say. The two speeds are cached apart, and a full answer without the exact row
+  never replaces a fast answer that had it.
+- **Version words demote.** A title or artist carrying live, remix, karaoke, cover, tribute,
+  stripped, "radio edit", "originally performed", "made famous" or the like, when the words did not
+  ask for it, ranks under every plain row. Still no model: token overlap and a word list.
+- **A sentence has request words, not articles or pronouns.** "Rolling in the Deep Adele" and "Someone
+  Like You Adele" are a title and an artist; "something calm for cooking" and "કિશોર કુમાર ના ગીતો" are
+  sentences. Only a command verb, or a word that names what is asked for ("something", "songs",
+  "hits", "please"), makes one.
+- **The typeahead waits for MusicBrainz in one case.** When Deezer's rows name a title and an artist
+  but none is the song by that artist (Deezer has no Adele at all from here, and no plain "Halo"), the
+  typeahead starts the full search and waits up to two seconds; the answer lands in the cache either way.

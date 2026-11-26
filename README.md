@@ -42,8 +42,10 @@ rules are in [`packages/design/DESIGN.md`](packages/design/DESIGN.md) and the mo
 - The library (artists, album artists, albums, songs, genres, years, playlists) lives in a local
   IndexedDB cache with a delta refresh, so browsing is instant and works offline; 20,000 songs scroll
   through a virtualised list; sort and filter sit in the URL.
-- The Ask bar answers from the cache as you type (songs, albums, artists, playlists, recent searches);
-  asking in plain words arrives with the hub in phase 2.
+- The Ask bar answers from the cache as you type (songs, albums, artists, playlists, recent searches).
+  With the hub running, the catalogue follows the library hits: tap a song or album you do not have
+  and the hub fetches it, the row going from "on its way" to "Ready" (F61). Asking in plain words
+  arrives with the intent engine.
 - Gapless playback through two media elements, direct play or Jellyfin transcoding by network class
   and quality setting, a queue that survives reloads (play next, add to end, drag to reorder, clear,
   history), shuffle with an album-aware option, repeat, media keys and lock-screen controls, and play

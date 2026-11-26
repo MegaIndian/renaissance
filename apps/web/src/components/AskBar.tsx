@@ -357,7 +357,8 @@ export function AskBar({
           id={listId}
           role="listbox"
           aria-label={value.trim() ? t('ask.results') : t('ask.recent')}
-          className="absolute left-0 right-0 top-full z-20 mt-1 flex max-h-96 flex-col overflow-y-auto rounded-md border border-border bg-card p-1 shadow-low"
+          // On a phone the box sits at the bottom of the screen: the list opens upward.
+          className={`absolute left-0 right-0 z-20 flex max-h-96 flex-col overflow-y-auto rounded-md border border-border bg-card p-1 shadow-low ${compact ? 'bottom-full mb-1' : 'top-full mt-1'}`}
         >
           {!value.trim() ? (
             <div className="flex items-center justify-between px-2 py-1 text-caption text-muted-foreground">
