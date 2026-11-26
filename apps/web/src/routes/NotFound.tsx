@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { LinkButton } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { isOfflineError } from '../lib/lazy';
+import { usePageTitle } from '../lib/title';
 import { Root } from './Root';
 
 /**
@@ -20,6 +21,8 @@ export function NotFound() {
   const navigate = useNavigate();
   const missing = isRouteErrorResponse(error) && error.status === 404;
   const offline = isOfflineError(error);
+  const title = missing ? t('notFound.title') : offline ? t('error.offline') : t('error.title');
+  usePageTitle(title);
   useEffect(() => {
     if (!offline) return;
     const retry = (): void => {
@@ -32,7 +35,8 @@ export function NotFound() {
     <Root>
       <div className="mx-auto flex max-w-3xl flex-col gap-3">
         <EmptyState
-          title={missing ? t('notFound.title') : offline ? t('error.offline') : t('error.title')}
+          heading="h1"
+          title={title}
           {...(missing
             ? { description: t('notFound.body') }
             : offline

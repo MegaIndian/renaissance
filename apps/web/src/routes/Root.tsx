@@ -15,6 +15,7 @@ import { focusRing } from '../components/focus';
 import { useIsDesktop } from '../lib/media';
 import { useMode } from '../lib/mode';
 import { useSession } from '../lib/queries';
+import { routeTitleKey, setTitle } from '../lib/title';
 
 /** Dialogs render nothing until one opens; their code and the playlist actions load then. */
 const Dialogs = lazy(() => import('../components/Dialogs').then((m) => ({ default: m.Dialogs })));
@@ -28,18 +29,32 @@ const Dialogs = lazy(() => import('../components/Dialogs').then((m) => ({ defaul
  * `children`. When the server revokes the token the shell routes to sign-in, which says why.
  */
 export function Root({ children }: { children?: ReactNode }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const desktop = useIsDesktop();
   const session = useSession();
   const mode = useMode();
   const navigate = useNavigate();
   const location = useLocation();
   const main = useRef<HTMLElement>(null);
+  const lastPath = useRef(location.pathname);
   const signedIn = session.status === 'signedIn';
   const expired = session.status === 'signedOut' && session.reason === 'expired';
   useEffect(() => {
     if (expired && location.pathname !== '/sign-in') void navigate('/sign-in');
   }, [expired, location.pathname, navigate]);
+  // The tab and the history read the screen's name, in the chosen language (design AH); the album,
+  // artist, playlist and not-found screens set their own once they know it.
+  useEffect(() => {
+    const key = routeTitleKey(location.pathname);
+    if (key) setTitle(t(key));
+  }, [location.pathname, t, i18n.language]);
+  // A navigation moves focus into the new screen, so the next Tab is its first control and a
+  // screen reader announces the change; the first paint leaves focus where the browser put it.
+  useEffect(() => {
+    if (lastPath.current === location.pathname) return;
+    lastPath.current = location.pathname;
+    main.current?.focus({ preventScroll: true });
+  }, [location.pathname]);
   return (
     <div className="flex h-full flex-row">
       {desktop ? <Sidebar /> : null}
@@ -49,7 +64,7 @@ export function Root({ children }: { children?: ReactNode }) {
             <AskBar />
           </div>
         ) : (
-          <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-2">
+          <header className="brand-header flex items-center gap-3 border-b border-border bg-card px-4 py-2">
             <span aria-hidden className="inline-block size-3.5 rounded-sm bg-primary" />
             <span className="brand-name min-w-0 flex-1 truncate text-body font-semibold">
               {t('app.name')}
@@ -69,7 +84,11 @@ export function Root({ children }: { children?: ReactNode }) {
           </header>
         )}
         <ScrollContainerContext.Provider value={main}>
-          <main ref={main} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6">
+          <main
+            ref={main}
+            tabIndex={-1}
+            className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 outline-none md:p-6"
+          >
             <Suspense fallback={<p className="sr-only">{t('player.loading')}</p>}>
               {children ?? <Outlet />}
             </Suspense>

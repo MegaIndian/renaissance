@@ -5,7 +5,14 @@ import { useParams } from 'react-router';
 
 import { playNow } from '../lib/actions';
 import { artistNameOf } from '../lib/names';
-import { useArtist, useArtistItems, useSimilarArtists, useSnapshot } from '../lib/queries';
+import {
+  isNotFound,
+  useArtist,
+  useArtistItems,
+  useSimilarArtists,
+  useSnapshot,
+} from '../lib/queries';
+import { usePageTitle } from '../lib/title';
 import { useMode } from '../lib/mode';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { Button } from '../components/Button';
@@ -29,7 +36,8 @@ export function ArtistPage() {
   const { t } = useTranslation();
   const { id } = useParams();
   const mode = useMode();
-  const { artist, isLoading } = useArtist(id);
+  const { artist, isLoading, error } = useArtist(id);
+  usePageTitle(artist ? artistNameOf(artist, t) : undefined);
   const similar = useSimilarArtists(artist?.id ?? id);
   const snapshot = useSnapshot();
   const items = useArtistItems(artist);
@@ -48,13 +56,17 @@ export function ArtistPage() {
   );
 
   if (!artist) {
-    // The server is asked once (no retry): say so meanwhile, not a blank page (design AE).
+    // Say so while the server is asked, not a blank page (design AE); a 404 means gone, any other
+    // failure means the server could not be reached (prod AM).
     return isLoading ? (
       <p role="status" className="text-caption text-muted-foreground">
         {t('player.loading')}
       </p>
     ) : (
-      <EmptyState title={t('artist.notFound')} quiet />
+      <EmptyState
+        title={t(error && !isNotFound(error) ? 'error.unreachable' : 'artist.notFound')}
+        quiet
+      />
     );
   }
   const name = artistNameOf(artist, t);

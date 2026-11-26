@@ -254,6 +254,38 @@ describe('changes while a sync runs, and changes the server pushes', () => {
     expect(reads).toEqual(['start', 'done', 'start', 'done']);
   });
 
+  it('sign-out aborts the sync in flight: the page request is aborted and no further page goes out (prod AJ)', async () => {
+    const { adapter } = fakeAdapter();
+    const library = adapter.library(session);
+    const signals: (AbortSignal | undefined)[] = [];
+    let pages = 0;
+    let hold = false;
+    let release: () => void = () => undefined;
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      tracks: async (...args: Parameters<typeof library.tracks>) => {
+        pages += 1;
+        signals.push(args[0]?.signal);
+        if (hold) await new Promise<void>((resolve) => (release = resolve));
+        return library.tracks(...args);
+      },
+    });
+    await startLibrary(adapter, { ...session, userId: `abort-${Date.now()}` });
+    hold = true;
+    const sync = refreshLibrary({ full: true });
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(signals[0]?.aborted).toBe(false);
+    stopLibrary();
+    // The signal every page request carried has fired; the request in flight ends with it.
+    expect(signals[0]?.aborted).toBe(true);
+    release();
+    await sync;
+    expect(pages).toBe(1);
+    expect(libraryStore.get().sync.status).toBe('idle');
+    expect(libraryStore.get().snapshot.tracks).toEqual([]);
+  });
+
   it("a sync that lost the race on sign-out does not clear the new user's sync when it ends (func AH)", async () => {
     const { adapter } = fakeAdapter();
     const library = adapter.library(session);

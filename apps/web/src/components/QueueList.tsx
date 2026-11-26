@@ -1,5 +1,6 @@
 import { playedBefore, upNext } from '@renaissance/core';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { titleOf } from '../lib/names';
@@ -8,16 +9,21 @@ import { toast } from '../lib/toast';
 import { usePlayer } from '../lib/usePlayer';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
+import { useTrackRowHeight } from './TrackList';
 import { TrackRow } from './TrackRow';
+import { VirtualList } from './VirtualList';
 
 /**
  * The queue (F22): now playing, up next with drag to reorder (and Move up / Move down in each row's
- * menu for the keyboard), remove, clear with undo, and what played earlier.
+ * menu for the keyboard), remove, clear with undo, and what played earlier. Up next renders only
+ * the rows in view, as the songs list does: a shuffle of a 20,000-song library is a few dozen rows
+ * in the DOM, not twenty thousand (func AI).
  */
 export function QueueList() {
   const { t } = useTranslation();
   const snapshot = usePlayer();
   const player = getPlayer();
+  const rowHeight = useTrackRowHeight();
   const { queue, status } = snapshot;
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -83,35 +89,24 @@ export function QueueList() {
         {next.length === 0 ? (
           <EmptyState title={t('queue.empty')} quiet />
         ) : (
-          <ol className="flex flex-col" aria-label={t('queue.upNext')}>
-            {next.map((track, i) => {
+          <VirtualList
+            items={next}
+            rowHeight={rowHeight}
+            label={t('queue.upNext')}
+            keyOf={(_track, i) => String(queue.keys[queue.index + 1 + i])}
+            renderItem={(track, i) => {
               const queueIndex = queue.index + 1 + i;
               return (
-                <li
-                  key={queue.keys[queueIndex]}
-                  draggable
-                  onDragStart={(e) => {
-                    setDragging(queueIndex);
-                    e.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setOver(queueIndex);
-                  }}
+                <DraggableRow
+                  onDragStart={() => setDragging(queueIndex)}
+                  onDragOver={() => setOver(queueIndex)}
                   onDragLeave={() => setOver((o) => (o === queueIndex ? null : o))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    drop(queueIndex);
-                  }}
+                  onDrop={() => drop(queueIndex)}
                   onDragEnd={() => {
                     setDragging(null);
                     setOver(null);
                   }}
-                  className={
-                    over === queueIndex && dragging !== queueIndex
-                      ? 'border-t-2 border-primary'
-                      : ''
-                  }
+                  target={over === queueIndex && dragging !== queueIndex}
                 >
                   <TrackRow
                     track={track}
@@ -148,10 +143,10 @@ export function QueueList() {
                       },
                     ]}
                   />
-                </li>
+                </DraggableRow>
               );
-            })}
-          </ol>
+            }}
+          />
         )}
       </section>
       {history.length ? (
@@ -173,6 +168,53 @@ export function QueueList() {
           </ol>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * A row that can be dragged onto another; the drop target shows a `primary` line along its top
+ * edge, drawn inside the row so a virtual list's fixed row height holds. Shared by the queue and
+ * the playlist page (func AI, AJ); Move up and Move down in the row's menu serve the keyboard.
+ */
+export function DraggableRow({
+  children,
+  target,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+}: {
+  children: ReactNode;
+  target: boolean;
+  onDragStart: () => void;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}) {
+  return (
+    <div
+      draggable
+      className="relative h-full"
+      onDragStart={(e) => {
+        onDragStart();
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        onDragOver();
+      }}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDrop();
+      }}
+      onDragEnd={onDragEnd}
+    >
+      {target ? <span aria-hidden className="absolute inset-x-0 top-0 h-0.5 bg-primary" /> : null}
+      {children}
     </div>
   );
 }

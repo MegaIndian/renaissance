@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { i18n, setLanguage } from '../lib/i18n';
 import { lazyRoute } from '../lib/lazy';
+import { signInFake } from '../test/fakes';
 import { renderApp } from '../test/render';
 import { setViewport } from '../test/setup';
 import { Home } from './Home';
@@ -66,10 +67,58 @@ describe('Root shell', () => {
     expect(await screen.findByRole('link', { name: 'Home' })).toBeInTheDocument();
   });
 
-  it('wraps an unknown URL in the shell with a translated sentence and a link home', () => {
+  it('names every screen in the tab title, in the chosen language, and moves focus into the new screen on navigation (design AH)', async () => {
+    setViewport(1280);
+    renderApp('/library');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { level: 1, name: 'Library' });
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+    // The first paint leaves focus where the browser put it.
+    expect(document.activeElement).toBe(document.body);
+    await user.click(within(screen.getByRole('complementary')).getByRole('link', { name: 'Home' }));
+    await waitFor(() => expect(document.title).toBe('Home · Renaissance'));
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    expect(screen.getByRole('main')).toHaveAttribute('tabindex', '-1');
+    await user.click(
+      within(screen.getByRole('complementary')).getByRole('link', { name: 'Library' }),
+    );
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    // The next Tab goes into the screen (its Sign in), not back to the sidebar.
+    await user.tab();
+    expect(document.activeElement).toBe(
+      within(screen.getByRole('main')).getByRole('link', { name: 'Sign in' }),
+    );
+    await user.click(screen.getByRole('radio', { name: 'ગુજરાતી' }));
+    await waitFor(() => expect(document.title).toBe('લાઇબ્રેરી · Renaissance'));
+    await user.click(within(screen.getByRole('complementary')).getByRole('link', { name: 'હોમ' }));
+    await waitFor(() => expect(document.title).toBe('હોમ · Renaissance'));
+    await user.click(screen.getByRole('radio', { name: 'English' }));
+    await waitFor(() => expect(document.title).toBe('Home · Renaissance'));
+  });
+
+  it('an album names the tab after itself while it is open, then the route takes over again (design AH)', async () => {
+    setViewport(1280);
+    signInFake();
+    renderApp('/album/al1');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { level: 1, name: 'Royalty Free' });
+    await waitFor(() => expect(document.title).toBe('Royalty Free · Renaissance'));
+    await user.click(
+      within(screen.getByRole('complementary')).getByRole('link', { name: 'Library' }),
+    );
+    await waitFor(() => expect(document.title).toBe('Library · Renaissance'));
+  });
+
+  it('wraps an unknown URL in the shell with a translated sentence and a link home', async () => {
     setViewport(390);
     renderApp('/nope');
-    expect(screen.getByText('There is no page at this address')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'There is no page at this address' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.title).toBe('There is no page at this address · Renaissance'),
+    );
     expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('search')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Navigation' })).toBeInTheDocument();

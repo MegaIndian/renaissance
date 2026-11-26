@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
+import { ServerError, UnreachableError } from '@renaissance/core';
+
 import { tracks } from '../test/fakes';
-import { overlayUserData } from './queries';
+import { overlayUserData, retryUnlessNotFound } from './queries';
+
+describe('retryUnlessNotFound', () => {
+  it('asks again twice after a timeout or a server fault, never after a 404 (prod AM)', () => {
+    const timeout = new UnreachableError('/Items/x', 'timeout');
+    expect(retryUnlessNotFound(0, timeout)).toBe(true);
+    expect(retryUnlessNotFound(1, timeout)).toBe(true);
+    expect(retryUnlessNotFound(2, timeout)).toBe(false);
+    expect(retryUnlessNotFound(0, new ServerError(500, '/Items/x'))).toBe(true);
+    expect(retryUnlessNotFound(0, new ServerError(404, '/Items/x'))).toBe(false);
+  });
+});
 
 describe('overlayUserData', () => {
   const base = { ...tracks[0]!, isFavorite: false, playCount: 1 };

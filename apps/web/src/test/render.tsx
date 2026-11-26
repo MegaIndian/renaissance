@@ -8,7 +8,8 @@ import { i18n } from '../lib/i18n';
 import { routes } from '../router';
 
 function client(): QueryClient {
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // No retries unless a query asks for them, and then without the production back-off.
+  return new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
 }
 
 /** The whole app at one route, in the real router, query client and i18n instance. */

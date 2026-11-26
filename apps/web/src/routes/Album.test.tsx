@@ -2,11 +2,11 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ServerError } from '@renaissance/core';
+import { ServerError, UnreachableError } from '@renaissance/core';
 
 import { setLanguage } from '../lib/i18n';
 import { libraryStore } from '../lib/library';
-import { session, signInFake } from '../test/fakes';
+import { session, signInFake, track } from '../test/fakes';
 import { renderApp } from '../test/render';
 
 describe('Album, artist and playlist pages', () => {
@@ -107,6 +107,29 @@ describe('Album, artist and playlist pages', () => {
     expect(calls.playlists).toContain('remove p1 e3');
   });
 
+  it('playlist: 3,000 entries mount a few dozen rows, not three thousand (func AJ)', async () => {
+    setLanguage('en');
+    const { adapter } = signInFake();
+    const library = adapter.library(session);
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      playlistTracks: () =>
+        Promise.resolve(
+          Array.from({ length: 3_000 }, (_, i) => ({
+            ...track(`s${i}`, { title: `Song ${i}` }),
+            entryId: `e${i}`,
+          })),
+        ),
+    });
+    renderApp('/playlist/p1');
+    expect(await screen.findByRole('button', { name: 'Play Song 0' })).toBeInTheDocument();
+    expect(screen.getByText(/3,000 songs/)).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Songs' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows.length).toBeGreaterThan(5);
+    expect(rows.length).toBeLessThan(200);
+  });
+
   it('missing items say so, after saying that they are being looked up (design AE)', async () => {
     setLanguage('en');
     signInFake();
@@ -114,6 +137,46 @@ describe('Album, artist and playlist pages', () => {
     expect(await screen.findByText('Loading…')).toHaveAttribute('role', 'status');
     expect(await screen.findByText('This album is not on the server any more')).toBeInTheDocument();
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('a server that cannot be reached is asked again, then says so, not "not on the server any more" (prod AM)', async () => {
+    setLanguage('en');
+    const { adapter } = signInFake();
+    const library = adapter.library(session);
+    let albumAsked = 0;
+    let artistAsked = 0;
+    let goneAsked = 0;
+    vi.spyOn(adapter, 'library').mockReturnValue({
+      ...library,
+      album: (id: string) => {
+        if (id === 'gone') {
+          goneAsked += 1;
+          return Promise.reject(new ServerError(404, '/Items/gone'));
+        }
+        albumAsked += 1;
+        return Promise.reject(new UnreachableError('/Items/far', 'timeout'));
+      },
+      artist: () => {
+        artistAsked += 1;
+        return Promise.reject(new ServerError(503, '/Items/far'));
+      },
+    });
+    const view = renderApp('/album/far');
+    expect(
+      await screen.findByText('The server could not be reached. Try again when it is back.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('This album is not on the server any more')).not.toBeInTheDocument();
+    expect(albumAsked).toBe(3);
+    view.unmount();
+    renderApp('/artist/far');
+    expect(
+      await screen.findByText('The server could not be reached. Try again when it is back.'),
+    ).toBeInTheDocument();
+    expect(artistAsked).toBe(3);
+    // A 404 is the answer: asked once, and the sentence is the "gone" one.
+    renderApp('/album/gone');
+    expect(await screen.findByText('This album is not on the server any more')).toBeInTheDocument();
+    expect(goneAsked).toBe(1);
   });
 
   it('an unknown artist is looked up with a visible cue, not a blank page (design AE)', async () => {

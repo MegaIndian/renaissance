@@ -9,6 +9,7 @@ import { addToQueue, playNext, playNow } from '../lib/actions';
 import { movePlaylistEntry, removeFromPlaylist } from '../lib/playlist-actions';
 import { openDialog } from '../lib/dialogs';
 import { usePlaylistTracks, useLibrary } from '../lib/queries';
+import { usePageTitle } from '../lib/title';
 import { usePlayer } from '../lib/usePlayer';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { Button } from '../components/Button';
@@ -16,11 +17,16 @@ import { EmptyState } from '../components/EmptyState';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { Icon } from '../components/Icon';
 import { Menu } from '../components/Menu';
+import { DraggableRow } from '../components/QueueList';
+import { useTrackRowHeight } from '../components/TrackList';
 import { TrackRow } from '../components/TrackRow';
+import { VirtualList } from '../components/VirtualList';
 
 /**
  * Playlist page (F13): rename, delete, add, remove, drag to reorder (Move up and Move down in each
- * row's menu for the keyboard), every change synced with Jellyfin and shown in a toast.
+ * row's menu for the keyboard), every change synced with Jellyfin and shown in a toast. The rows
+ * render through the same virtual list as the songs list, so a 3,000-song playlist is a few dozen
+ * rows in the DOM (func AJ).
  */
 export function PlaylistPage() {
   const { t } = useTranslation();
@@ -30,8 +36,10 @@ export function PlaylistPage() {
   const { snapshot, ready } = useLibrary();
   const { playlists } = snapshot;
   const playlist = playlists.find((p) => p.id === id);
+  usePageTitle(playlist ? playlistNameOf(playlist, t) : undefined);
   const entries = usePlaylistTracks(id);
   const player = usePlayer();
+  const rowHeight = useTrackRowHeight();
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const tracks = entries.data ?? [];
@@ -134,29 +142,22 @@ export function PlaylistPage() {
       {entries.isLoading ? null : tracks.length === 0 ? (
         <EmptyState title={t('playlist.noTracks')} description={t('playlist.noTracksBody')} />
       ) : (
-        <ol aria-label={t('library.tracks')}>
-          {tracks.map((entry, i) => (
-            <li
-              key={entry.entryId}
-              draggable
-              onDragStart={(e) => {
-                setDragging(i);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setOver(i);
-              }}
+        <VirtualList
+          items={tracks}
+          rowHeight={rowHeight}
+          label={t('library.tracks')}
+          keyOf={(entry) => entry.entryId}
+          renderItem={(entry, i) => (
+            <DraggableRow
+              onDragStart={() => setDragging(i)}
+              onDragOver={() => setOver(i)}
               onDragLeave={() => setOver((o) => (o === i ? null : o))}
-              onDrop={(e) => {
-                e.preventDefault();
-                drop(i);
-              }}
+              onDrop={() => drop(i)}
               onDragEnd={() => {
                 setDragging(null);
                 setOver(null);
               }}
-              className={over === i && dragging !== i ? 'border-t-2 border-primary' : ''}
+              target={over === i && dragging !== i}
             >
               <TrackRow
                 track={entry}
@@ -213,9 +214,9 @@ export function PlaylistPage() {
                   },
                 ]}
               />
-            </li>
-          ))}
-        </ol>
+            </DraggableRow>
+          )}
+        />
       )}
     </div>
   );

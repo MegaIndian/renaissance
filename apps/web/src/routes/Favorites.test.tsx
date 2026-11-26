@@ -50,6 +50,18 @@ describe('Favorites', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Removed Fluffing a Duck from favourites');
   });
 
+  it("signed out it shows the Library's sentence and Sign in, not a bare heading (design AG)", async () => {
+    setLanguage('en');
+    renderApp('/favorites');
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Favourites' }),
+    ).toBeInTheDocument();
+    const main = within(screen.getByRole('main'));
+    expect(main.getByText('Your library appears here after you sign in')).toBeInTheDocument();
+    expect(main.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/sign-in');
+    expect(screen.queryByText('No favourites yet')).not.toBeInTheDocument();
+  });
+
   it('with nothing hearted it says so once the cache is in, and nothing before', async () => {
     setLanguage('en');
     signInFake();

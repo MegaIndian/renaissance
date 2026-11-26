@@ -150,6 +150,7 @@ export class DomAudioPort implements AudioPort {
 }
 
 const QUEUE_KEY = 'renaissance.queue';
+const POSITION_KEY = 'renaissance.position';
 
 /**
  * The persisted queue (F22): the id of the song behind each key, with the queue's keys and
@@ -184,6 +185,26 @@ function queueKey(userId: string): string {
   return `${QUEUE_KEY}.${userId}`;
 }
 
+/**
+ * The position lives under its own key: it changes every few seconds while the queue, a megabyte
+ * for a 20,000-song shuffle, changes only when the user touches it (prod AK). The queue record
+ * keeps a position too, for the reload that follows a queue change before the next tick.
+ */
+function positionKey(userId: string): string {
+  return `${POSITION_KEY}.${userId}`;
+}
+
+/** Write only the position for this user; false when the browser refused. */
+export function savePosition(userId: string, position: number): boolean {
+  try {
+    localStorage.setItem(positionKey(userId), String(Math.floor(position)));
+    return true;
+  } catch (error) {
+    debug('position save failed', error);
+    return false;
+  }
+}
+
 /** Write the queue for this user; false when the browser refused (quota, private window). */
 export function saveQueue(userId: string, queue: QueueState, position: number): boolean {
   try {
@@ -202,6 +223,7 @@ export function saveQueue(userId: string, queue: QueueState, position: number): 
       position,
     };
     localStorage.setItem(queueKey(userId), JSON.stringify(saved));
+    localStorage.setItem(positionKey(userId), String(position));
     return true;
   } catch (error) {
     debug('queue save failed', error);
@@ -209,10 +231,11 @@ export function saveQueue(userId: string, queue: QueueState, position: number): 
   }
 }
 
-/** Remove a user's saved queue from this browser (sign-out, F86). */
+/** Remove a user's saved queue and position from this browser (sign-out, F86). */
 export function forgetQueue(userId: string): void {
   try {
     localStorage.removeItem(queueKey(userId));
+    localStorage.removeItem(positionKey(userId));
   } catch {
     /* nothing to forget */
   }
@@ -234,12 +257,16 @@ export function loadQueue(
     const raw = localStorage.getItem(queueKey(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedQueue & LegacySavedQueue>;
-    const position =
+    const fromRecord =
       typeof parsed.position === 'number' && parsed.position >= 0 ? parsed.position : 0;
     if (parsed.version !== 2) {
       const queue = parseQueue(parsed.queue);
-      return queue.items.length ? { queue, position } : null;
+      return queue.items.length ? { queue, position: fromRecord } : null;
     }
+    // The position key is written more often than the record; it wins when it parses.
+    const ownRaw = localStorage.getItem(positionKey(userId));
+    const own = ownRaw === null || ownRaw === '' ? Number.NaN : Number(ownRaw);
+    const position = Number.isFinite(own) && own >= 0 ? own : fromRecord;
     const rehydrated = rehydrate(parsed, lookup);
     if (!rehydrated || !rehydrated.queue.items.length) return null;
     return { queue: rehydrated.queue, position: rehydrated.currentKept ? position : 0 };
@@ -337,6 +364,20 @@ function persist(userId: string, queue: QueueState, position: number): void {
 function attachPersistence(p: Player): void {
   let positionTimer: ReturnType<typeof setTimeout> | undefined;
   let lastQueue: QueueState | null = null;
+  let lastUserId: string | undefined;
+  const clearTimer = (): void => {
+    if (positionTimer) clearTimeout(positionTimer);
+    positionTimer = undefined;
+  };
+  // A sign-out or a change of user ends the tick: it must not write the previous user's key back
+  // after `forgetQueue` removed it (prod AL).
+  sessionStore.subscribe((state) => {
+    const userId = state.session?.userId;
+    if (userId === lastUserId) return;
+    lastUserId = userId;
+    lastQueue = null;
+    clearTimer();
+  });
   p.subscribe((snapshot) => {
     const userId = sessionStore.get().session?.userId;
     if (!userId) return;
@@ -346,12 +387,14 @@ function attachPersistence(p: Player): void {
       persist(userId, snapshot.queue, Math.floor(snapshot.position));
       return;
     }
-    // The position is saved at most every five seconds, without postponing itself.
+    // The position alone, at most every five seconds, without postponing itself (prod AK).
     if (positionTimer) return;
     positionTimer = setTimeout(() => {
       positionTimer = undefined;
-      const current = p.snapshot;
-      persist(userId, current.queue, Math.floor(current.position));
+      // The user is read again now: the one from five seconds ago may have signed out.
+      const now = sessionStore.get().session?.userId;
+      if (!now) return;
+      savePosition(now, p.snapshot.position);
     }, 5000);
   });
 }

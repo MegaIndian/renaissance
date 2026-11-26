@@ -6,7 +6,8 @@ import { addToQueue, playNext, playNow } from '../lib/actions';
 import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
 import { titleOf } from '../lib/names';
-import { useAlbum, useAlbumTracks } from '../lib/queries';
+import { isNotFound, useAlbum, useAlbumTracks } from '../lib/queries';
+import { usePageTitle } from '../lib/title';
 import { usePlayer } from '../lib/usePlayer';
 import { Artwork, colorIndex } from '../components/Artwork';
 import { Button } from '../components/Button';
@@ -22,20 +23,25 @@ export function AlbumPage() {
   const { t } = useTranslation();
   const { id } = useParams();
   const mode = useMode();
-  const { album, isLoading } = useAlbum(id);
+  const { album, isLoading, error } = useAlbum(id);
+  usePageTitle(album ? titleOf(album, t) : undefined);
   const { tracks } = useAlbumTracks(id);
   const player = usePlayer();
   const currentId = player.queue.items[player.queue.index]?.id;
   const paused = player.status !== 'playing' && player.status !== 'loading';
 
   if (!album) {
-    // The server is asked once (no retry): say so meanwhile, not a blank page (design AE).
+    // Say so while the server is asked, not a blank page (design AE); a 404 means gone, any other
+    // failure means the server could not be reached (prod AM).
     return isLoading ? (
       <p role="status" className="text-caption text-muted-foreground">
         {t('player.loading')}
       </p>
     ) : (
-      <EmptyState title={t('album.notFound')} quiet />
+      <EmptyState
+        title={t(error && !isNotFound(error) ? 'error.unreachable' : 'album.notFound')}
+        quiet
+      />
     );
   }
   const title = titleOf(album, t);

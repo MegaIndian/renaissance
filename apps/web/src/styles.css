@@ -85,8 +85,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Under 360 px the phone header keeps the mark and the controls; the name would clip to two letters. */
-@media (max-width: 359px) {
+/*
+ * The phone header keeps the mark and the controls and drops the name when it would clip to two
+ * letters: under 360 px at the default type size, and at the browser's larger type settings whatever
+ * the width (the query is in rem, so it follows the root size; design Z and AI).
+ */
+.brand-header {
+  container-type: inline-size;
+}
+@container (max-width: 20.45rem) {
   .brand-name {
     position: absolute;
     width: 1px;

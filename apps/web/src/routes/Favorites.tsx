@@ -3,18 +3,20 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { playNow } from '../lib/actions';
-import { useLibrary } from '../lib/queries';
+import { useLibrary, useSession } from '../lib/queries';
 import { Button } from '../components/Button';
 import { AlbumCard, ArtistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { Row, RowItem } from '../components/Row';
+import { SignedOut } from '../components/SignedOut';
 import { TrackList } from './Library';
 
 /** Favourites (F12): this user's hearts on songs, albums and artists, synced with Jellyfin. */
 export function Favorites() {
   const { t } = useTranslation();
   const { snapshot, ready } = useLibrary();
+  const session = useSession();
   const tracks = useMemo(
     () =>
       sortItems(
@@ -40,6 +42,8 @@ export function Favorites() {
     [snapshot.artists],
   );
   const empty = !tracks.length && !albums.length && !artists.length;
+  // No session, no cache to wait for: the Library's sentence and Sign in (design AG).
+  if (session.status === 'signedOut') return <SignedOut title={t('favorites.title')} />;
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3">

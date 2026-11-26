@@ -6,7 +6,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { creditsArtist, findArtist, sortAlbumTracks } from '@renaissance/core';
+import { ServerError, creditsArtist, findArtist, sortAlbumTracks } from '@renaissance/core';
 import type { Album, Artist, PlaylistEntry, Track } from '@renaissance/core';
 
 import { libraryStore } from './library';
@@ -87,6 +87,15 @@ export function overlayUserData(server: Track, local: Track): Track {
   };
 }
 
+/** A 404 is the answer and is not asked again; anything else (a timeout, a reset) gets two more tries (design AE, prod AM). */
+export function retryUnlessNotFound(count: number, error: unknown): boolean {
+  return count < 2 && !isNotFound(error);
+}
+
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ServerError && error.status === 404;
+}
+
 export function useAlbum(albumId: string | undefined) {
   const cached = useStoreSlice(libraryStore, (s) =>
     s.snapshot.albums.find((a) => a.id === albumId),
@@ -95,8 +104,7 @@ export function useAlbum(albumId: string | undefined) {
     queryKey: queryKeys.album(albumId ?? ''),
     queryFn: () => library().album(albumId ?? ''),
     enabled: !!albumId && !cached && sessionStore.get().status === 'signedIn',
-    // One 404 is the answer; a retry only delays "not on the server any more" (design AE).
-    retry: false,
+    retry: retryUnlessNotFound,
   });
   return { ...query, album: cached ?? query.data };
 }
@@ -114,7 +122,7 @@ export function useArtist(artistId: string | undefined) {
     queryKey: queryKeys.artist(artistId ?? ''),
     queryFn: () => library().artist(artistId ?? ''),
     enabled: !!artistId && sessionStore.get().status === 'signedIn',
-    retry: false,
+    retry: retryUnlessNotFound,
   });
   const cached = byId ?? (query.data ? findArtist(artists, undefined, query.data.name) : undefined);
   const artist =

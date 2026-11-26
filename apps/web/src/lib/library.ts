@@ -183,6 +183,8 @@ let active: {
   store: WebLibraryStore;
   adapter: ServerAdapter;
   session: Session;
+  /** Fired by `stop`: a sync in flight sends no further page and the one in flight is aborted. */
+  abort: AbortController;
   stop: () => void;
   /** Ask the other tabs of this browser to refresh too (a heart in one tab shows in the other). */
   broadcast: () => void;
@@ -238,6 +240,7 @@ export function refreshLibrary(options: { full?: boolean } = {}): Promise<void> 
   const mine: Promise<void> = syncLibrary(current.adapter.library(current.session), current.store, {
     ...(options.full ? { full: true } : {}),
     onProgress: (progress) => patchSync({ progress }),
+    signal: current.abort.signal,
   })
     .then((result) => {
       if (active !== current) return;
@@ -341,17 +344,21 @@ export async function startLibrary(adapter: ServerAdapter, session: Session): Pr
       if (event.data === key) schedule(500);
     };
   }
+  const abort = new AbortController();
   active = {
     key,
     store,
     adapter,
     session,
+    abort,
     broadcast: () => channel?.postMessage(key),
     retry: (ms) => {
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = setTimeout(() => void refreshLibrary(), ms);
     },
     stop: () => {
+      // A sign-out revokes the token: a sync still paging would only collect 401s (prod AJ).
+      abort.abort();
       unsubscribe();
       clearInterval(interval);
       if (timer) clearTimeout(timer);

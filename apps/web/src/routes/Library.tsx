@@ -9,11 +9,12 @@ import { openDialog } from '../lib/dialogs';
 import { useMode } from '../lib/mode';
 import { artistNameOf, titleOf } from '../lib/names';
 import { useLibrary, useSession } from '../lib/queries';
-import { Button, LinkButton } from '../components/Button';
+import { Button } from '../components/Button';
 import { AlbumCard, ArtistCard, LabelCard, PlaylistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { SignedOut } from '../components/SignedOut';
 import { SortBar } from '../components/SortBar';
 import type { View } from '../components/SortBar';
 import { SyncStatus } from '../components/SyncStatus';
@@ -143,21 +144,7 @@ export function Library() {
     return { genres, years };
   }, [snapshot.tracks]);
 
-  if (session.status === 'signedOut') {
-    return (
-      <div className="mx-auto flex max-w-3xl flex-col gap-3">
-        <h1 className="text-heading font-semibold">{t('nav.library')}</h1>
-        <EmptyState
-          title={t('library.empty')}
-          action={
-            <LinkButton to="/sign-in" tone="primary" className="shrink-0">
-              {t('signIn.submit')}
-            </LinkButton>
-          }
-        />
-      </div>
-    );
-  }
+  if (session.status === 'signedOut') return <SignedOut title={t('nav.library')} />;
 
   const sectionLabel: Record<Section, string> = {
     artists: t('library.artists'),

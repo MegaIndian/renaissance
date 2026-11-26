@@ -3,7 +3,14 @@ import type { AudioEvent, Track } from '@renaissance/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { fakeAdapter, session, track, tracks } from '../test/fakes';
-import { DomAudioPort, getPlayer, loadQueue, resetPlayerForTests, saveQueue } from './player';
+import {
+  DomAudioPort,
+  forgetQueue,
+  getPlayer,
+  loadQueue,
+  resetPlayerForTests,
+  saveQueue,
+} from './player';
 import { sessionStore } from './session';
 import { toastStore } from './toast';
 
@@ -148,6 +155,95 @@ describe('queue persistence', () => {
       JSON.stringify({ userId: 'u1', queue, position: 4 }),
     );
     expect(loadQueue('u1', () => undefined)).toEqual({ queue, position: 4 });
+  });
+
+  it('the five-second tick writes the position under its own key, never the queue; the queue is written on change only (prod AK)', () => {
+    vi.useFakeTimers();
+    resetPlayerForTests();
+    localStorage.clear();
+    sessionStore.set({
+      status: 'signedIn',
+      session,
+      adapter: fakeAdapter().adapter,
+      vault: 'encrypted',
+      reason: null,
+    });
+    try {
+      const many = Array.from({ length: 20_000 }, (_, i) => track(`s${i}`));
+      const player = getPlayer();
+      player.restore(replace(emptyQueue, many, 7), 3);
+      const queueKey = `renaissance.queue.${session.userId}`;
+      const positionKey = `renaissance.position.${session.userId}`;
+      const written = localStorage.getItem(queueKey);
+      expect(written?.length).toBeGreaterThan(300_000);
+      expect(localStorage.getItem(positionKey)).toBe('3');
+      const spy = vi.spyOn(Storage.prototype, 'setItem');
+      // Playback moves on: the queue is the same object, only the position changed.
+      player.seek(42);
+      player.seek(43);
+      expect(spy).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(5_000);
+      expect(spy.mock.calls.map(([key]) => key)).toEqual([positionKey]);
+      expect(localStorage.getItem(positionKey)).toBe('43');
+      expect(localStorage.getItem(queueKey)).toBe(written);
+      // The restore reads the newer position from its own key.
+      const byId = new Map(many.map((t) => [t.id, t]));
+      expect(loadQueue(session.userId, (id) => byId.get(id))?.position).toBe(43);
+      // A queue change writes the queue again, once.
+      spy.mockClear();
+      player.next();
+      expect(spy.mock.calls.map(([key]) => key)).toEqual([queueKey, positionKey]);
+      spy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+      resetPlayerForTests();
+      localStorage.clear();
+    }
+  });
+
+  it("a sign-out ends the position tick, so the signed-out user's key is not written back (prod AL)", () => {
+    vi.useFakeTimers();
+    resetPlayerForTests();
+    localStorage.clear();
+    const signedIn = {
+      status: 'signedIn' as const,
+      session,
+      adapter: fakeAdapter().adapter,
+      vault: 'encrypted' as const,
+      reason: null,
+    };
+    sessionStore.set(signedIn);
+    try {
+      const player = getPlayer();
+      player.restore(replace(emptyQueue, tracks, 0), 0);
+      player.seek(12); // arms the five-second tick
+      sessionStore.set({
+        status: 'signedOut',
+        session: null,
+        adapter: null,
+        vault: null,
+        reason: null,
+      });
+      player.clear();
+      forgetQueue(session.userId);
+      expect(localStorage.getItem(`renaissance.queue.${session.userId}`)).toBeNull();
+      vi.advanceTimersByTime(5_000);
+      expect(localStorage.getItem(`renaissance.queue.${session.userId}`)).toBeNull();
+      expect(localStorage.getItem(`renaissance.position.${session.userId}`)).toBeNull();
+      // The next user's tick names the next user, not the one who armed it.
+      sessionStore.set({ ...signedIn, session: { ...session, userId: 'u2' } });
+      player.restore(replace(emptyQueue, tracks, 1), 0);
+      player.seek(7);
+      sessionStore.set({ ...signedIn, session: { ...session, userId: 'u3' } });
+      player.seek(9);
+      vi.advanceTimersByTime(5_000);
+      expect(localStorage.getItem('renaissance.position.u2')).toBe('0');
+      expect(localStorage.getItem('renaissance.position.u3')).toBe('9');
+    } finally {
+      vi.useRealTimers();
+      resetPlayerForTests();
+      localStorage.clear();
+    }
   });
 
   it('a save that fails is said once, in a toast, and the queue lasts the session (func AA)', () => {

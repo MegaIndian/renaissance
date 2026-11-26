@@ -35,6 +35,16 @@ describe('Search', () => {
     expect(player.snapshot.queue.items[player.snapshot.queue.index]?.id).toBe('t2');
   });
 
+  it("signed out, with a term, it shows the Library's sentence and Sign in, not a bare heading (design AG)", async () => {
+    setLanguage('en');
+    renderApp('/search?q=kevin');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
+    const main = within(screen.getByRole('main'));
+    expect(main.getByText('Your library appears here after you sign in')).toBeInTheDocument();
+    expect(main.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/sign-in');
+    expect(screen.queryByText(/Results for/)).not.toBeInTheDocument();
+  });
+
   it('finds playlists by name, and says when nothing matches', async () => {
     setLanguage('en');
     signInFake();

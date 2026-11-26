@@ -3,12 +3,13 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 
-import { useLibrary } from '../lib/queries';
+import { useLibrary, useSession } from '../lib/queries';
 import { recentSearchesStore } from '../lib/recent';
 import { useStoreValue } from '../lib/useStore';
 import { AlbumCard, ArtistCard, PlaylistCard } from '../components/Cards';
 import { EmptyState } from '../components/EmptyState';
 import { Row, RowItem } from '../components/Row';
+import { SignedOut } from '../components/SignedOut';
 import { focusRing } from '../components/focus';
 import { TrackList } from './Library';
 
@@ -18,9 +19,12 @@ export function Search() {
   const [params] = useSearchParams();
   const term = params.get('q')?.trim() ?? '';
   const { index, ready } = useLibrary();
+  const session = useSession();
   const recent = useStoreValue(recentSearchesStore);
   const results = useMemo(() => (term ? index.search(term, 50) : null), [index, term]);
 
+  // No session, no index to search: the Library's sentence and Sign in (design AG).
+  if (session.status === 'signedOut') return <SignedOut title={t('search.title')} />;
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <h1 className="text-heading font-semibold">
