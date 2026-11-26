@@ -18,8 +18,8 @@ import { focusRing } from '../components/focus';
  * lyrics, queue and cast row sit above the fold at 390 x 844. From the tablet breakpoint the bottom
  * bar is on this screen too and owns the transport, so the page shows none; on a desktop the art
  * (capped near 40 vh) sits beside the text and the scrubber, nothing below the fold at 1280 x 800.
- * Lyrics and cast buttons are present but disabled; the hint naming their phase shows in advanced
- * mode only. Advanced also shows direct or transcoded, codec and bitrate.
+ * Lyrics opens the lyrics screen (F39, F40). Cast is present but disabled; the hint naming its phase
+ * shows in advanced mode only. Advanced also shows direct or transcoded, codec and bitrate.
  */
 export function NowPlaying() {
   const { t } = useTranslation();
@@ -34,6 +34,7 @@ export function NowPlaying() {
       </div>
     );
   }
+  const actionLink = `flex min-h-6 min-w-6 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption text-foreground ${focusRing}`;
   const disabledButton = `flex min-h-6 min-w-6 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption text-muted-foreground disabled:cursor-not-allowed ${focusRing}`;
   return (
     <div className="mx-auto flex max-w-md flex-col items-stretch gap-3 lg:max-w-4xl lg:flex-row lg:items-center lg:gap-10">
@@ -91,23 +92,11 @@ export function NowPlaying() {
           <TransportControls size="lg" withModes wrap />
         </div>
         <div className="flex items-start justify-around" data-testid="now-playing-actions">
-          <button
-            type="button"
-            disabled
-            className={disabledButton}
-            aria-label={t('player.lyrics')}
-            aria-description={mode === 'advanced' ? t('player.lyricsLater') : undefined}
-          >
+          <Link to="/lyrics" className={actionLink}>
             <Icon name="lyrics" className="size-5" />
             <span>{t('player.lyrics')}</span>
-            {mode === 'advanced' ? (
-              <span className="text-caption">{t('player.lyricsLater')}</span>
-            ) : null}
-          </button>
-          <Link
-            to="/queue"
-            className={`flex min-h-6 min-w-6 flex-col items-center gap-1 rounded-sm px-2 py-1 text-caption text-foreground ${focusRing}`}
-          >
+          </Link>
+          <Link to="/queue" className={actionLink}>
             <Icon name="queue" className="size-5" />
             <span>{t('player.queue')}</span>
           </Link>
