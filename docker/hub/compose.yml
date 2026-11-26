@@ -1,0 +1,63 @@
+# Renaissance Hub on TrueNAS SCALE as a custom app (Apps, Discover, Custom App, "Install via YAML").
+# Host paths follow the server's rule: app data under /mnt/HDDs/files/apps/<app>/. Every value below
+# that is a placeholder (<...>) is set in the TrueNAS form; secrets never live in this file.
+#
+# The hub needs to see the slskd completed-downloads folder at the same path Lidarr sees it, so
+# RENAISSANCE_LIDARR_DOWNLOADS_DIR is the path *inside Lidarr's container* (on Main-HUB:
+# /files/downloads/music/complete). The hub itself never touches the files; Lidarr moves them.
+services:
+  renaissance-hub:
+    # Published by .github/workflows/release.yml: `:<tag>` for every v* and phase-* tag, `:edge` for
+    # main, `:sha-<7>` for both. Pin a tag here (never `latest`), so a redeploy changes nothing by itself.
+    image: ghcr.io/megaindian/renaissance-hub:phase-2
+    # Or build from a checkout:  docker build -f apps/hub/Dockerfile -t renaissance-hub .
+    container_name: renaissance-hub
+    restart: unless-stopped
+    # TrueNAS's apps user. The host folder below must be writable by it before the first start:
+    #   chown -R 568:568 /mnt/HDDs/files/apps/renaissance-hub
+    # (or the dataset's ACL). Otherwise the hub starts degraded: /health answers 503 with
+    # database: "error" and SQLite's message, and every other route 503 storage_error.
+    user: '568:568'
+    ports:
+      - '30878:8787'
+    volumes:
+      - /mnt/HDDs/files/apps/renaissance-hub:/data
+    environment:
+      NODE_ENV: production
+      RENAISSANCE_HUB_PORT: '8787'
+      RENAISSANCE_HUB_DB: /data/hub.sqlite
+      # The web app's origin(s), comma separated; the hub answers browsers from nowhere else.
+      RENAISSANCE_HUB_CORS_ORIGINS: https://music.<tailnet>.ts.net
+      # Set when a reverse proxy (Tailscale Serve, nginx) sits in front, so the rate limit sees clients.
+      RENAISSANCE_HUB_TRUST_PROXY: 'true'
+      # The hub reaches the other apps over the LAN; keys come from each app's settings page.
+      JELLYFIN_URL: http://192.168.87.196:8096
+      JELLYFIN_API_KEY: <jellyfin api key>
+      LIDARR_URL: http://192.168.87.196:30071
+      LIDARR_API_KEY: <lidarr api key>
+      LIDARR_ROOT_FOLDER: /files/media/music
+      RENAISSANCE_LIDARR_DOWNLOADS_DIR: /files/downloads/music/complete
+      # soularr's failed_imports sits under the folder above on Main-HUB; set this when it does not.
+      # RENAISSANCE_LIDARR_FAILED_IMPORTS_DIR: /files/downloads/music/failed_imports
+      SLSKD_URL: http://192.168.87.196:30336
+      SLSKD_API_KEY: <slskd api key>
+      NAVIDROME_URL: http://192.168.87.196:30043
+      NAVIDROME_USER: <navidrome user>
+      NAVIDROME_PASSWORD: <navidrome password>
+      # Optional: the model breaks a tie between two Soulseek files only with the flag on and a key.
+      RENAISSANCE_FETCH_MODEL_PICK: 'false'
+      ANTHROPIC_API_KEY: <anthropic api key>
+      ANTHROPIC_INTENT_MODEL: claude-opus-5-5
+      # Sent to MusicBrainz in the User-Agent, as its etiquette asks.
+      RENAISSANCE_CONTACT: <an email or project url>
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3

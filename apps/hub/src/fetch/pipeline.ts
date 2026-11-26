@@ -1,0 +1,1165 @@
+/**
+ * The fetch pipeline (F61, ADR 0006): requested → finding → downloading → importing → ready, or
+ * failed with a reason, or cancelled by the person who asked. Singles go through slskd and an
+ * explicit ManualImport; albums are handed to Lidarr (and soularr) and watched until every track
+ * has a file or the deadline passes. Every status change is a row in `requests.steps` and an event
+ * on the bus; progress writes change only the progress columns, so a request that polls for days
+ * stays small. Every write goes through `update()` or `progress()`, which refuse a cancelled or
+ * removed row, and `run()` never throws.
+ */
+import { posix } from 'node:path';
+
+import type { MusicRequest, RequestProgress, RequestStatus } from '@renaissance/core';
+
+import type { CatalogueService } from '../catalogue/service.js';
+import { leadingTie, noRules, transientCollection } from '../contracts.js';
+import type {
+  AmbiguityPicker,
+  CollectionSink,
+  NewCollectionItem,
+  RuleSource,
+} from '../contracts.js';
+import type { Stores } from '../db/index.js';
+import { lastRequestedAt } from '../db/requests.js';
+import type { RequestUpdate } from '../db/requests.js';
+import type { EventBus } from '../events/bus.js';
+import { isBusy, sleep as realSleep } from '../http.js';
+import type { JellyfinLibrary } from '../jellyfin/library.js';
+import type { Logger } from '../log.js';
+import { normalize, tokenOverlap, tokens } from '../text.js';
+import { buildQueries, cleanTitle } from './clean.js';
+import { ensureSinglesProfile, waitForCommand } from './lidarr.js';
+import type {
+  LidarrAlbum,
+  LidarrArtist,
+  LidarrClient,
+  LidarrImportCandidate,
+  LidarrRelease,
+  LidarrTrack,
+  ManualImportFile,
+} from './lidarr.js';
+import type { NavidromeClient } from './navidrome.js';
+import { baseName, parentName, rank } from './rank.js';
+import type { Scored } from './rank.js';
+import { parseRules } from './rules.js';
+import { toCandidates } from './slskd.js';
+import type { SlskdClient } from './slskd.js';
+
+export class PipelineError extends Error {
+  readonly reason: string;
+  constructor(reason: string, detail: string) {
+    super(detail);
+    this.name = 'PipelineError';
+    this.reason = reason;
+  }
+}
+
+export interface PipelineDeps {
+  stores: Stores;
+  /** Where a Ready item is filed for the asker and the watchers (F86 seam; default: not stored). */
+  collection?: CollectionSink;
+  /** The asker's household rules for the ranking (F80 seam; default: none). */
+  rules?: RuleSource;
+  /** Breaks a tie the deterministic ranking cannot (F76 seam); absent: the first file stands. */
+  picker?: AmbiguityPicker;
+  bus: EventBus;
+  catalogue: CatalogueService;
+  library: JellyfinLibrary;
+  slskd?: SlskdClient;
+  lidarr?: LidarrClient;
+  navidrome?: NavidromeClient;
+  /** The slskd completed folder as Lidarr sees it. */
+  lidarrDownloadsDir: string;
+  /**
+   * Where soularr parks files Lidarr refused, as Lidarr sees it; album polls file them from there.
+   * Default: `failed_imports` under the downloads folder, where soularr puts it.
+   */
+  lidarrFailedImportsDir?: string;
+  rootFolder?: string;
+  log: Logger;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  downloadTimeoutMs?: number;
+  tracksTimeoutMs?: number;
+  /** How long an album request waits on Lidarr before it fails with `not_found_in_time`. */
+  albumDeadlineMs?: number;
+  /** How many ranked files to try before giving up on a download. */
+  maxAttempts?: number;
+  /** Polls without a transfer record for the enqueued file before the attempt counts as failed. */
+  missingTransferPolls?: number;
+  /** How often an album poll looks in the download folders for files Lidarr refused to import. */
+  arrivalCheckMs?: number;
+  /** How long a transfer may sit queued at the uploader with nothing sent before the next user is tried. */
+  queuedTimeoutMs?: number;
+  /** How long a request whose catalogue lookup met a busy MusicBrainz waits before it runs again. */
+  catalogueBusyRetryMs?: number;
+  /** Writes are logged, not sent (the clients do that); the mapping step uses MusicBrainz tracks. */
+  dryRun?: boolean;
+}
+
+export const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+/**
+ * A transfer "Queued, Remotely" with nothing sent after this long moves on to the next user: a
+ * slow uploader's queue is not worth the download timeout, and the estimate must not count the
+ * wait as transfer time (functionality AD).
+ */
+export const QUEUED_TIMEOUT_MS = 3 * 60_000;
+/** A MusicBrainz 503 on a request's lookup is retried by the hub itself, this many times a minute apart (production AL). */
+export const CATALOGUE_BUSY_RETRIES = 3;
+export const CATALOGUE_BUSY_RETRY_MS = 60_000;
+export const TRACKS_TIMEOUT_MS = 90_000;
+export const ALBUM_DEADLINE_MS = 7 * 24 * 60 * 60_000;
+export const MISSING_TRANSFER_POLLS = 5;
+export const POLL_MS = 3_000;
+export const ARRIVAL_CHECK_MS = 10 * 60_000;
+
+/**
+ * The Lidarr track a downloaded file stands for: by MusicBrainz recording id, then by title, the
+ * whole title first and then the title with its edition tags stripped on both sides ("22" for
+ * "22 (Taylor's Version)"), so a shared suffix never maps a file to the wrong song (functionality U).
+ */
+export function mapTrack(
+  tracks: readonly LidarrTrack[],
+  want: { title: string; recordingId?: string; duration?: number },
+): LidarrTrack | undefined {
+  if (want.recordingId) {
+    const byId = tracks.find((t) => t.foreignRecordingId === want.recordingId);
+    if (byId) return byId;
+  }
+  const wanted = normalize(want.title);
+  const plain = cleanTitle(want.title) || wanted;
+  const exact = tracks.filter((t) => normalize(t.title) === wanted);
+  const exactPlain =
+    exact.length > 0
+      ? exact
+      : tracks.filter((t) => (cleanTitle(t.title) || normalize(t.title)) === plain);
+  const pool =
+    exactPlain.length > 0
+      ? exactPlain
+      : tracks.filter((t) => tokenOverlap(plain, cleanTitle(t.title) || t.title) >= 0.6);
+  if (pool.length === 0) return undefined;
+  if (want.duration === undefined) return pool[0];
+  const target = want.duration * 1000;
+  return [...pool].sort((a, b) => Math.abs(a.duration - target) - Math.abs(b.duration - target))[0];
+}
+
+/**
+ * The edition an album request means: a release titled as the album itself (no "Deluxe", no
+ * "40") with the fewest tracks, so bonus-track reissues and anniversary boxes are not what the
+ * progress counts or Lidarr looks for; else the release with the fewest tracks; nothing when
+ * Lidarr lists none (design AR).
+ */
+export function standardRelease(album: LidarrAlbum): LidarrRelease | undefined {
+  const releases = (album.releases ?? []).filter((r) => r.trackCount > 0);
+  const plain = releases.filter((r) => cleanTitle(r.title) === cleanTitle(album.title));
+  const pool = plain.length > 0 ? plain : releases;
+  return [...pool].sort((a, b) => a.trackCount - b.trackCount)[0];
+}
+
+/** Our MusicBrainz release when Lidarr knows it, else the monitored one, else the first. */
+export function pickRelease(album: LidarrAlbum, releaseId?: string): LidarrRelease | undefined {
+  const releases = album.releases ?? [];
+  return (
+    (releaseId ? releases.find((r) => r.foreignReleaseId === releaseId) : undefined) ??
+    releases.find((r) => r.monitored) ??
+    releases[0]
+  );
+}
+
+export function lidarrPathFor(downloadsDir: string, remoteFilename: string): string {
+  return posix.join(downloadsDir, parentName(remoteFilename), baseName(remoteFilename));
+}
+
+/**
+ * "0111 Look Back at It", "A Boogie Wit da Hoodie - Look Back at It.flac": the title in a file
+ * name. One track-number group goes ("06 - ", "01-03 - ", "02 "), never more, so a title that is
+ * itself a number stays ("06 - 22" is "22", "06 - 22 (Taylor's Version)" keeps its 22;
+ * functionality U).
+ */
+export function fileTitle(filename: string, artist: string): string {
+  const stem = baseName(filename).replace(/\.[^.]+$/, '');
+  const base = stem.replace(/^\d+(?:[-._]\d+)*(?:\s*[-._]+\s*|\s+)/, '');
+  const artistTokens = new Set(tokens(artist));
+  return tokens(base)
+    .filter((t) => !artistTokens.has(t))
+    .join(' ');
+}
+
+/**
+ * True when a download folder is this album's: named `<Artist> - <Title>` the way soularr names
+ * them, with nothing after the title but a year. Token by token, so "Tha Carter II" never claims
+ * "Lil Wayne - Tha Carter III (2008)".
+ */
+export function folderIsAlbum(folder: string, artist: string, title: string): boolean {
+  const have = tokens(folder);
+  const want = tokens(`${artist} ${title}`);
+  if (want.length === 0 || have.length < want.length) return false;
+  if (want.some((w, i) => have[i] !== w)) return false;
+  return have.slice(want.length).every((t) => /^\d+$/.test(t));
+}
+
+/**
+ * True when any folder above the file is this album's: soularr's `<Artist> - <Title> (year)` may
+ * hold `CD1/` and `CD2/` for a two-disc album, and the files inside are still the album's
+ * (production AF).
+ */
+export function pathInAlbum(path: string, artist: string, title: string): boolean {
+  const folders = path.split(/[\\/]/).slice(0, -1);
+  return folders.some((folder) => folderIsAlbum(folder, artist, title));
+}
+
+/** The title a catalogue lookup is asked for: edition tags, decoration and emoji stripped; the words when nothing is left. */
+export function lookupTitle(title: string): string {
+  return cleanTitle(title) || normalize(title) || title;
+}
+
+/**
+ * The failure reason for an error the pipeline did not name itself: a MusicBrainz 503 (over its
+ * share) or no answer is `catalogue_busy`, which the apps word as "try again in a minute"
+ * (functionality W); anything else is `error`.
+ */
+export function reasonFor(error: unknown): string {
+  if (error instanceof PipelineError) return error.reason;
+  if (isBusy(error, 'musicbrainz')) return 'catalogue_busy';
+  return 'error';
+}
+
+export function describePick(s: Scored): string {
+  return `${baseName(s.candidate.filename)} from ${s.candidate.username} (score ${s.score}: ${s.reasons.join(', ')})`;
+}
+
+/** Seconds left at the rate so far; undefined until something has arrived. */
+export function etaSeconds(bytes: number, size: number, elapsedMs: number): number | undefined {
+  if (bytes <= 0 || elapsedMs <= 0 || size <= bytes) return undefined;
+  const rate = bytes / elapsedMs;
+  return Math.max(1, Math.round((size - bytes) / rate / 1000));
+}
+
+export function createPipeline(deps: PipelineDeps) {
+  const { stores, bus, log } = deps;
+  const collection = deps.collection ?? transientCollection();
+  const rules = deps.rules ?? noRules;
+  const sleep = deps.sleep ?? realSleep;
+  const now = deps.now ?? Date.now;
+  /** Requests whose lookup met a busy MusicBrainz: how often, and when each runs again. */
+  const busyTries = new Map<string, number>();
+  const busyRetryAt = new Map<string, number>();
+
+  /** The row as it is now; throws `gone` when it was removed or the asker cancelled it. */
+  function live(id: string): MusicRequest {
+    const current = stores.requests.get(id);
+    if (!current) throw new PipelineError('gone', 'The request was removed');
+    if (current.status === 'cancelled')
+      throw new PipelineError('gone', 'The request was cancelled');
+    return current;
+  }
+
+  /** The asker and everyone who asked for the same thing while it was on its way. */
+  const parties = (req: MusicRequest): string[] => [req.requestedBy, ...(req.watchers ?? [])];
+
+  /** Every status write: refuses cancelled rows, appends a step, tells the apps. */
+  function update(id: string, patch: RequestUpdate): MusicRequest {
+    live(id);
+    const next = stores.requests.update(id, patch);
+    if (!next) throw new PipelineError('gone', 'The request was removed');
+    for (const who of parties(next)) {
+      bus.publish(who, { type: 'request', request: next });
+      if (next.status === 'ready') bus.publish(who, { type: 'ready', request: next });
+    }
+    return next;
+  }
+
+  /** Every progress write: refuses cancelled rows, appends no step, tells the apps. */
+  function progress(id: string, value: RequestProgress): MusicRequest {
+    live(id);
+    const next = stores.requests.progress(id, value);
+    if (!next) throw new PipelineError('gone', 'The request was removed');
+    for (const who of parties(next)) bus.publish(who, { type: 'request', request: next });
+    return next;
+  }
+
+  /**
+   * The catalogue's match, when it is not what was asked for (shown on the card as what will
+   * arrive): another title or credit, or a release other than the album named on the row.
+   */
+  function matchedFor(
+    req: MusicRequest,
+    found: { title: string; artist: string; album?: string | undefined },
+  ): { title: string; artist: string; album?: string } | undefined {
+    const sameName =
+      normalize(found.title) === normalize(req.title) &&
+      normalize(found.artist) === normalize(req.artist);
+    const otherAlbum =
+      !!found.album && !!req.album && normalize(found.album) !== normalize(req.album);
+    if (sameName && !otherAlbum) return undefined;
+    const matched: { title: string; artist: string; album?: string } = {
+      title: found.title,
+      artist: found.artist,
+    };
+    if (otherAlbum) matched.album = found.album!;
+    return matched;
+  }
+
+  async function resolveIds(req: MusicRequest): Promise<MusicRequest> {
+    if (req.kind === 'track' && req.recordingId && req.releaseGroupId && req.artistId) return req;
+    if (req.kind === 'album' && req.releaseGroupId && req.artistId) return req;
+    if (req.kind === 'track') {
+      // The caller's duration (from the typeahead row) picks the version meant and is kept: the
+      // recording's own length never replaces it; the album named on the row picks the release.
+      const want: Parameters<CatalogueService['findSong']>[2] = {};
+      if (req.duration !== undefined) want.duration = req.duration;
+      if (req.album) want.album = req.album;
+      // The words as a song is named: "🔥 Fireman 🔥" asks MusicBrainz for "fireman" (functionality W).
+      const song = await deps.catalogue.findSong(lookupTitle(req.title), req.artist, want);
+      if (!song?.releaseGroupId || !song.artistId) {
+        throw new PipelineError(
+          'catalogue_miss',
+          `MusicBrainz has no release for "${req.title}" by ${req.artist}`,
+        );
+      }
+      const ids: NonNullable<RequestUpdate['ids']> = {
+        recordingId: song.recordingId,
+        releaseGroupId: song.releaseGroupId,
+        artistId: song.artistId,
+      };
+      if (song.releaseId) ids.releaseId = song.releaseId;
+      if (song.duration !== undefined && req.duration === undefined) ids.duration = song.duration;
+      // The album asked for stays on the card; the release the file lands on is `matched.album`.
+      if (song.album && !req.album) ids.album = song.album;
+      const matched = matchedFor(req, song);
+      if (matched) ids.matched = matched;
+      return update(req.id, {
+        status: 'finding',
+        detail: `Matched ${song.title} by ${song.artist}`,
+        ids,
+      });
+    }
+    const album = await deps.catalogue.findAlbum(lookupTitle(req.title), req.artist);
+    if (!album?.artistId) {
+      throw new PipelineError(
+        'catalogue_miss',
+        `MusicBrainz has no album "${req.title}" by ${req.artist}`,
+      );
+    }
+    const ids: NonNullable<RequestUpdate['ids']> = {
+      releaseGroupId: album.releaseGroupId,
+      artistId: album.artistId,
+    };
+    const matched = matchedFor(req, album);
+    if (matched) ids.matched = matched;
+    return update(req.id, {
+      status: 'finding',
+      detail: `Matched ${album.title} by ${album.artist}`,
+      ids,
+    });
+  }
+
+  /**
+   * The Lidarr artist for a MusicBrainz id. An artist that already exists is used as it is: its
+   * metadata profile and monitoring are never changed (a profile switch would make Lidarr monitor
+   * and soularr fetch every single and EP). The album is added explicitly instead, which Lidarr
+   * accepts outside the profile. A new artist is added unmonitored with the singles profile.
+   */
+  async function ensureArtist(
+    lidarr: LidarrClient,
+    mbid: string,
+  ): Promise<{ artist: LidarrArtist; note?: string }> {
+    const existing = (await lidarr.artists()).find((a) => a.foreignArtistId === mbid);
+    if (existing) {
+      return {
+        artist: existing,
+        note: `Using the Lidarr artist ${existing.artistName} as it is (profile and monitoring unchanged; the album is added explicitly)`,
+      };
+    }
+    const singles = await ensureSinglesProfile(lidarr);
+    const roots = await lidarr.rootFolders();
+    const root = deps.rootFolder
+      ? (roots.find((r) => r.path === deps.rootFolder) ?? roots[0])
+      : roots[0];
+    if (!root) throw new PipelineError('lidarr_artist', 'Lidarr has no root folder');
+    const looked = await lidarr.lookupArtist(mbid);
+    if (!looked)
+      throw new PipelineError('lidarr_artist', `Lidarr cannot find artist ${mbid} on MusicBrainz`);
+    const artist = await lidarr.addArtist({
+      ...looked,
+      rootFolderPath: root.path,
+      qualityProfileId: root.defaultQualityProfileId ?? 1,
+      metadataProfileId: singles.id,
+      monitored: true,
+      monitorNewItems: 'none',
+      addOptions: { monitor: 'none', searchForMissingAlbums: false },
+    });
+    return { artist };
+  }
+
+  async function ensureAlbum(
+    lidarr: LidarrClient,
+    artist: LidarrArtist,
+    releaseGroupId: string,
+    monitored: boolean,
+  ): Promise<LidarrAlbum> {
+    const existing = await lidarr.albumByForeignId(releaseGroupId);
+    if (existing) return existing;
+    const looked = await lidarr.lookupAlbum(releaseGroupId);
+    if (!looked)
+      throw new PipelineError('lidarr_album', `Lidarr cannot find release group ${releaseGroupId}`);
+    // An album request fetches the record as it was released, not the edition with the most
+    // tracks Lidarr would monitor by default (Thriller, not the 34-track Thriller 40), and the
+    // progress counts that edition's songs (design AR).
+    const standard = monitored ? standardRelease(looked) : undefined;
+    const releases = standard
+      ? (looked.releases ?? []).map((r) => ({
+          ...r,
+          monitored: r.foreignReleaseId === standard.foreignReleaseId,
+        }))
+      : looked.releases;
+    try {
+      return await lidarr.addAlbum({
+        ...looked,
+        ...(releases ? { releases } : {}),
+        monitored,
+        artistId: artist.id,
+        artist: { ...looked.artist, ...artist },
+        addOptions: { searchForNewAlbum: false },
+      });
+    } catch (error) {
+      // Lidarr may have added it itself while refreshing the artist: read it back once.
+      const again = await lidarr.albumByForeignId(releaseGroupId);
+      if (again) return again;
+      throw error;
+    }
+  }
+
+  async function musicBrainzTracks(releaseId: string): Promise<LidarrTrack[]> {
+    const release = await deps.catalogue.release(releaseId);
+    return (release.media ?? []).flatMap((m) =>
+      (m.tracks ?? []).map((t, i) => ({
+        id: -1 - i,
+        title: t.title,
+        trackNumber: t.number,
+        absoluteTrackNumber: i + 1,
+        duration: t.length ?? 0,
+        hasFile: false,
+        foreignRecordingId: t.recording?.id ?? '',
+      })),
+    );
+  }
+
+  /** Lidarr fills an album's releases in its own refresh, which may still be running. */
+  async function waitForReleases(lidarr: LidarrClient, album: LidarrAlbum): Promise<LidarrAlbum> {
+    const deadline = now() + (deps.tracksTimeoutMs ?? TRACKS_TIMEOUT_MS);
+    let full = album;
+    while ((full.releases ?? []).length === 0 && now() < deadline) {
+      await sleep(POLL_MS);
+      full = await lidarr.album(album.id);
+    }
+    return full;
+  }
+
+  async function waitForTracks(
+    lidarr: LidarrClient,
+    albumId: number,
+    releaseId: number,
+  ): Promise<LidarrTrack[]> {
+    const deadline = now() + (deps.tracksTimeoutMs ?? TRACKS_TIMEOUT_MS);
+    let tracks = await lidarr.tracks(albumId, releaseId);
+    while (tracks.length === 0 && now() < deadline) {
+      await sleep(POLL_MS);
+      tracks = await lidarr.tracks(albumId, releaseId);
+    }
+    return tracks;
+  }
+
+  /** A failed transfer's record goes, so slskd's list does not keep it; in dry run only logged. */
+  async function removeTransfer(
+    slskd: SlskdClient,
+    req: MusicRequest,
+    username: string,
+    transferId: string | undefined,
+  ): Promise<void> {
+    if (!transferId) return;
+    try {
+      await slskd.remove(username, transferId);
+    } catch (error) {
+      log.warn(
+        {
+          request: req.id,
+          username,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'failed transfer not removed from slskd',
+      );
+    }
+  }
+
+  /**
+   * Tries the ranked files in order, each attempt from a user not tried before; returns the pick
+   * whose download succeeded. A user whose transfer ended without the file, or never started, is
+   * not asked for another file: one advertising account with many copies cannot use up every
+   * attempt on its own (functionality S), and its transfer record is removed from slskd.
+   */
+  async function download(
+    req: MusicRequest,
+    slskd: SlskdClient,
+    ranked: Scored[],
+  ): Promise<Scored> {
+    const maxAttempts = deps.maxAttempts ?? 3;
+    const timeoutMs = deps.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
+    const graceMisses = deps.missingTransferPolls ?? MISSING_TRANSFER_POLLS;
+    let lastFailure = 'no file was tried';
+    const triedUsers = new Set<string>();
+    for (const pick of ranked) {
+      if (triedUsers.size >= maxAttempts) break;
+      const { username, filename, size } = pick.candidate;
+      if (triedUsers.has(username)) continue;
+      triedUsers.add(username);
+      // A cancel that landed while the files were being ranked stops here, before any download.
+      live(req.id);
+      update(req.id, {
+        status: 'downloading',
+        detail: describePick(pick),
+        progress: { unit: 'percent', done: 0, total: 100 },
+      });
+      await slskd.enqueue(username, [{ filename, size }]);
+      if (deps.dryRun) {
+        // Nothing was enqueued: the file is treated as downloaded so the mapping step can be shown.
+        update(req.id, {
+          status: 'downloading',
+          detail: `Dry run: ${baseName(filename)} counted as downloaded`,
+          ids: { sourceFile: filename },
+        });
+        return pick;
+      }
+      const started = now();
+      const deadline = started + timeoutMs;
+      const queuedTimeout = deps.queuedTimeoutMs ?? QUEUED_TIMEOUT_MS;
+      let firstByteAt: number | undefined;
+      let lastPercent = -1;
+      let misses = 0;
+      for (;;) {
+        const transfers = await slskd.transfers(username);
+        const t = transfers.find((x) => x.filename === filename);
+        if (!t) {
+          // slskd has no record of the file: the enqueue was dropped or the record was purged.
+          misses += 1;
+          if (misses > graceMisses) {
+            lastFailure = `${baseName(filename)} from ${username}: slskd has no transfer for it`;
+            break;
+          }
+          await sleep(POLL_MS);
+          continue;
+        }
+        if (t.state.includes('Succeeded')) {
+          update(req.id, {
+            status: 'downloading',
+            detail: `Downloaded ${baseName(filename)}`,
+            ids: { sourceFile: filename },
+          });
+          return pick;
+        }
+        if (t.state.startsWith('Completed')) {
+          lastFailure = `${baseName(filename)} from ${username}: ${t.state}${t.exception ? ` (${t.exception})` : ''}`;
+          await removeTransfer(slskd, req, username, t.id);
+          break;
+        }
+        const bytes = t.bytesTransferred ?? 0;
+        if (bytes > 0 && firstByteAt === undefined) firstByteAt = now();
+        if (now() > deadline) {
+          lastFailure = `${baseName(filename)} from ${username}: not finished after ${Math.round(timeoutMs / 60_000)} minutes`;
+          await removeTransfer(slskd, req, username, t.id);
+          break;
+        }
+        // Still in the uploader's queue with nothing sent: another user is a better bet than the
+        // rest of the download timeout (functionality AD).
+        if (bytes === 0 && now() - started > queuedTimeout) {
+          lastFailure = `${baseName(filename)} from ${username}: still ${t.state} with nothing sent after ${Math.round(queuedTimeout / 60_000)} minutes`;
+          await removeTransfer(slskd, req, username, t.id);
+          break;
+        }
+        const percent = size > 0 && bytes > 0 ? Math.min(99, Math.floor((bytes / size) * 100)) : 0;
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          const value: RequestProgress = { unit: 'percent', done: percent, total: 100 };
+          // The rate is measured from the first byte, not from the enqueue: a wait in the queue
+          // is not transfer time.
+          const eta = etaSeconds(bytes, size, now() - (firstByteAt ?? now()));
+          if (eta !== undefined) value.etaSeconds = eta;
+          progress(req.id, value);
+        }
+        await sleep(POLL_MS);
+      }
+      log.warn({ request: req.id, failure: lastFailure }, 'download attempt failed');
+    }
+    throw new PipelineError('download_failed', lastFailure);
+  }
+
+  async function importTrack(
+    req: MusicRequest,
+    lidarr: LidarrClient,
+    remoteFilename: string,
+  ): Promise<void> {
+    if (!req.artistId || !req.releaseGroupId)
+      throw new PipelineError('catalogue_miss', 'No MusicBrainz ids');
+    // A cancel cannot land past `finding`, but the import is the costly write: check once more.
+    live(req.id);
+    const { artist, note } = await ensureArtist(lidarr, req.artistId);
+    const album = await ensureAlbum(lidarr, artist, req.releaseGroupId, false);
+    const full = await waitForReleases(lidarr, album);
+    const release = pickRelease(full, req.releaseId);
+    if (!release)
+      throw new PipelineError('lidarr_album', `Lidarr album ${full.title} has no releases`);
+    if (!release.monitored) {
+      await lidarr.updateAlbum({
+        ...full,
+        releases: (full.releases ?? []).map((r) => ({ ...r, monitored: r.id === release.id })),
+      });
+    }
+    let tracks = await waitForTracks(lidarr, full.id, release.id);
+    if (tracks.length === 0 && deps.dryRun) {
+      // Nothing was added to Lidarr, so map against MusicBrainz's own track list to show the pick.
+      tracks = await musicBrainzTracks(release.foreignReleaseId);
+    }
+    const want: { title: string; recordingId?: string; duration?: number } = {
+      title: req.matched?.title ?? req.title,
+    };
+    if (req.recordingId) want.recordingId = req.recordingId;
+    if (req.duration !== undefined) want.duration = req.duration;
+    const track = mapTrack(tracks, want);
+    if (!track) {
+      throw new PipelineError(
+        'track_unmapped',
+        `None of the ${tracks.length} tracks on ${full.title} (release ${release.foreignReleaseId}) is "${want.title}"`,
+      );
+    }
+    const path = lidarrPathFor(deps.lidarrDownloadsDir, remoteFilename);
+    const folder = posix.dirname(path);
+    let candidate = (await lidarr.importCandidates(folder)).find(
+      (c) => baseName(c.path) === baseName(path),
+    );
+    for (let i = 0; !candidate && i < 5; i++) {
+      await sleep(POLL_MS);
+      candidate = (await lidarr.importCandidates(folder)).find(
+        (c) => baseName(c.path) === baseName(path),
+      );
+    }
+    if (!candidate && deps.dryRun) {
+      log.info({ dryRun: true, path }, 'would import this file once downloaded');
+      candidate = { path, quality: { quality: { id: 0, name: 'Unknown' } } };
+    }
+    if (!candidate)
+      throw new PipelineError('import_failed', `Lidarr cannot see the file at ${path}`);
+    update(req.id, {
+      status: 'importing',
+      detail: `${note ? `${note}. ` : ''}Mapped to track ${track.trackNumber} "${track.title}" on ${full.title}; importing as ${candidate.quality.quality.name}`,
+    });
+    const command = await lidarr.manualImport([
+      {
+        path: candidate.path,
+        artistId: artist.id,
+        albumId: full.id,
+        albumReleaseId: release.id,
+        trackIds: [track.id],
+        quality: candidate.quality,
+        disableReleaseSwitching: true,
+      },
+    ]);
+    try {
+      await waitForCommand(lidarr, command.id, sleep);
+    } catch (error) {
+      throw new PipelineError(
+        'import_failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    await scans(req.id, lidarr, artist.id);
+  }
+
+  async function scans(
+    requestId: string,
+    lidarr: LidarrClient | undefined,
+    artistId: number | undefined,
+  ): Promise<void> {
+    const done: string[] = [];
+    const failed: string[] = [];
+    const attempt = async (name: string, fn: () => Promise<unknown>): Promise<void> => {
+      try {
+        await fn();
+        done.push(name);
+      } catch (error) {
+        failed.push(name);
+        log.warn(
+          {
+            request: requestId,
+            scan: name,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'scan failed',
+        );
+      }
+    };
+    if (lidarr && artistId !== undefined)
+      await attempt('lidarr', () => lidarr.command('RefreshArtist', { artistId }));
+    if (deps.navidrome) await attempt('navidrome', () => deps.navidrome!.startScan());
+    if (deps.library.configured) await attempt('jellyfin', () => deps.library.refresh());
+    const detail = `Scans: ${done.join(', ') || 'none'}${failed.length > 0 ? `; failed: ${failed.join(', ')}` : ''}`;
+    update(requestId, { status: 'importing', detail });
+  }
+
+  /** Ready: the item lands in the asker's collection and in every watcher's; all of them hear it. */
+  function finish(req: MusicRequest, detail: string): MusicRequest {
+    const itemId =
+      req.kind === 'track'
+        ? `mb:recording:${req.recordingId}`
+        : `mb:release-group:${req.releaseGroupId}`;
+    for (const profile of parties(req)) {
+      const item: NewCollectionItem = {
+        profile,
+        item: itemId,
+        kind: req.kind,
+        title: req.title,
+        artist: req.artist,
+        addedBy: profile,
+        source: 'request',
+      };
+      if (req.album) item.album = req.album;
+      collection.add(item);
+    }
+    return update(req.id, { status: 'ready', detail });
+  }
+
+  /**
+   * Only when the leading files score within a few points of each other, and only with a picker:
+   * the file it names moves to the front. Declining, failing or naming no offered file leaves the
+   * deterministic order as it was.
+   */
+  async function breakTie(req: MusicRequest, ranked: Scored[]): Promise<Scored[]> {
+    const tie = leadingTie(ranked);
+    if (!deps.picker || tie.length === 0) return ranked;
+    let index: number | undefined;
+    try {
+      const request: Parameters<AmbiguityPicker['pick']>[0]['request'] = {
+        kind: req.kind,
+        title: req.title,
+        artist: req.artist,
+      };
+      if (req.album) request.album = req.album;
+      if (req.duration !== undefined) request.duration = req.duration;
+      index = await deps.picker.pick({ request, candidates: tie });
+    } catch (error) {
+      log.warn(
+        { id: req.id, error: error instanceof Error ? error.message : String(error) },
+        'tie pick failed; the deterministic order stands',
+      );
+      return ranked;
+    }
+    if (index === undefined || index <= 0 || index >= tie.length) return ranked;
+    const chosen = tie[index]!;
+    return [chosen, ...ranked.filter((c) => c !== chosen)];
+  }
+
+  async function runTrack(req: MusicRequest): Promise<MusicRequest> {
+    const { slskd, lidarr } = deps;
+    if (!slskd || !lidarr)
+      throw new PipelineError(
+        'not_configured',
+        'SLSKD_URL and LIDARR_URL are needed to fetch songs',
+      );
+    const resolved = await resolveIds(req);
+    if (resolved.sourceFile) {
+      // A retry after a failed import: the file is already in the downloads folder.
+      update(resolved.id, {
+        status: 'importing',
+        detail: `Importing the file downloaded earlier: ${baseName(resolved.sourceFile)}`,
+      });
+      await importTrack(resolved, lidarr, resolved.sourceFile);
+      return finish(live(resolved.id), `Imported ${baseName(resolved.sourceFile)}`);
+    }
+    const policy = parseRules(rules.list(resolved.requestedBy));
+    // The song the catalogue matched is the one searched for and mapped, when it corrected the words.
+    const name = resolved.matched ?? { title: resolved.title, artist: resolved.artist };
+    const want: Parameters<typeof rank>[1] = {
+      title: name.title,
+      artist: name.artist,
+      policy,
+    };
+    if (resolved.duration !== undefined) want.duration = resolved.duration;
+    const queryInput: Parameters<typeof buildQueries>[0] = {
+      title: name.title,
+      artist: name.artist,
+    };
+    if (resolved.album) queryInput.album = resolved.album;
+    const queries = buildQueries(queryInput);
+    let ranked: Scored[] = [];
+    let excludedCount = 0;
+    const tried: string[] = [];
+    for (const query of queries) {
+      live(resolved.id);
+      const responses = await slskd.search(query);
+      const candidates = toCandidates(responses);
+      const result = rank(candidates, want);
+      const summary = `"${query}": ${candidates.length} files, ${result.ranked.length} usable`;
+      tried.push(summary);
+      excludedCount += result.excluded.length;
+      if (result.ranked.length > 0) {
+        ranked = result.ranked;
+        break;
+      }
+      update(resolved.id, { status: 'finding', detail: summary });
+    }
+    if (ranked.length === 0) {
+      const reason = excludedCount > 0 ? 'no_candidates' : 'no_results';
+      throw new PipelineError(reason, `Soulseek: ${tried.join('; ')}`);
+    }
+    ranked = await breakTie(resolved, ranked);
+    update(resolved.id, {
+      status: 'finding',
+      detail: `${tried[tried.length - 1]}; best: ${describePick(ranked[0]!)}`,
+    });
+    const pick = await download(resolved, slskd, ranked);
+    const current = live(resolved.id);
+    update(current.id, {
+      status: 'importing',
+      detail: `Importing ${baseName(pick.candidate.filename)}`,
+    });
+    await importTrack(current, lidarr, pick.candidate.filename);
+    return finish(live(current.id), `Imported ${baseName(pick.candidate.filename)}`);
+  }
+
+  async function runAlbum(req: MusicRequest): Promise<MusicRequest> {
+    const { lidarr } = deps;
+    if (!lidarr) throw new PipelineError('not_configured', 'LIDARR_URL is needed to fetch albums');
+    const resolved = await resolveIds(req);
+    const { artist, note } = await ensureArtist(lidarr, resolved.artistId!);
+    let album = await ensureAlbum(lidarr, artist, resolved.releaseGroupId!, true);
+    // A cancel that landed while the album was being added found nothing to unmonitor: check now,
+    // before anything is monitored or searched (run()'s `gone` branch unmonitors as well).
+    live(resolved.id);
+    if (!album.monitored) {
+      await lidarr.updateAlbum({ ...album, monitored: true });
+      // The statistics were read before the album was monitored (an existing album shows 0 of 0
+      // until then): read it back, best effort.
+      album = await lidarr.album(album.id).catch(() => album);
+    }
+    live(resolved.id);
+    await lidarr.command('AlbumSearch', { albumIds: [album.id] });
+    const days = Math.round((deps.albumDeadlineMs ?? ALBUM_DEADLINE_MS) / (24 * 60 * 60_000));
+    return update(resolved.id, {
+      status: 'finding',
+      detail: `${note ? `${note}. ` : ''}Lidarr is looking for ${album.title} (album ${album.id}); the hub checks every minute for up to ${days} days`,
+      progress: albumProgress(album),
+    });
+  }
+
+  /** Songs done of the total: Lidarr's statistics, else the monitored release's track count. */
+  function albumProgress(album: LidarrAlbum): RequestProgress {
+    const total = album.statistics?.trackCount || pickRelease(album)?.trackCount || 0;
+    return { unit: 'songs', done: album.statistics?.trackFileCount ?? 0, total };
+  }
+
+  /** Lidarr's import candidates in a folder; a folder Lidarr cannot read counts as empty. */
+  async function candidatesIn(lidarr: LidarrClient, folder: string) {
+    try {
+      return await lidarr.importCandidates(folder);
+    } catch (error) {
+      log.warn(
+        { folder, error: error instanceof Error ? error.message : String(error) },
+        'could not list import candidates',
+      );
+      return [];
+    }
+  }
+
+  const lastArrivalCheck = new Map<string, number>();
+
+  const failedImportsDir = (): string =>
+    deps.lidarrFailedImportsDir ?? posix.join(deps.lidarrDownloadsDir, 'failed_imports');
+
+  /**
+   * soularr fetched the album (or some of it) but Lidarr's automatic import refused the files
+   * ("Has missing tracks" against another edition) and they sit in `failed_imports`. Lidarr lists
+   * them in `manualimport`; the hub maps each to a track on the release it monitors and files them
+   * with the same explicit `ManualImport` the single path uses. Only a folder named for this album
+   * (`<Artist> - <Title>`, at any level above the file, so a `CD1/` folder inside it is the
+   * album's too) in which at least one file maps to a track counts as the album's: soularr
+   * leaves wrong matches behind in folders of the right name (Marina Kaye's files under "Taylor
+   * Swift - Fearless"), and a sibling album's folder shares most of the words. A track that already
+   * has a file is never replaced, a file already handed to Lidarr is not handed over again, and
+   * nothing here fails the request: what did not map has not arrived, and the deadline decides.
+   */
+  async function fileArrivals(
+    lidarr: LidarrClient,
+    req: MusicRequest,
+    album: LidarrAlbum,
+    candidates: readonly LidarrImportCandidate[],
+  ): Promise<{ outcome: 'nothing' | 'filed' | 'kept'; detail?: string }> {
+    const artistNames = [album.artist?.artistName, req.artist].filter((n): n is string => !!n);
+    const titles = [album.title, req.title, req.matched?.title].filter((n): n is string => !!n);
+    const inFolder = candidates.filter((c) =>
+      artistNames.some((a) => titles.some((t) => pathInAlbum(c.path, a, t))),
+    );
+    // The paths already handed to Lidarr live on the row, so a hub restart reads them back.
+    const filed = stores.requests.filedPaths(req.id);
+    // Files Lidarr was told to import and left where they were: say why, once, and leave them.
+    const kept = inFolder.filter((c) => filed.get(c.path) === 'sent');
+    for (const c of kept) filed.set(c.path, 'kept');
+    const fresh = inFolder.filter((c) => !filed.has(c.path));
+    if (kept.length > 0) stores.requests.setFiledPaths(req.id, filed);
+    const keptDetail =
+      kept.length > 0
+        ? `Lidarr did not take ${kept.map((c) => `${baseName(c.path)} (${(c.rejections ?? []).map((r) => r.reason).join('; ') || 'no reason given'})`).join(', ')}`
+        : undefined;
+    if (fresh.length === 0) {
+      return keptDetail ? { outcome: 'kept', detail: keptDetail } : { outcome: 'nothing' };
+    }
+    const full = await waitForReleases(lidarr, album);
+    const release = pickRelease(full);
+    if (!release) {
+      log.warn({ request: req.id, album: full.title }, 'album has no releases to file against');
+      return { outcome: 'nothing' };
+    }
+    const tracks = await waitForTracks(lidarr, full.id, release.id);
+    const artistName = album.artist?.artistName ?? req.artist;
+    const byTitle = new Map<string, LidarrTrack>();
+    for (const c of fresh) {
+      const track = mapTrack(tracks, { title: fileTitle(c.path, artistName) });
+      if (track) byTitle.set(c.path, track);
+    }
+    if (byTitle.size === 0) {
+      // A folder of the right name whose files are none of these tracks is not this album.
+      log.info(
+        { request: req.id, album: full.title, files: fresh.map((c) => baseName(c.path)) },
+        'parked files match no track; still waiting',
+      );
+      return keptDetail ? { outcome: 'kept', detail: keptDetail } : { outcome: 'nothing' };
+    }
+    const files: ManualImportFile[] = [];
+    const used = new Set<number>();
+    const skipped: string[] = [];
+    for (const c of fresh) {
+      // The file's own title first; Lidarr's attribution only inside a folder that is ours.
+      const track =
+        byTitle.get(c.path) ??
+        (c.album?.id === album.id && c.tracks?.length === 1
+          ? tracks.find((t) => t.id === c.tracks![0]!.id)
+          : undefined);
+      if (!track || used.has(track.id)) continue;
+      if (track.hasFile) {
+        skipped.push(baseName(c.path));
+        filed.set(c.path, 'kept');
+        continue;
+      }
+      used.add(track.id);
+      files.push({
+        path: c.path,
+        artistId: full.artistId ?? album.artistId ?? 0,
+        albumId: full.id,
+        albumReleaseId: release.id,
+        trackIds: [track.id],
+        quality: c.quality,
+        disableReleaseSwitching: true,
+      });
+    }
+    if (skipped.length > 0) {
+      log.info(
+        { request: req.id, album: full.title, files: skipped },
+        'parked files map to tracks that already have a file; left alone',
+      );
+    }
+    if (files.length === 0) {
+      stores.requests.setFiledPaths(req.id, filed);
+      return keptDetail ? { outcome: 'kept', detail: keptDetail } : { outcome: 'nothing' };
+    }
+    for (const f of files) filed.set(f.path, 'sent');
+    stores.requests.setFiledPaths(req.id, filed);
+    const command = await lidarr.manualImport(files);
+    try {
+      await waitForCommand(lidarr, command.id, sleep);
+    } catch (error) {
+      return {
+        outcome: 'kept',
+        detail: `Lidarr refused the ${files.length} file(s) that arrived for ${full.title}: ${error instanceof Error ? error.message : String(error)}${keptDetail ? `. ${keptDetail}` : ''}`,
+      };
+    }
+    return {
+      outcome: 'filed',
+      detail: `Filed ${files.length} file(s) that had arrived for ${full.title}: ${files.map((f) => baseName(f.path)).join(', ')}${keptDetail ? `. ${keptDetail}` : ''}`,
+    };
+  }
+
+  /** Best effort: stop Lidarr (and soularr) looking for an album nobody wants any more. */
+  async function unmonitorAlbum(req: MusicRequest): Promise<string | undefined> {
+    const { lidarr } = deps;
+    if (!lidarr || req.kind !== 'album' || !req.releaseGroupId) return undefined;
+    try {
+      const album = await lidarr.albumByForeignId(req.releaseGroupId);
+      if (!album) return undefined;
+      if (album.monitored) await lidarr.updateAlbum({ ...album, monitored: false });
+      return `Lidarr no longer monitors ${album.title}`;
+    } catch (error) {
+      log.warn(
+        { request: req.id, error: error instanceof Error ? error.message : String(error) },
+        'could not unmonitor the album',
+      );
+      return undefined;
+    }
+  }
+
+  return {
+    /**
+     * Runs one request to ready, failed or (albums) finding. Never throws: a failure is written to
+     * the request, and a request cancelled or removed underneath the run is left alone.
+     */
+    async run(id: string): Promise<MusicRequest | undefined> {
+      const req = stores.requests.get(id);
+      if (!req) return undefined;
+      try {
+        update(id, { status: 'finding' });
+        const done = req.kind === 'track' ? await runTrack(req) : await runAlbum(req);
+        busyTries.delete(id);
+        return done;
+      } catch (error) {
+        const reason = reasonFor(error);
+        const detail = error instanceof Error ? error.message : String(error);
+        if (reason === 'gone') {
+          log.info({ request: id, detail }, 'request stopped');
+          // An album cancelled while it was being added to Lidarr: the cancel found nothing to
+          // unmonitor, so the album the pipeline just added would stay monitored and soularr
+          // would fetch it. Unmonitor it now that it exists.
+          const stopped = stores.requests.get(id);
+          if (stopped?.kind === 'album') {
+            const note = await unmonitorAlbum(stopped);
+            if (note) log.info({ request: id, note }, 'album unmonitored after a late cancel');
+          }
+          return undefined;
+        }
+        // MusicBrainz over its share: the hub tries again itself, a minute later, a few times,
+        // before it asks a person to tap Retry (production AL). The row stays `finding` with the
+        // reason in its detail; the minute tick re-enqueues it.
+        if (reason === 'catalogue_busy') {
+          const tries = (busyTries.get(id) ?? 0) + 1;
+          if (tries <= CATALOGUE_BUSY_RETRIES) {
+            busyTries.set(id, tries);
+            busyRetryAt.set(id, now() + (deps.catalogueBusyRetryMs ?? CATALOGUE_BUSY_RETRY_MS));
+            log.warn({ request: id, detail, attempt: tries }, 'catalogue busy; will try again');
+            try {
+              return update(id, {
+                status: 'finding',
+                detail: `The music catalogue was busy (${detail}); trying again in a minute (${tries} of ${CATALOGUE_BUSY_RETRIES})`,
+              });
+            } catch {
+              busyTries.delete(id);
+              busyRetryAt.delete(id);
+              return undefined;
+            }
+          }
+          busyTries.delete(id);
+          busyRetryAt.delete(id);
+        }
+        log.error({ request: id, reason, detail }, 'request failed');
+        try {
+          return update(id, { status: 'failed', reason, detail });
+        } catch (second) {
+          const why = second instanceof Error ? second.message : String(second);
+          if (!(second instanceof PipelineError && second.reason === 'gone')) {
+            log.error({ request: id, error: why }, 'could not record the failure');
+          }
+          return undefined;
+        }
+      }
+    },
+
+    /**
+     * Album requests waiting on Lidarr: ready once every track has a file, failed past the
+     * deadline. The parked files are listed once per tick (one `manualimport` scan of the
+     * failed-imports folder, shared by every waiting album) and only when an incomplete album is
+     * due for its arrival check.
+     */
+    async pollAlbums(): Promise<void> {
+      const { lidarr } = deps;
+      if (!lidarr) return;
+      const waiting = stores.requests
+        .listByStatus('finding')
+        .filter((r) => r.kind === 'album' && r.releaseGroupId);
+      const deadlineMs = deps.albumDeadlineMs ?? ALBUM_DEADLINE_MS;
+      const arrivalEvery = deps.arrivalCheckMs ?? ARRIVAL_CHECK_MS;
+      let listing: Promise<LidarrImportCandidate[]> | undefined;
+      for (const req of waiting) {
+        try {
+          let album = await lidarr.albumByForeignId(req.releaseGroupId!);
+          if (!album) continue;
+          let { done, total } = albumProgress(album);
+          const incomplete = !(total > 0 && done >= total);
+          const checked = lastArrivalCheck.get(req.id) ?? 0;
+          if (incomplete && now() - checked >= arrivalEvery) {
+            lastArrivalCheck.set(req.id, now());
+            listing ??= candidatesIn(lidarr, failedImportsDir());
+            const arrived = await fileArrivals(lidarr, req, album, await listing);
+            if (arrived.outcome !== 'nothing') {
+              update(req.id, { status: 'finding', detail: arrived.detail! });
+            }
+            if (arrived.outcome === 'filed') {
+              album = (await lidarr.albumByForeignId(req.releaseGroupId!)) ?? album;
+              ({ done, total } = albumProgress(album));
+            }
+          }
+          if (total > 0 && done >= total) {
+            lastArrivalCheck.delete(req.id);
+            stores.requests.setFiledPaths(req.id, undefined);
+            await scans(req.id, lidarr, album.artistId);
+            // The row as it is now, not the snapshot from the start of the tick: a watcher who
+            // joined during this iteration gets the item too.
+            finish(live(req.id), `Lidarr imported ${done} of ${total} tracks`);
+          } else if (now() - lastRequestedAt(req) > deadlineMs) {
+            // Measured from the last time it was requested: a retry a week later gets a full week.
+            const days = Math.round(deadlineMs / (24 * 60 * 60_000));
+            const note = await unmonitorAlbum(req);
+            lastArrivalCheck.delete(req.id);
+            stores.requests.setFiledPaths(req.id, undefined);
+            update(req.id, {
+              status: 'failed',
+              reason: 'not_found_in_time',
+              detail: `Lidarr found ${done} of ${total} tracks in ${days} days${note ? `; ${note}` : ''}`,
+            });
+          } else {
+            progress(req.id, { unit: 'songs', done, total });
+          }
+        } catch (error) {
+          if (error instanceof PipelineError && error.reason === 'gone') continue;
+          log.warn(
+            { request: req.id, error: error instanceof Error ? error.message : String(error) },
+            'album poll failed',
+          );
+        }
+      }
+    },
+
+    /** Called when an album request is cancelled: Lidarr stops looking. Returns a detail line. */
+    abandon(req: MusicRequest): Promise<string | undefined> {
+      return unmonitorAlbum(req);
+    },
+
+    /**
+     * The requests whose minute after a busy MusicBrainz has passed, each once, still `finding`
+     * and not cancelled meanwhile: the runner enqueues them on its tick (production AL).
+     */
+    dueRetries(): string[] {
+      const due: string[] = [];
+      for (const [id, at] of busyRetryAt) {
+        if (at > now()) continue;
+        busyRetryAt.delete(id);
+        const row = stores.requests.get(id);
+        if (row?.status === 'finding') due.push(id);
+        else busyTries.delete(id);
+      }
+      return due;
+    },
+  };
+}
+export type Pipeline = ReturnType<typeof createPipeline>;
+
+export const ACTIVE_STATUSES: readonly RequestStatus[] = [
+  'requested',
+  'finding',
+  'downloading',
+  'importing',
+];

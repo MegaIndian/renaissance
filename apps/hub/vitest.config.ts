@@ -9,7 +9,8 @@ export default defineConfig({
       // The process entry point only wires loadConfig and buildApp to listen(); CI smoke-tests it.
       exclude: ['src/server.ts'],
       reporter: ['text-summary', 'lcov'],
-      thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
+      // The hub holds the keys and the pipeline: 90 % on lines, functions and statements, 80 % on branches.
+      thresholds: { lines: 90, functions: 90, branches: 80, statements: 90 },
     },
   },
 });
