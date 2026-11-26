@@ -76,6 +76,13 @@ export const routes: RouteObject[] = [
         ),
       },
       {
+        path: 'lyrics',
+        lazy: lazyRoute(
+          () => import('./routes/Lyrics'),
+          (m) => m.LyricsPage,
+        ),
+      },
+      {
         path: 'settings',
         lazy: lazyRoute(
           () => import('./routes/Settings'),

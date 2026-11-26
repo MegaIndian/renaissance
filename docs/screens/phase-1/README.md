@@ -23,3 +23,5 @@ and mode for a run.
 | `settings-*.png`                              | Settings: mode, appearance, playback quality, account, library, about                          |
 | `sign-in-*.png`                               | Sign in: address, user, password, Quick Connect, phone dark English and desktop light Gujarati |
 | `ask-results-desktop-en-dark.png`             | The Ask bar's instant library results while typing                                             |
+| `lyrics-*.png`                                | Lyrics (F39): the sung line in the middle; tablet in Gujarati; from the demo lyrics files      |
+| `lyrics-plain-phone-en-light.png`             | Lyrics without timings (F40): plain verses                                                     |

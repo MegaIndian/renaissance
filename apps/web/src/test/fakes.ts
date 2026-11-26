@@ -9,6 +9,7 @@ import type {
   AudioEvent,
   AudioPort,
   JellyfinAdapter,
+  Lyrics,
   PlaybackReport,
   Playlist,
   Session,
@@ -141,6 +142,8 @@ export interface FakeAdapterOptions {
   fail?: { favorites?: boolean };
   /** Awaited before a favourite call answers, so a test can hold the server's answer back. */
   favoritesGate?: () => Promise<void>;
+  /** What `/Audio/{id}/Lyrics` answers; none by default. */
+  lyrics?: (trackId: string) => Promise<Lyrics | null>;
 }
 
 export function fakeAdapter(options: FakeAdapterOptions = {}) {
@@ -217,6 +220,7 @@ export function fakeAdapter(options: FakeAdapterOptions = {}) {
       playlistTracks: () => Promise.resolve([{ ...tracks[2], entryId: 'e3' }]),
       recentlyPlayed: () => Promise.resolve([tracks[1]]),
     }),
+    lyrics: (_s: Session, id: string) => options.lyrics?.(id) ?? Promise.resolve(null),
     subscribe: () => () => undefined,
     signOut: () => Promise.resolve(),
   } as unknown as JellyfinAdapter;

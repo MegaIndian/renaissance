@@ -32,11 +32,12 @@ describe('NowPlaying', () => {
     await user.click(main.getByRole('button', { name: 'Remove from favourites' }));
     expect(calls.favorites).toEqual([{ id: 't3', favorite: false }]);
     expect(main.getAllByRole('link', { name: 'Queue' }).length).toBeGreaterThan(0);
-    // Lyrics and cast are present but muted; the phase hint shows in advanced mode only.
-    expect(screen.getByRole('button', { name: 'Lyrics' })).toBeDisabled();
-    expect(screen.queryByText('Lyrics arrive in phase 6')).not.toBeInTheDocument();
+    // Lyrics opens its screen; cast is present but muted, its phase hint in advanced mode only.
+    expect(main.getByRole('link', { name: 'Lyrics' })).toHaveAttribute('href', '/lyrics');
+    expect(screen.getByRole('button', { name: 'Cast' })).toBeDisabled();
+    expect(screen.queryByText('Casting arrives in phase 8')).not.toBeInTheDocument();
     updateSettings({ mode: 'advanced' });
-    expect(await screen.findByText('Lyrics arrive in phase 6')).toBeInTheDocument();
+    expect(await screen.findByText('Casting arrives in phase 8')).toBeInTheDocument();
   });
 
   it('says what went wrong when the stream fails, and that nothing plays when the queue is empty', async () => {

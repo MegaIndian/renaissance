@@ -7,7 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { ServerError, creditsArtist, findArtist, sortAlbumTracks } from '@renaissance/core';
-import type { Album, Artist, PlaylistEntry, Track } from '@renaissance/core';
+import type { Album, Artist, Lyrics, PlaylistEntry, Track } from '@renaissance/core';
 
 import { libraryStore } from './library';
 import { sessionStore } from './session';
@@ -37,6 +37,7 @@ export const queryKeys = {
   similarArtists: (artistId: string) => ['similarArtists', userKey(), artistId] as const,
   playlistTracks: (playlistId: string) => ['playlistTracks', userKey(), playlistId] as const,
   recentlyPlayed: () => ['recentlyPlayed', userKey()] as const,
+  lyrics: (trackId: string) => ['lyrics', userKey(), trackId] as const,
 };
 
 function library() {
@@ -180,4 +181,22 @@ export function useRecentlyPlayed(limit = 12) {
     staleTime: 60_000,
   });
   return query.data && query.data.length >= fromCache.length ? query.data : fromCache;
+}
+
+/**
+ * A song's lyrics from the server (F39, F40): synced lines, plain text, or null when it has none.
+ * Lyrics files change rarely, so an answer stays fresh for the session; a failure is retried twice.
+ */
+export function useLyrics(trackId: string | undefined) {
+  return useQuery<Lyrics | null>({
+    queryKey: queryKeys.lyrics(trackId ?? ''),
+    queryFn: () => {
+      const { adapter, session } = sessionStore.get();
+      if (!adapter || !session) throw new Error('signed out');
+      return adapter.lyrics(session, trackId ?? '');
+    },
+    enabled: !!trackId && sessionStore.get().status === 'signedIn',
+    staleTime: 30 * 60_000,
+    retry: retryUnlessNotFound,
+  });
 }

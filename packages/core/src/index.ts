@@ -9,6 +9,7 @@ export * from './artists';
 export * from './playlist-reorder';
 export * from './search';
 export * from './sort';
+export * from './lyrics';
 export * from './settings';
 export * from './store';
 export {

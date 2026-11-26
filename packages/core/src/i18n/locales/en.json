@@ -100,7 +100,6 @@
     "openNowPlaying": "Open now playing",
     "queue": "Queue",
     "lyrics": "Lyrics",
-    "lyricsLater": "Lyrics arrive in phase 6",
     "cast": "Cast",
     "castLater": "Casting arrives in phase 8",
     "direct": "Direct play",
@@ -136,6 +135,16 @@
     "startedPlayingCount": "Playing {{count, number}} songs",
     "startedPlayingCount_one": "Playing {{count, number}} song",
     "saveFailed": "The queue could not be saved in this browser. It lasts until this tab closes."
+  },
+  "lyrics": {
+    "backToNowPlaying": "Back to now playing",
+    "none": "No lyrics for this song",
+    "source": "Jellyfin reads lyrics from an .lrc or .txt file beside the song, or from its LrcLib plugin.",
+    "failed": "The lyrics could not be loaded",
+    "unsynced": "These lyrics have no timings, so they do not follow the song.",
+    "current": "Back to the current line",
+    "playFrom": "Play from {{time}}",
+    "instrumental": "Instrumental"
   },
   "status": {
     "preAlpha": "Pre-alpha, phase 1: web playback is live; mobile screens come in phase 3."

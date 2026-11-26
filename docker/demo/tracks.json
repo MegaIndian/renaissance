@@ -1,5 +1,5 @@
 {
-  "note": "Creative Commons music for the demo library. Every track is CC BY 4.0 by Kevin MacLeod (incompetech.com). The site states the licence on its licences page and under every track. Attribution is required and is in LICENSE.md. Files are downloaded by start.mjs, not committed.",
+  "note": "Creative Commons music for the demo library. Every track is CC BY 4.0 by Kevin MacLeod (incompetech.com). The site states the licence on its licences page and under every track. Attribution is required and is in LICENSE.md. Files are downloaded by start.mjs, not committed. The lyrics files beside two of them are committed: words written for the demo (the tracks are instrumental), synced for Carefree and plain text for Fluffing a Duck.",
   "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
   "sourceLicensePage": "https://incompetech.com/music/royalty-free/licenses/",
   "tracks": [
@@ -12,6 +12,7 @@
     },
     {
       "file": "Kevin MacLeod - Carefree.mp3",
+      "lyrics": "Kevin MacLeod - Carefree.lrc",
       "title": "Carefree",
       "artist": "Kevin MacLeod",
       "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Carefree.mp3",
@@ -19,6 +20,7 @@
     },
     {
       "file": "Kevin MacLeod - Fluffing a Duck.mp3",
+      "lyrics": "Kevin MacLeod - Fluffing a Duck.txt",
       "title": "Fluffing a Duck",
       "artist": "Kevin MacLeod",
       "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Fluffing%20a%20Duck.mp3",

@@ -144,6 +144,7 @@ export const LyricLine = z.object({
   start: z.number().nonnegative().optional(),
   text: z.string(),
 });
+export type LyricLine = z.infer<typeof LyricLine>;
 
 export const Lyrics = z.object({
   trackId: z.string().min(1),

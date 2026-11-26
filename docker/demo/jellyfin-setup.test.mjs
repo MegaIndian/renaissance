@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
@@ -72,6 +73,67 @@ describe('setupJellyfin', () => {
     assert.equal(result.skipped, true);
     assert.ok(lines.some((l) => l.includes('already completed')));
     assert.ok(lines.some((l) => l.includes('already exists')));
+  });
+
+  it('on a re-run, refreshes only the songs with a lyrics file so Jellyfin reads it', async () => {
+    const { fetch, seen } = fakeJellyfinFetch({
+      wizardCompleted: true,
+      libraries: [{ Name: 'Music', CollectionType: 'music' }],
+      songs: [
+        { Id: 'a', Name: 'Carefree', Path: '/media/music/Kevin MacLeod - Carefree.mp3' },
+        { Id: 'b', Name: 'Sneaky Snitch', Path: '/media/music/Kevin MacLeod - Sneaky Snitch.mp3' },
+        {
+          Id: 'c',
+          Name: 'Fluffing a Duck',
+          Path: 'D:\\music\\Kevin MacLeod - Fluffing a Duck.mp3',
+        },
+        { Id: 'd', Name: 'No path' },
+      ],
+    });
+    const lines = [];
+    const result = await setupJellyfin({
+      fetch,
+      baseUrl,
+      password: 'pw',
+      log: (l) => lines.push(l),
+      lyricTracks: ['Kevin MacLeod - Carefree.mp3', 'Kevin MacLeod - Fluffing a Duck.mp3'],
+    });
+    const refresh =
+      '/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=None&replaceAllMetadata=false&replaceAllImages=false';
+    assert.deepEqual(
+      result.calls.slice(3).map((c) => `${c.method} ${c.path}`),
+      [
+        'GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path',
+        `POST /Items/a${refresh}`,
+        `POST /Items/c${refresh}`,
+      ],
+    );
+    assert.match(seen.at(-1).headers.Authorization, /Token="fake-token"/);
+    assert.ok(lines.some((l) => l.includes('Refreshing "Carefree"')));
+  });
+
+  it('a fresh server has no songs yet, so the first scan reads the lyrics and nothing is refreshed', async () => {
+    const { fetch } = fakeJellyfinFetch();
+    const result = await setupJellyfin({
+      fetch,
+      baseUrl,
+      password: 'pw',
+      lyricTracks: ['Kevin MacLeod - Carefree.mp3'],
+    });
+    assert.equal(
+      result.calls.at(-1).path,
+      '/Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path',
+    );
+  });
+
+  it('every lyrics file tracks.json names is committed beside its song', () => {
+    const manifest = JSON.parse(readFileSync(new URL('./tracks.json', import.meta.url), 'utf8'));
+    const withLyrics = manifest.tracks.filter((t) => t.lyrics);
+    assert.equal(withLyrics.length, 2);
+    for (const track of withLyrics) {
+      assert.equal(track.lyrics.replace(/\.(lrc|txt)$/, ''), track.file.replace(/\.mp3$/, ''));
+      assert.ok(existsSync(new URL(`./music/${track.lyrics}`, import.meta.url)), track.lyrics);
+    }
   });
 
   it('fails loudly on an unexpected status', async () => {

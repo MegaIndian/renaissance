@@ -31,6 +31,8 @@ const configDir = join(here, 'config');
 const credentialsFile = join(configDir, 'demo-credentials.json');
 const baseUrl = process.env.RENAISSANCE_DEMO_URL ?? 'http://localhost:8096';
 const manifest = JSON.parse(readFileSync(join(here, 'tracks.json'), 'utf8'));
+/** The songs with a committed lyrics file beside them (F39, F40). */
+const lyricTracks = manifest.tracks.filter((t) => t.lyrics).map((t) => t.file);
 
 function compose(...args) {
   const result = spawnSync('docker', ['compose', ...args], { cwd: here, stdio: 'inherit' });
@@ -83,6 +85,7 @@ async function dryRun() {
     baseUrl,
     password: 'dry-run-password',
     log: (line) => console.log(`  ${line}`),
+    lyricTracks,
   });
   console.log(`${result.calls.length} calls; user ${result.user}; library scan requested.`);
 }
@@ -97,6 +100,12 @@ async function main() {
   mkdirSync(configDir, { recursive: true });
   let fetched = 0;
   for (const track of manifest.tracks) if (await download(track)) fetched++;
+  for (const track of manifest.tracks) {
+    if (track.lyrics && !existsSync(join(musicDir, track.lyrics)))
+      throw new Error(
+        `${track.lyrics} is missing from docker/demo/music, where the repository keeps it.`,
+      );
+  }
   console.log(
     `${manifest.tracks.length} tracks ready (${fetched} downloaded). Licence: ${manifest.licenseUrl}`,
   );
@@ -117,6 +126,7 @@ async function main() {
     baseUrl,
     password: saved?.password,
     log: (line) => console.log(`  ${line}`),
+    lyricTracks,
   });
   const credentials = { url: baseUrl, user: result.user, password: result.password };
   writeFileSync(credentialsFile, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });

@@ -15,6 +15,7 @@ export function setTitle(part: string): void {
 /** The screens whose title key is not `nav.<first path segment>`; the id screens set their own. */
 const OTHER_TITLE_KEYS: Record<string, string> = {
   'now-playing': 'nav.nowPlaying',
+  lyrics: 'player.lyrics',
   'sign-in': 'signIn.submit',
 };
 
