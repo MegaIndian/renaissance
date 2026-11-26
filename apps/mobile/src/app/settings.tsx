@@ -60,9 +60,9 @@ function SettingsScreenContent() {
             <Text style={caption}>{session.session.server.url}</Text>
             <Text style={label}>{t('signIn.tokenStorage')}</Text>
             <Text style={caption}>
-              {session.vault === 'keychain' ? t('signIn.tokenKeychain') : t('signIn.tokenUnsaved')}
+              {session.vault === 'keychain' ? t('signIn.tokenKeychain') : t('signIn.tokenNone')}
             </Text>
-            <Text style={caption}>{t('signIn.signOutClearsPhone')}</Text>
+            <Text style={caption}>{t('signIn.signOutClears')}</Text>
             <Button
               testID="sign-out"
               tone="secondary"
@@ -105,7 +105,7 @@ function SettingsScreenContent() {
           onChange={(cellularQuality) => updateSettings({ cellularQuality })}
           label={t('settings.cellularQuality')}
         />
-        <Text style={caption}>{t('settings.qualityHelpPhone')}</Text>
+        <Text style={caption}>{t('settings.qualityHelp')}</Text>
         <Text style={label}>{t('settings.network')}</Text>
         <SegmentedControl<Settings['network']>
           label={t('settings.network')}

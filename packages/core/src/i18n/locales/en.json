@@ -67,11 +67,9 @@
     "tokenStorage": "Token protection",
     "tokenEncrypted": "Encrypted in this browser with a key the page cannot export",
     "tokenPlain": "Stored in this browser without encryption (this page is not on https or localhost)",
-    "tokenNone": "Not remembered in this browser (storage is blocked); you will sign in again after a reload",
-    "signOutClears": "Sign out removes this library, the saved queue and the token from this browser.",
-    "tokenKeychain": "Kept in this phone's keychain, readable only by this app",
-    "tokenUnsaved": "Not remembered on this phone (the keychain refused it); you will sign in again next time",
-    "signOutClearsPhone": "Sign out removes this library, the saved queue and the token from this phone."
+    "tokenNone": "Not remembered on this device (storage is blocked); you will sign in again next time",
+    "signOutClears": "Sign out removes this library, the saved queue and the token from this device.",
+    "tokenKeychain": "Kept in this phone's keychain, readable only by this app"
   },
   "nav": {
     "home": "Home",
@@ -303,7 +301,7 @@
     "qualityHigh": "High (320 kbps)",
     "qualityMedium": "Medium (192 kbps)",
     "qualityLow": "Low (128 kbps)",
-    "qualityHelp": "Files the browser can play arrive untouched; anything else, or anything above the cap, is converted by Jellyfin on the fly.",
+    "qualityHelp": "Files this device can play arrive untouched; anything else, or anything above the cap, is converted by Jellyfin on the fly.",
     "network": "Network",
     "networkAuto": "Detect",
     "networkWifi": "Treat as Wi-Fi",
@@ -321,8 +319,7 @@
     "version": "Version {{version}}",
     "licence": "Open source under GPL-3.0-or-later",
     "saved": "Saved",
-    "diagnosticsLater": "Diagnostics arrive in phase 9",
-    "qualityHelpPhone": "Files this phone can play arrive untouched; anything else, or anything above the cap, is converted by Jellyfin on the fly."
+    "diagnosticsLater": "Diagnostics arrive in phase 9"
   },
   "language": {
     "en": "English",
